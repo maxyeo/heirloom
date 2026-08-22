@@ -30,7 +30,7 @@ In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services
 these authorised redirect URIs:
 
 ```
-http://localhost:3000/api/auth/callback/google
+http://localhost:3001/api/auth/callback/google
 https://<your-domain>/api/auth/callback/google
 ```
 
@@ -59,7 +59,7 @@ that comma-separated list is rejected.
 npm install
 npm run db:migrate       # apply migrations
 npm run db:seed          # optional: load the example family
-npm run dev
+npm run dev            # http://localhost:3001
 ```
 
 The seed fixture is a deliberately awkward family — two widowings and three
