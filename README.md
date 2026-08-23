@@ -87,9 +87,16 @@ renders the hard cases. See
 
 **`npm run db:seed` deletes every row first, with no confirmation and nothing
 to undo it**, before inserting the fixture. It refuses to run at all against
-anything other than a local host (`localhost`, `127.0.0.1`) unless
-`SEED_ALLOW_DESTRUCTIVE` names the exact host it's about to wipe — see
-[Reaching production deliberately](#reaching-production-deliberately).
+anything other than a local host (`localhost`, `127.0.0.1`, `::1`) unless
+`SEED_ALLOW_DESTRUCTIVE` names the exact target it's about to wipe — the
+`user@host` pair the connection string uses, or just the host if the URL
+carries no username. Hostname alone isn't enough to identify a project on
+Supabase's shared pooler, where every project behind a region resolves to
+the same hostname and the project only shows up in the username
+(`postgres.<project-ref>`) — see
+[Reaching production deliberately](#reaching-production-deliberately). The
+refusal message prints the exact value to set, so you copy it rather than
+guess at the format.
 
 ## Which database you're pointing at
 
