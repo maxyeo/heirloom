@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
@@ -87,6 +88,18 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
       <article>
         {/* Serif, and carrying its own bottom rule, from globals.css. */}
         <h1>{entry.title}</h1>
+
+        {/*
+          A minimal, single-line link rather than a tab bar — E11-T7 owns the
+          real article tabs (history among them) and this is deliberately not
+          an attempt at that. It exists so E1-T5's history route
+          (`/wiki/[slug]/history`) is reachable at all before that lands;
+          E11-T7 absorbs it into the tab row rather than building history
+          discovery from scratch.
+        */}
+        <p className="mb-4 text-note">
+          <Link href={`/wiki/${entry.slug}/history`}>View history</Link>
+        </p>
 
         {bodyHtml ? (
           // `wiki-body` is the article scope — the equivalent of MediaWiki's
