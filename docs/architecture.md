@@ -55,8 +55,8 @@ Google APIs on a user's behalf.
 ### Entry HTML
 
 Entry bodies are the one place authored markup reaches the browser. TipTap
-writes them into a `text` column and the read route renders them through
-`dangerouslySetInnerHTML`, so `lib/sanitize-html.ts` reduces them to an
+writes them into a `text` column and the read route (E1-T1) will render them
+through `dangerouslySetInnerHTML`, so `lib/sanitize-html.ts` reduces them to an
 allowlist — the E1-T2 toolbar and nothing wider — on **write and on read**.
 
 Both ends, not one. Sanitising only on write trusts every row already in the
