@@ -1,4 +1,5 @@
 import { getSchema } from "@tiptap/core";
+import { StarterKit } from "@tiptap/starter-kit";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -29,6 +30,35 @@ import {
  * really produces an asterisk. That is a running editor's behaviour. What is
  * covered is the setting that decides it, which is the part this repo owns.
  */
+
+/**
+ * The Link extension's options *after* Tiptap has merged them with its own
+ * defaults — which is the only version of them that describes what the editor
+ * will actually emit. `STARTER_KIT_OPTIONS.link` is what this repo asked for;
+ * this is what it got.
+ *
+ * StarterKit builds its children in `addExtensions()`, so calling that with the
+ * configured kit as the receiver resolves them in plain Node, no DOM involved.
+ */
+function resolvedLinkOptions(): { HTMLAttributes: Record<string, unknown> } {
+  const kit = StarterKit.configure(STARTER_KIT_OPTIONS);
+  const children =
+    kit.config.addExtensions?.call({
+      name: kit.name,
+      options: kit.options,
+      storage: kit.storage,
+      parent: undefined,
+    }) ?? [];
+  const link = children.find((extension) => extension.name === "link");
+
+  if (link === undefined) {
+    throw new Error(
+      "StarterKit no longer provides a `link` extension — this test is looking at nothing.",
+    );
+  }
+
+  return link.options as { HTMLAttributes: Record<string, unknown> };
+}
 
 describe("the toolbar", () => {
   // From docs/product.md: the author is not a developer, and every extra
@@ -167,7 +197,26 @@ describe("links", () => {
   it("emits only the one attribute the sanitiser keeps on an anchor", () => {
     // Tiptap's default adds `target="_blank"` and a `rel`. Both are stripped
     // on save, so the editor would show behaviour the saved article lacks.
-    expect(STARTER_KIT_OPTIONS.link.HTMLAttributes).toEqual({});
+    //
+    // This resolves the option through `configure()` rather than reading the
+    // literal above, because the literal cannot answer the question. Tiptap
+    // merges with `mergeDeep`, so an `HTMLAttributes` that simply omits
+    // `target` leaves the default in place — an assertion that the literal
+    // equals `{}` passes while the editor emits both attributes. Ask the
+    // extension what it resolved to instead. No DOM is needed for this, which
+    // is the same reason the rest of this file can exist (docs/testing.md).
+    const linkOptions = resolvedLinkOptions();
+
+    for (const attribute of ["target", "rel"]) {
+      expect(linkOptions.HTMLAttributes[attribute] ?? null).toBeNull();
+    }
+
+    // Nothing else may render either: ProseMirror writes every non-null
+    // attribute, so a future default gaining a value would reach the DOM.
+    const rendered = Object.entries(linkOptions.HTMLAttributes)
+      .filter(([, value]) => value !== null && value !== undefined)
+      .map(([name]) => name);
+    expect(rendered).toEqual([]);
   });
 
   it("does not navigate away from a half-written entry", () => {

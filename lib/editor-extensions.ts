@@ -181,7 +181,15 @@ export const STARTER_KIT_OPTIONS = {
     // would be stripped on save — so the editor would show a link that
     // opens in a new tab and the saved article would not. Emit what
     // survives.
-    HTMLAttributes: {},
+    //
+    // The nulls are load-bearing and `{}` is not enough: `configure()` merges
+    // with `mergeDeep`, which walks the keys of the object *passed in*. An
+    // empty object therefore says nothing about `target` and `rel`, and
+    // Tiptap's defaults survive untouched. Naming each attribute and setting
+    // it to `null` is what actually clears it — ProseMirror's serialiser skips
+    // a null-valued attribute, which is the mechanism behind Tiptap's own
+    // `class: null` default.
+    HTMLAttributes: { target: null, rel: null },
     // Clicking a link while writing should put the cursor in it, not
     // navigate away from a half-written entry.
     openOnClick: false,
