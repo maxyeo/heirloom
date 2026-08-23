@@ -27,7 +27,7 @@ export default defineConfig({
           exclude: [
             ...defaultExclude,
             "**/.next/**",
-            "**/*.db.test.?(c|m)ts?(x)",
+            "**/*.db.{test,spec}.?(c|m)[jt]s?(x)",
           ],
         },
       },
@@ -35,7 +35,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "db",
-          include: ["**/*.db.test.?(c|m)ts?(x)"],
+          include: ["**/*.db.{test,spec}.?(c|m)[jt]s?(x)"],
           exclude: [...defaultExclude, "**/.next/**"],
           setupFiles: ["./test/db-setup.ts"],
           // Every file in this project talks to the same database, so running

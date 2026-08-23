@@ -136,14 +136,22 @@ describe("layoutFamilyGraph", () => {
     expect(Math.min(...nodes.map((node) => node.position.x))).toBe(0);
     expect(Math.min(...nodes.map((node) => node.position.y))).toBe(0);
 
-    // Persons and unions are offset by *different* half-widths, so a union
-    // still lines up between the two partners it joins.
-    const rose = centreX(nodeById(nodes, "rose"), PERSON_WIDTH);
-    const walter = centreX(nodeById(nodes, "walter"), PERSON_WIDTH);
-    const u3 = centreX(nodeById(nodes, "u3"), UNION_SIZE);
+    // Persons and unions are offset by *different* half-widths, so the check
+    // that pins both is where a union marker ends up: exactly midway between
+    // the partners it joins. Asserting a range instead would leave ~100px of
+    // slack — enough for a dropped half-width to slip through unnoticed.
+    for (const [unionId, partners] of [
+      ["u1", ["mary", "thomas"]],
+      ["u2", ["rose", "thomas"]],
+      ["u3", ["rose", "walter"]],
+      // One recorded partner, so "midway between" is that partner.
+      ["u0", ["grandpa"]],
+    ] as const) {
+      const centres = partners.map((id) => centreX(nodeById(nodes, id), PERSON_WIDTH));
+      const midpoint = centres.reduce((a, b) => a + b, 0) / centres.length;
 
-    expect(u3).toBeGreaterThanOrEqual(Math.min(rose, walter));
-    expect(u3).toBeLessThanOrEqual(Math.max(rose, walter));
+      expect(centreX(nodeById(nodes, unionId), UNION_SIZE)).toBe(midpoint);
+    }
   });
 
   it("carries the fields the person and union nodes render from", () => {

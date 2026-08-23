@@ -27,6 +27,12 @@ if (!process.env.DATABASE_URL) {
 // 3. Close the pool when the file is done. postgres.js keeps its sockets open,
 //    which keeps the worker alive; without this, `npm run test:db` passes and
 //    then hangs until Vitest's teardown timeout.
+//
+//    This has to run *after* each file's own cleanup, which it does because
+//    Vitest stacks `afterAll` hooks innermost-first (`sequence.hooks: "stack"`,
+//    the default). It also assumes each test file gets its own module registry
+//    and so its own pool — also the default, via fork isolation. Turning either
+//    of those off would leak fixture rows or hand a file a closed client.
 afterAll(async () => {
   await db.$client.end();
 });

@@ -28,7 +28,21 @@ const UNIONS = {
   secondEarlierDate: "00000000-0000-4000-8000-00000000f104",
 } as const;
 
+/**
+ * Deleting the individual is enough: both `unions.partner_a_id` and
+ * `partner_b_id` are ON DELETE CASCADE, so her unions go with her.
+ */
+async function removeFixture() {
+  await db.delete(schema.individuals).where(inArray(schema.individuals.id, [ROSE]));
+}
+
 beforeAll(async () => {
+  // Also cleaning up *before* inserting, not just after. Interrupting a run
+  // skips `afterAll`, which would otherwise leave these fixed ids behind and
+  // fail the next run on a duplicate key — a confusing way to greet whoever
+  // runs this next.
+  await removeFixture();
+
   await db.insert(schema.individuals).values({
     id: ROSE,
     givenName: "Rose",
@@ -52,9 +66,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Deleting the individual is enough: both partner columns are ON DELETE
-  // CASCADE, so the unions go with her.
-  await db.delete(schema.individuals).where(inArray(schema.individuals.id, [ROSE]));
+  await removeFixture();
 });
 
 describe("getFamilyGraph", () => {

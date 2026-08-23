@@ -31,6 +31,10 @@ So the suite is split in two, and the split is a filename:
 anyone remembering to tag a test — getting the suffix right is the whole
 mechanism.
 
+Use the npm scripts rather than calling Vitest directly. A bare `npx vitest`
+selects *both* projects, so with no `DATABASE_URL` it fails on the database
+half — including when an editor's Vitest integration runs it for you.
+
 ## Tests that need no database
 
 Put them next to the module they cover: `lib/tree-layout.ts` is tested by
@@ -94,11 +98,41 @@ pattern was verified:
 docker run --rm -d --name heirloom-test-pg \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=heirloom_test \
   -p 55432:5432 postgres:16
+```
 
-echo 'DATABASE_URL=postgres://postgres:postgres@localhost:55432/heirloom_test' > .env.local
-npm run db:migrate
+Then point `DATABASE_URL` at it. If you already have a `.env.local`, **edit
+it** — it also holds `AUTH_SECRET` and your Google credentials, and
+overwriting it loses them irrecoverably, since it is gitignored:
+
+```
+DATABASE_URL=postgres://postgres:postgres@localhost:55432/heirloom_test
+```
+
+```bash
+npm run db:migrate    # create the schema in the throwaway database
 npm run test:db
 ```
+
+Note that these tests use fixed row ids, so two people running `npm run
+test:db` against the *same* database at the same time will collide. A
+container each is the simplest way not to think about it.
+
+## What this does not cover yet
+
+The harness is deliberately small, and two things are simply not set up:
+
+- **No DOM environment.** There is no `jsdom`/`happy-dom` and no
+  `@testing-library/react`, so React components cannot be rendered yet. The
+  Next.js guide in `node_modules/next/dist/docs/01-app/02-guides/testing/`
+  covers the wiring; add it when the first component test needs it, as a third
+  project or an `environment` override, not by making every test pay for a DOM.
+- **No mocking conventions.** Nothing has needed `vi.mock` yet. Route-handler
+  and server-action tests (E10-T2) will be the first to decide whether to mock
+  `@/lib/session` or drive real sessions, and whichever way that goes belongs
+  back in this document.
+
+Note also that `async` Server Components are not unit-testable — React and
+Vitest do not support it yet — so treat those as end-to-end territory.
 
 ## Why `test:db` is not in CI
 
