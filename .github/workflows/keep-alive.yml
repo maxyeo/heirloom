@@ -33,6 +33,14 @@ jobs:
   ping:
     name: Ping the database
     runs-on: ubuntu-latest
+    # Forks do not inherit the DATABASE_URL secret, so the schedule would fail
+    # daily in someone else's repository and — because the step below files an
+    # issue about it — leave them holding a bug report for a Supabase
+    # workaround they never opted into. Anyone who forks this and does run on
+    # Supabase can still trigger it by hand, or change the repository named
+    # here. (Forks have Actions disabled by default, so this only matters once
+    # someone turns them on.)
+    if: github.repository == 'maxyeo/heirloom' || github.event_name == 'workflow_dispatch'
     # A generous backstop for the whole job. The tight bound that matters is
     # on the ping step itself; this one only exists so nothing can sit here
     # for six hours, and it is deliberately loose enough that a slow npm ci

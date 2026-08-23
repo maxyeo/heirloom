@@ -106,6 +106,12 @@ would be no better than not having one. Note that GitHub disables scheduled
 workflows in repositories with no activity for 60 days, and emails the owner
 when it does.
 
+The scheduled run is skipped in forks, since a fork does not inherit the
+secret and would otherwise file itself a daily bug report about a Supabase
+workaround it never asked for. If you forked this and are on Supabase, run the
+workflow manually or edit the repository name in its `if:` condition. If you
+are on any other Postgres, you do not need this workflow at all — delete it.
+
 ### Other hosts
 
 `output: "standalone"` is set, so `next build` produces a self-contained server
