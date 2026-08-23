@@ -17,10 +17,15 @@ import { db } from "@/db";
 //    from inside whichever test happened to query first.
 if (!process.env.DATABASE_URL) {
   throw new Error(
-    "Database tests need DATABASE_URL. Copy .env.example to .env.local and " +
-      "point it at a database you are willing to have written to — these " +
-      "tests insert and delete rows. Run `npm test` for the suite that needs " +
-      "no database.",
+    "Database tests need DATABASE_URL. Run `npm run test:db` (not `vitest` " +
+      "directly) — it sets DATABASE_TARGET=test, which resolves DATABASE_URL " +
+      "to TEST_DATABASE_URL for this run. If that is still unset, copy " +
+      ".env.example to .env.local and set TEST_DATABASE_URL to a local " +
+      "Postgres database you are willing to have written to, e.g. " +
+      "`createdb heirloom_test` and " +
+      'TEST_DATABASE_URL="postgresql://localhost:5432/heirloom_test" — ' +
+      "these tests insert and delete rows. Run `npm test` for the suite " +
+      "that needs no database.",
   );
 }
 

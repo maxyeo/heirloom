@@ -1,6 +1,7 @@
 import "../lib/load-env";
 
 import { db, schema } from "./index";
+import { assertSeedTarget } from "./seed-guard";
 
 /**
  * Seed fixture.
@@ -24,6 +25,15 @@ import { db, schema } from "./index";
  */
 
 async function main() {
+  // Refuse before opening a connection, let alone deleting anything, unless
+  // the resolved DATABASE_URL is a host this script was told it may destroy.
+  // See db/seed-guard.ts.
+  const guard = assertSeedTarget(process.env.DATABASE_URL, process.env);
+  if (!guard.allowed) {
+    console.error(guard.message);
+    process.exit(1);
+  }
+
   console.log("Clearing existing data...");
   await db.delete(schema.unionChildren);
   await db.delete(schema.unions);
