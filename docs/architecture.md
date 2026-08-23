@@ -173,6 +173,59 @@ Scale is small: a family tree is hundreds of people at most, so the entire
 graph is loaded in one query and laid out client-side. No pagination, no
 virtualisation.
 
+## Deployment and migrations
+
+`vercel.json` disables git deployments for every branch except `main`, so a
+production build is only ever a merge. That build runs migrations first:
+
+```
+buildCommand: npm run db:migrate:deploy && npm run build
+```
+
+The ordering is the design. Applying migrations *after* a deploy leaves a
+window in which the new code queries columns that do not exist yet; applying
+them before means the schema is always at or ahead of the code. And because
+`&&` short-circuits, a migration that fails fails the build, and a failed
+build is never promoted — so there is no deploy that assumes a migration
+which did not happen.
+
+Two consequences worth naming rather than discovering:
+
+- **Rolling back a deployment does not roll back the database.** Vercel's
+  instant rollback restores code only. Migrations should therefore be
+  additive — add a column, backfill, stop reading the old one, drop it in a
+  later release — so that the previous build still runs against the new
+  schema.
+- **Two merges in quick succession build concurrently.** Drizzle's migrator
+  takes no advisory lock, so overlapping builds could in principle apply the
+  same migration twice. At this project's rate of change the honest mitigation
+  is to not merge twice in a minute.
+
+Migrations use the *session* pooler or direct connection (`MIGRATE_DATABASE_URL`,
+port 5432), not the transaction pooler the app uses. A transaction pooler hands
+out a different backend per transaction, which is right for serverless request
+handlers and wrong for DDL.
+
+`MIGRATE_DATABASE_URL` falls back to `DATABASE_URL` when unset, which is right
+locally and wrong in production — and silently so, since ordinary additive DDL
+usually succeeds over the transaction pooler anyway. `db/migrate.ts` therefore
+logs which variable it used and against which host (never the password), so a
+missing variable shows up in the first build log rather than in a later
+migration that fails for reasons nobody connects to it.
+
+Drizzle applies every pending migration inside **one** transaction. That is
+what makes a half-applied migration impossible, and it also means
+`CREATE INDEX CONCURRENTLY` — which cannot run in a transaction block — will
+fail here. This is a property of the migrator rather than of this setup
+(`drizzle-kit migrate` behaves the same), but it matters more now that
+migrations gate every merge: an index on a table large enough to care about
+locking needs applying by hand, outside the deploy.
+
+`db/migrate.ts` uses `drizzle-orm`'s migrator rather than `drizzle-kit migrate`,
+because drizzle-kit is a development tool that opens its own connection — there
+is no way to give it `prepare: false` and `max: 1`. `npm run db:migrate` remains
+the drizzle-kit path for local use.
+
 ## Portability
 
 The only Vercel-specific dependency is image storage, and it sits behind a
@@ -188,6 +241,9 @@ Node host with any Postgres:
   pooler, harmless everywhere else
 - The Supabase keep-alive cron belongs in GitHub Actions rather than Vercel
   Cron, since it is a Supabase concern and not an application one
+- Migrations run through `npm run db:migrate:deploy`, an ordinary script with
+  no host in it; only the line in `vercel.json` that calls it is Vercel-shaped,
+  and another host would call the same script from its own build step
 
 ## Known limitations
 
