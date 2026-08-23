@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
+import { createPage } from "@/lib/create-page";
 import {
   savePage,
   type SavePageEdit,
@@ -88,4 +90,80 @@ export async function savePageAction(
   }
 
   return result;
+}
+
+/**
+ * What the create form renders while it waits, and after a refusal.
+ *
+ * There is no success member: a successful creation ends in a `redirect`,
+ * which throws, so the only state this action ever returns to the form is one
+ * in which the author is still standing in front of it.
+ */
+export type NewEntryFormState = {
+  /** A sentence to show the author, or null when there is nothing to say. */
+  error: string | null;
+};
+
+/**
+ * Start an entry from a title (E1-T8).
+ *
+ * Shaped for `useActionState`, so it takes the previous state and the form's
+ * own `FormData` — which also means it works as a plain form POST when
+ * JavaScript has not loaded, and the author still lands in the editor.
+ *
+ * The address is not a parameter. It is derived from the title inside
+ * `createPage`, so a direct POST cannot choose where an entry lives any more
+ * than the form can, and the author never has to think about URLs.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields — `title` and nothing else
+ * @returns a state to render, or never, when the redirect fires
+ */
+export async function createPageAction(
+  _previous: NewEntryFormState,
+  form: FormData,
+): Promise<NewEntryFormState> {
+  const session = await requireSession();
+
+  // As in `savePageAction`: `requireSession` has already thrown if there is no
+  // email, but its return type is next-auth's `Session`, whose `user.email` is
+  // optional, and the compiler cannot see the narrowing across the call.
+  const createdBy = session.user?.email;
+  if (!createdBy) throw new UnauthorizedError();
+
+  // A form field is a `File` when the form posts one, and null when the field
+  // is absent — neither is a title, and neither comes from this form.
+  const title = form.get("title");
+  if (typeof title !== "string") {
+    throw new TypeError("createPageAction expects a title field, as text.");
+  }
+
+  const result = await createPage({ title, createdBy });
+
+  if (result.status === "empty-title") {
+    // The input is `required`, so this is the no-JavaScript path or a direct
+    // POST. Said as a request rather than as an error, because an author who
+    // pressed a button on an empty form has not done anything wrong.
+    return { error: "Give the entry a title to start it." };
+  }
+
+  /**
+   * The index (E1-T9) lists every entry, so it is stale the moment one is
+   * created. Revalidated before the redirect rather than after, because
+   * `redirect` throws — and a bare path rather than `"layout"`, matching
+   * `savePageAction` above: the entry's own route has nothing cached to
+   * clear, since it has only just started existing.
+   */
+  revalidatePath("/wiki");
+
+  /**
+   * Into the editor, which is where "create an entry" actually finishes — the
+   * page that exists now has a title and an empty body. `redirect` throws, so
+   * nothing below runs and the function's return type is never reached.
+   *
+   * The slug is encoded rather than interpolated raw: a title in a non-Latin
+   * script produces a non-Latin slug (see `lib/entry-slug.ts`), and the
+   * `Location` header of the no-JavaScript response has to be a valid URL.
+   */
+  redirect(`/wiki/${encodeURIComponent(result.slug)}/edit`);
 }
