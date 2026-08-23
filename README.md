@@ -9,6 +9,8 @@ Built for Vercel + Supabase, but it runs on any Node host with any Postgres.
 
 - [Product overview](docs/product.md) — what it is and who it is for
 - [Architecture](docs/architecture.md) — the data model and the security model
+- [Design tokens](docs/design-tokens.md) — the Wikipedia type, colour and
+  layout values, and the one rule that keeps them in one place
 - [Testing](docs/testing.md) — how the suite is split, and how to test
   something that needs Postgres
 

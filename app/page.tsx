@@ -9,35 +9,33 @@ export default async function Home() {
   const title = process.env.NEXT_PUBLIC_SITE_TITLE ?? "Heirloom";
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-16">
-      <h1 className="text-3xl font-semibold">{title}</h1>
-      <p className="mt-2 text-stone-500 dark:text-stone-400">
-        Signed in as {session?.user?.email}
-      </p>
+    // `max-w-content` is Vector 2022's measure — see globals.css. The article
+    // shell that sets this column beside a sidebar is E11-T2.
+    <main className="mx-auto max-w-content px-6 py-10">
+      <h1>{title}</h1>
 
-      <nav className="mt-10 flex flex-col gap-3">
-        <Link
-          href="/tree"
-          className="rounded-md border border-stone-300 px-4 py-3 transition hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
-        >
-          <span className="font-medium">Family tree</span>
-          <span className="block text-sm text-stone-500 dark:text-stone-400">
-            Everyone, and how they connect
-          </span>
-        </Link>
-      </nav>
+      <div className="wiki-body">
+        <p className="text-caption text-ink-muted">
+          From {title}, the family wiki. Signed in as {session?.user?.email}.
+        </p>
+
+        <h2>Browse</h2>
+        <ul>
+          <li>
+            <Link href="/tree">Family tree</Link> — everyone, and how they
+            connect
+          </li>
+        </ul>
+      </div>
 
       <form
-        className="mt-12"
+        className="mt-10"
         action={async () => {
           "use server";
           await signOut({ redirectTo: "/signin" });
         }}
       >
-        <button
-          type="submit"
-          className="text-sm text-stone-500 underline underline-offset-4 hover:text-stone-800 dark:hover:text-stone-200"
-        >
+        <button type="submit" className="text-note text-link hover:underline">
           Sign out
         </button>
       </form>
