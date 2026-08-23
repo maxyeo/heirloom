@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   check:
-    name: typecheck, lint, build
+    name: typecheck, lint, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -46,7 +46,14 @@ jobs:
 
       - run: npm run lint
 
-      # E10-T1 (YEO-65) adds the `npm test` step here, once a test runner exists.
+      # Before the build, because it is far quicker to fail and a broken unit
+      # test is a more useful first signal than a broken bundle. `npm test`
+      # runs Vitest's `unit` project, which is the half of the suite that
+      # needs no database — the same constraint the build step below is
+      # documenting. Tests that do need Postgres are named `*.db.test.ts` and
+      # run under `npm run test:db`, which is deliberately not wired in here.
+      # See docs/testing.md.
+      - run: npm test
 
       # No DATABASE_URL, no AUTH_* — deliberately. `next build` evaluates every
       # module while it collects route data, so a build that needs a live
