@@ -262,6 +262,17 @@
       margin-block: 0.1rem 0;
     }
 
+    /* Tiptap wraps a list item's content in a paragraph, so anything written
+     * in the editor (E1-T2) arrives as `<li><p>Alice</p></li>` rather than
+     * `<li>Alice</li>`. Both are in the sanitiser's allowlist and neither is
+     * wrong, but without this the paragraph's bottom margin becomes the gap
+     * between bullets and a tight Wikipedia list reads as a loose one. Scoped
+     * to the last paragraph so a list item that really does hold two
+     * paragraphs still separates them. */
+    li > p:last-child {
+      margin-block-end: 0;
+    }
+
     dl {
       margin-block: 0.3rem 0.8rem;
     }

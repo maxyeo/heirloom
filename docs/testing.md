@@ -123,13 +123,8 @@ which a local `createdb heirloom_test` already gives you.
 
 ## What this does not cover yet
 
-The harness is deliberately small, and two things are simply not set up:
+The harness is deliberately small, and one thing is simply not set up:
 
-- **No DOM environment.** There is no `jsdom`/`happy-dom` and no
-  `@testing-library/react`, so React components cannot be rendered yet. The
-  Next.js guide in `node_modules/next/dist/docs/01-app/02-guides/testing/`
-  covers the wiring; add it when the first component test needs it, as a third
-  project or an `environment` override, not by making every test pay for a DOM.
 - **No mocking conventions.** Nothing has needed `vi.mock` yet. Route-handler
   and server-action tests (E10-T2) will be the first to decide whether to mock
   `@/lib/session` or drive real sessions, and whichever way that goes belongs
@@ -137,6 +132,34 @@ The harness is deliberately small, and two things are simply not set up:
 
 Note also that `async` Server Components are not unit-testable — React and
 Vitest do not support it yet — so treat those as end-to-end territory.
+
+## Tests that need a DOM
+
+`components/EntryEditor.test.tsx` is the worked example.
+
+There is no third Vitest project for these and no `@testing-library/react`.
+A file that needs a document says so on its first line:
+
+```tsx
+// @vitest-environment jsdom
+```
+
+Vitest reads that docblock per file, which is the `environment` override this
+document used to describe as the thing to add "when the first component test
+needs it". The editor was that first test. Everything else still runs in plain
+Node and pays nothing for a DOM it does not use, and `npm test` picks these up
+like any other file — no new script, no CI change.
+
+Rendering is eight lines of `react-dom/client` and React's own `act`, at the
+top of that file. Copy it rather than reaching for a library; if a third
+component wants it, that is the moment to extract a helper, not before.
+
+**Prefer no DOM.** Most of what looks like component behaviour is a decision
+that can be moved into a plain module and checked in Node —
+`lib/editor-extensions.ts` holds the editor's toolbar and extension
+configuration for exactly that reason, and `lib/editor-extensions.test.ts`
+checks it without a document. Reach for jsdom only for what genuinely needs
+one: mounting, and the behaviour of a live editor.
 
 ## Why `test:db` is not in CI
 
