@@ -179,7 +179,9 @@ The only Vercel-specific dependency is image storage, and it sits behind a
 single module so it can be swapped in one file. Everything else runs on any
 Node host with any Postgres:
 
-- `output: "standalone"` produces a self-contained server bundle
+- `output: "standalone"` produces a self-contained server bundle (it is switched
+  off when `VERCEL` is set, since Vercel's builder emits its own output format
+  and the standalone tracing step fails there)
 - Environment variables are named generically (`DATABASE_URL`, not
   `SUPABASE_URL`)
 - `prepare: false` is set unconditionally — required by Supabase's transaction

@@ -116,10 +116,10 @@ are on any other Postgres, you do not need this workflow at all — delete it.
 
 ### Other hosts
 
-`output: "standalone"` is set, so `next build` produces a self-contained server
-bundle that runs under plain Node or in a container. Nothing outside image
-storage is tied to Vercel, and environment variables are named generically so
-any Postgres provider works.
+`output: "standalone"` is set for every build except Vercel's, so `next build`
+produces a self-contained server bundle that runs under plain Node or in a
+container. Nothing outside image storage is tied to Vercel, and environment
+variables are named generically so any Postgres provider works.
 
 ## Scripts
 
