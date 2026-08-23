@@ -23,9 +23,23 @@ tree editor are next — see [Status](docs/product.md#status).
 
 ### 1. Database
 
-Any Postgres works. On Supabase, create a project and copy the **pooler**
-connection string — Connect → Transaction pooler, port `6543`. Do not use the
-direct connection; serverless functions will exhaust its connection limit.
+Develop against a local Postgres, not the deployed one:
+
+```bash
+createdb heirloom
+```
+
+That's it — `.env.example`'s `DATABASE_URL` already points at
+`postgresql://localhost:5432/heirloom`, postgres.js defaults the connection
+user to your OS user, and a local install accepts local connections with no
+password.
+
+Heirloom *deploys* to Supabase. If you're setting up a deployment, create a
+project and copy the **pooler** connection string — Connect → Transaction
+pooler, port `6543`. Do not use the direct connection there; serverless
+functions will exhaust its connection limit. See [Reaching production
+deliberately](#reaching-production-deliberately) for pointing your own
+machine at it without touching `DATABASE_URL`.
 
 ### 2. Google OAuth
 
@@ -50,8 +64,8 @@ cp .env.example .env.local
 npx auth secret          # writes AUTH_SECRET
 ```
 
-Then fill in `DATABASE_URL`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, and
-`ALLOWED_EMAILS`.
+`DATABASE_URL` is already filled in for the local Postgres from step 1. Fill
+in `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, and `ALLOWED_EMAILS`.
 
 `ALLOWED_EMAILS` is the entire membership model. Google sign-in proves who
 someone is; it has no opinion on whether they are allowed in. Anyone not on
@@ -61,8 +75,8 @@ that comma-separated list is rejected.
 
 ```bash
 npm install
-npm run db:migrate       # apply migrations
-npm run db:seed          # optional: load the example family
+npm run db:migrate       # apply migrations to the local database
+npm run db:seed          # optional: reset it and load the example family
 npm run dev            # http://localhost:3001
 ```
 
@@ -71,19 +85,49 @@ marriages across four adults and eleven children. It exists to prove the tree
 renders the hard cases. See
 [the worked example](docs/architecture.md#the-worked-example).
 
+**`npm run db:seed` deletes every row first, with no confirmation and nothing
+to undo it**, before inserting the fixture. It refuses to run at all against
+anything other than a local host (`localhost`, `127.0.0.1`) unless
+`SEED_ALLOW_DESTRUCTIVE` names the exact host it's about to wipe — see
+[Reaching production deliberately](#reaching-production-deliberately).
+
+## Which database you're pointing at
+
+By default, and after following Setup above, `DATABASE_URL` is your local
+`heirloom` Postgres database. That's the database every script in this README
+talks to unless you say otherwise.
+
+### Reaching production deliberately
+
+Sometimes you genuinely need the deployed database from your own machine —
+checking something migrations changed, running a one-off read. Set
+`PRODUCTION_DATABASE_URL` in `.env.local` once (see `.env.example`), then
+select it per-command with `DATABASE_TARGET`:
+
+```bash
+DATABASE_TARGET=production npm run db:studio
+```
+
+`DATABASE_URL` itself is never edited to do this — `DATABASE_TARGET` swaps
+which variable it resolves from for that one command. The same switch has a
+`test` value, which `npm run test:db` sets for you; see
+[Testing](docs/testing.md) and `lib/database-target.ts`.
+
 ## Tests
 
 ```bash
 npm test                 # everything that needs no database
 npm run test:watch
-npm run test:db          # only the tests that do need one
+npm run test:db          # only the tests that do need one, against heirloom_test
 ```
 
 The suite is split on a filename: `*.test.ts` is pure and runs in CI,
-`*.db.test.ts` needs Postgres and runs only under `npm run test:db`. CI runs
-`npm test` with no `DATABASE_URL` and no `AUTH_*` at all, which is what keeps
-that boundary honest. See [Testing](docs/testing.md) before writing a test that
-needs a database.
+`*.db.test.ts` needs Postgres and runs only under `npm run test:db`, which
+points at a separate local `heirloom_test` database via `DATABASE_TARGET=test`
+— your everyday `DATABASE_URL` is never touched by it. CI runs `npm test` with
+no `DATABASE_URL` and no `AUTH_*` at all, which is what keeps that boundary
+honest. See [Testing](docs/testing.md) before writing a test that needs a
+database.
 
 ## Deploying
 
@@ -130,11 +174,12 @@ variables are named generically so any Postgres provider works.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Tests that need no database — what CI runs |
 | `npm run test:watch` | The same suite, in watch mode |
-| `npm run test:db` | Tests that need a database |
+| `npm run test:db` | Tests that need a database, against `heirloom_test` |
 | `npm run db:generate` | Generate a migration from schema changes |
-| `npm run db:migrate` | Apply migrations |
+| `npm run db:migrate` | Apply migrations to `DATABASE_URL` |
+| `npm run db:migrate:test` | Apply migrations to `heirloom_test` |
 | `npm run db:migrate:deploy` | Apply migrations the way the deploy does |
-| `npm run db:seed` | Reset and load the example family |
+| `npm run db:seed` | Reset and load the example family — refuses on a non-local host without `SEED_ALLOW_DESTRUCTIVE` |
 | `npm run db:keep-alive` | Ping the database so Supabase does not pause it |
 | `npm run db:studio` | Drizzle Studio |
 

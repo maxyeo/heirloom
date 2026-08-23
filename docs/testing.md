@@ -90,32 +90,36 @@ Files in the `db` project run one at a time (`fileParallelism: false`), because
 they all share one database and would otherwise clear each other's rows
 mid-assertion. Within a file, assume tests run in order.
 
-**Pointing it at a database.** Any Postgres works; it does not have to be the
-Supabase project. A throwaway container is the safest option, and is how this
-pattern was verified:
+**Pointing it at a database.** `npm run test:db` runs
+`DATABASE_TARGET=test vitest run --project db`, and `lib/load-env.ts`
+resolves `DATABASE_TARGET=test` to `TEST_DATABASE_URL` — see
+`lib/database-target.ts`. `.env.local` is never edited to run these tests:
+`DATABASE_URL` keeps meaning your everyday development database throughout.
+
+The expected setup is a second local Postgres database alongside the one you
+develop against:
 
 ```bash
-docker run --rm -d --name heirloom-test-pg \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=heirloom_test \
-  -p 55432:5432 postgres:16
+createdb heirloom_test
 ```
 
-Then point `DATABASE_URL` at it. If you already have a `.env.local`, **edit
-it** — it also holds `AUTH_SECRET` and your Google credentials, and
-overwriting it loses them irrecoverably, since it is gitignored:
-
 ```
-DATABASE_URL=postgres://postgres:postgres@localhost:55432/heirloom_test
+TEST_DATABASE_URL="postgresql://localhost:5432/heirloom_test"
 ```
 
 ```bash
-npm run db:migrate    # create the schema in the throwaway database
+npm run db:migrate:test    # create the schema in heirloom_test
 npm run test:db
 ```
 
+Any Postgres works for `TEST_DATABASE_URL` — it does not have to be local —
+but a database on the same local server keeps this a one-command setup with
+nothing to run in the background.
+
 Note that these tests use fixed row ids, so two people running `npm run
-test:db` against the *same* database at the same time will collide. A
-container each is the simplest way not to think about it.
+test:db` against the *same* `heirloom_test` database at the same time will
+collide. A database of your own is the simplest way not to think about it,
+which a local `createdb heirloom_test` already gives you.
 
 ## What this does not cover yet
 
