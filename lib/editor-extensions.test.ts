@@ -197,6 +197,12 @@ describe("links", () => {
       ["https://example.com/a?b=c#d", "https://example.com/a?b=c#d"],
       ["http://example.com", "http://example.com"],
       ["mailto:rose@example.com", "mailto:rose@example.com"],
+      // A bare email, which `https://` in front of would turn into a link to
+      // example.com with `rose` as the username — somewhere real, and not
+      // where the author meant.
+      ["rose@example.com", "mailto:rose@example.com"],
+      // Still a web address, despite the `@`.
+      ["example.com/photos?by=a@b.co", "https://example.com/photos?by=a@b.co"],
       ["HTTPS://Example.com", "HTTPS://Example.com"],
       // How one entry links to another, and to a section of itself.
       ["/wiki/rose", "/wiki/rose"],
@@ -233,6 +239,7 @@ describe("links", () => {
         "https://example.com/a",
         "http://example.com",
         "mailto:rose@example.com",
+        "rose@example.com",
         "/wiki/rose",
         "#early-life",
         "javascript:alert(1)",

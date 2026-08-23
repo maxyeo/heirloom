@@ -162,6 +162,26 @@ describe("keyboard shortcuts", () => {
   });
 });
 
+function linkButton(host: HTMLElement): HTMLButtonElement {
+  const button = [
+    ...host.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+  ].find((candidate) => candidate.textContent === "Link");
+  if (!button) throw new Error("no Link button in the toolbar");
+  return button;
+}
+
+/**
+ * The editor instance behind a rendered component. ProseMirror hangs it off
+ * the DOM node it manages, which is the only handle a test has — the component
+ * deliberately does not expose one.
+ */
+function editorOf(host: HTMLElement): Editor {
+  const node = host.querySelector('[contenteditable="true"]');
+  const editor = (node as unknown as { editor?: Editor } | null)?.editor;
+  if (!editor) throw new Error("no editor mounted");
+  return editor;
+}
+
 describe("the rendered component", () => {
   const CONTENT =
     "<h2>Early life</h2><p>Rose married <strong>Walter</strong>.</p><ul><li>Alice</li></ul>";
@@ -234,14 +254,29 @@ describe("the rendered component", () => {
 
   it("opens a link panel rather than a browser prompt", () => {
     const host = render(<EntryEditor />);
-    const link = [
-      ...host.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
-    ].find((button) => button.textContent === "Link");
 
-    act(() => link?.click());
+    act(() => linkButton(host).click());
 
     const field = host.querySelector<HTMLInputElement>('input[type="text"]');
     expect(field).not.toBeNull();
     expect(field?.placeholder).toBe("example.com or /wiki/rose");
+  });
+
+  it("closes the link panel when the selection moves out from under it", () => {
+    // The panel is seeded from the selection it was opened on. If it survived
+    // the cursor moving, Apply would write the draft address onto whatever the
+    // author clicked next, and Remove would strip a link they never touched.
+    const host = render(
+      <EntryEditor initialHtml="<p>Rose married Walter.</p>" />,
+    );
+
+    act(() => linkButton(host).click());
+    expect(host.querySelector('input[type="text"]')).not.toBeNull();
+
+    act(() => {
+      editorOf(host).commands.setTextSelection({ from: 1, to: 5 });
+    });
+
+    expect(host.querySelector('input[type="text"]')).toBeNull();
   });
 });

@@ -78,9 +78,13 @@ export function EntryEditor({
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  // Built once and kept. Tiptap compares extension arrays by reference, so a
+  // fresh array on every render makes it re-apply options it already has.
+  const [extensions] = useState(createEntryExtensions);
+
   const editor = useEditor({
     ...EDITOR_INPUT_OPTIONS,
-    extensions: createEntryExtensions(),
+    extensions,
     content: initialHtml,
     // Required under the App Router: rendering the editor during the server
     // pass would produce markup the client immediately disagrees with.
@@ -170,6 +174,28 @@ function EntryEditorToolbar({ editor }: { editor: Editor }) {
     const href: unknown = editor.getAttributes("link").href;
     setLinkDraft(typeof href === "string" ? href : "");
   }, [editor]);
+
+  const linkPanelOpen = linkDraft !== null;
+
+  /**
+   * The panel is seeded from the selection it was opened on, so it stops
+   * describing anything the moment the cursor moves. Leaving it up would let
+   * "Apply" write a draft address onto whatever the author clicked next, and
+   * "Remove" strip a link they never asked to edit.
+   *
+   * Closing is the right response rather than resyncing: a panel that
+   * silently rewrote itself as the author clicked around the document would
+   * be harder to understand, not easier.
+   */
+  useEffect(() => {
+    if (!linkPanelOpen) return;
+
+    const close = () => setLinkDraft(null);
+    editor.on("selectionUpdate", close);
+    return () => {
+      editor.off("selectionUpdate", close);
+    };
+  }, [editor, linkPanelOpen]);
 
   function isPressed(id: ToolbarItemId): boolean {
     switch (id) {
@@ -266,7 +292,11 @@ function EntryEditorToolbar({ editor }: { editor: Editor }) {
           draft={linkDraft}
           onDraftChange={setLinkDraft}
           isOnALink={state.link}
-          onClose={() => setLinkDraft(null)}
+          onClose={() => {
+            setLinkDraft(null);
+            // Dismissing a panel should not leave focus nowhere.
+            editor.commands.focus();
+          }}
           onApply={(href) => {
             const { empty } = editor.state.selection;
             if (empty && !state.link) {

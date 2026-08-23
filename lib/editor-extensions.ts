@@ -104,6 +104,8 @@ export const BLOCK_STYLES = [
  *   `ALLOWED_URL_SCHEMES`, which is what disposes of `javascript:` and
  *   `data:`.
  */
+const EMAIL = /^[^@\s/?#]+@[^@\s/?#]+\.[^@\s/?#]+$/;
+
 export function normaliseLinkHref(input: string): string | null {
   const href = input.trim();
 
@@ -120,7 +122,15 @@ export function normaliseLinkHref(input: string): string | null {
   if (href.startsWith("/") || href.startsWith("#")) return href;
 
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1];
-  if (scheme === undefined) return `https://${href}`;
+  if (scheme === undefined) {
+    // A bare address with an `@` in it is an email, and `https://` in front of
+    // one produces `https://rose@example.com` — a URL whose host is
+    // example.com and whose username is rose. It is not a broken link, which
+    // is what makes it worth catching: it goes somewhere, just nowhere the
+    // author meant. The path, query and fragment characters are excluded so
+    // that `example.com/photos?by=a@b.co` stays a web address.
+    return EMAIL.test(href) ? `mailto:${href}` : `https://${href}`;
+  }
 
   return ALLOWED_URL_SCHEMES.includes(
     scheme.toLowerCase() as (typeof ALLOWED_URL_SCHEMES)[number],
