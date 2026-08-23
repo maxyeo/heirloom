@@ -21,6 +21,14 @@ export default async function Home() {
 
         <h2>Browse</h2>
         <ul>
+          {/* First, and deliberately so. Until search exists (E8) the index is
+              the only way to reach an entry whose address you do not already
+              know, which is what makes it the fallback navigation rather than
+              a page of its own. */}
+          <li>
+            <Link href="/wiki">All entries</Link> — everything written so far,
+            alphabetically
+          </li>
           <li>
             <Link href="/tree">Family tree</Link> — everyone, and how they
             connect

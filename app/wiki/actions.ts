@@ -73,6 +73,18 @@ export async function savePageAction(
    */
   if (result.status === "saved") {
     revalidatePath(`/wiki/${edit.slug}`);
+
+    /**
+     * And the index (E1-T9), which shows this entry's title and the date it
+     * last changed — both of which this save just moved. Without it, an author
+     * who edits an entry and navigates back to `/wiki` is served the cached
+     * RSC payload and sees the old title under the old date.
+     *
+     * A bare path, not `"layout"`: the entry route above is revalidated by
+     * name, and the layout form would additionally throw away every *other*
+     * entry's cached payload to fix one row on one list.
+     */
+    revalidatePath("/wiki");
   }
 
   return result;
