@@ -74,8 +74,21 @@ variables in the project settings. Add your production callback URL to the
 Google OAuth client.
 
 **Keep the database awake.** Supabase pauses free projects after about a week
-of inactivity, which will find a family wiki that gets visited monthly. A daily
-scheduled job that runs a trivial query avoids it.
+of inactivity, which will find a family wiki that gets visited monthly. The
+`Keep database awake` workflow (`.github/workflows/keep-alive.yml`) runs a
+trivial query once a day to avoid it.
+
+It needs one thing from you: add the same pooler connection string as a
+repository secret named `DATABASE_URL`, under **Settings → Secrets and
+variables → Actions**. Until that exists every run fails. Once it is set, run
+the workflow manually from the Actions tab to confirm it passes rather than
+waiting a day to find out.
+
+If the keep-alive ever breaks it opens an issue labelled `keep-alive`, and
+closes it again on the next successful run — a silently broken keep-alive
+would be no better than not having one. Note that GitHub disables scheduled
+workflows in repositories with no activity for 60 days, and emails the owner
+when it does.
 
 ### Other hosts
 
@@ -94,6 +107,7 @@ any Postgres provider works.
 | `npm run db:generate` | Generate a migration from schema changes |
 | `npm run db:migrate` | Apply migrations |
 | `npm run db:seed` | Reset and load the example family |
+| `npm run db:keep-alive` | Ping the database so Supabase does not pause it |
 | `npm run db:studio` | Drizzle Studio |
 
 ## Licence

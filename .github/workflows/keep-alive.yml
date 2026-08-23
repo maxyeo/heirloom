@@ -1,0 +1,117 @@
+# Keeps the Supabase project from being paused.
+#
+# Supabase pauses free projects after roughly a week of inactivity. This lives
+# in GitHub Actions rather than Vercel Cron on purpose: it is a Supabase
+# concern, not an application one. Putting it in the app would couple a
+# hosting workaround to the product and would stop working the moment someone
+# deployed elsewhere. See docs/architecture.md ("Portability").
+#
+# Requires a repository secret named DATABASE_URL — the same pooler
+# connection string the deployed app uses. Without it every run fails with
+# "DATABASE_URL is not set".
+
+name: Keep database awake
+
+on:
+  schedule:
+    # Daily. Off the hour, because scheduled jobs queued at :00 are the most
+    # likely to be delayed or dropped by GitHub under load.
+    - cron: "23 6 * * *"
+  # So the secret can be verified without waiting a day for the next run.
+  workflow_dispatch:
+
+# Read the repo, and file the failure issue below. Nothing else.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping the database
+    runs-on: ubuntu-latest
+    # A generous backstop for the whole job. The tight bound that matters is
+    # on the ping step itself; this one only exists so nothing can sit here
+    # for six hours, and it is deliberately loose enough that a slow npm ci
+    # can never trip it.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same Node major as CI and as local development, rather than drifting
+      # with whatever the runner image ships.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` rather than `npm install`, matching CI: the keep-alive should
+      # run against the locked dependency tree, not a freshly resolved one.
+      - run: npm ci
+
+      - name: Ping
+        # A database that accepts the connection and then never answers is the
+        # failure this guards against. The bound belongs on the step rather
+        # than the job for a reason that is easy to get wrong: exceeding a
+        # *job* timeout cancels the job, and a cancelled job skips every step
+        # conditioned on failure() — so the reporting below would never run,
+        # which is exactly the silent breakage this workflow exists to avoid.
+        # Exceeding a *step* timeout is an ordinary step failure, so failure()
+        # fires and the issue gets filed. `select 1` answers in well under a
+        # second; two minutes is already far past dead.
+        timeout-minutes: 2
+        run: npm run db:keep-alive
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      # A red cross on a tab nobody opens is not visibility. GitHub emails
+      # only whoever last edited the cron when a scheduled run fails, which is
+      # exactly the notification people filter away. An open issue is a state
+      # you trip over instead, and the two steps below keep it truthful: it
+      # exists while the keep-alive is broken and closes itself when the next
+      # run succeeds. Repeat failures comment rather than pile up new issues.
+      - name: Open or update the failure issue
+        # cancelled() as well as failure(): the job-level timeout above and a
+        # cancellation from the Actions UI both land here rather than in
+        # failure(), and a keep-alive that stopped reporting because it was
+        # cancelled is still a keep-alive that is not keeping anything alive.
+        # A manual cancellation filing an issue is a rare, self-healing
+        # false positive — the next green run closes it.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create keep-alive --color B60205 \
+            --description "Automated: the database keep-alive is failing" --force
+          existing=$(gh issue list --state open --label keep-alive --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "Database keep-alive is failing" --label keep-alive \
+              --body "$(printf '%s\n' \
+                'The daily keep-alive could not query the database.' \
+                '' \
+                "Failing run: $RUN_URL" \
+                '' \
+                'Until this is fixed, Supabase will pause the project after about a week of inactivity and the site will return errors. Usual causes: the `DATABASE_URL` repository secret is missing or has been rotated, or the project is already paused and needs restoring from the Supabase dashboard.' \
+                '' \
+                'This issue closes itself on the next successful run.')"
+          fi
+
+      - name: Close the failure issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --label keep-alive --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Keep-alive succeeded again; closing."
+          fi
