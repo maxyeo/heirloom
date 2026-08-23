@@ -112,6 +112,21 @@ describe("assertSeedTarget", () => {
     expect(result.allowed).toBe(false);
   });
 
+  it("refuses a bare-hostname override when the URL carries a username", () => {
+    // The one case that actually distinguishes this implementation from a
+    // hostname-only one. Every other test above still passes if `username`
+    // is ignored entirely — an override shaped `user@host` never equals a
+    // bare hostname, so those refusals happen for the wrong reason. Here a
+    // hostname-only guard would *allow*, which is the exact defect the
+    // user@host token was introduced to close: on a shared pooler the host
+    // is not the database's identity.
+    const result = assertSeedTarget(
+      "postgresql://postgres.project-a:pw@aws-0-us-west-2.pooler.supabase.com:5432/postgres",
+      env({ SEED_ALLOW_DESTRUCTIVE: "aws-0-us-west-2.pooler.supabase.com" }),
+    );
+    expect(result.allowed).toBe(false);
+  });
+
   it("refuses an unparseable DATABASE_URL rather than assuming it is safe", () => {
     const result = assertSeedTarget("not a url", env({}));
     expect(result.allowed).toBe(false);
