@@ -27,12 +27,15 @@ import {
  *
  * The edited HTML leaves through two doors, and a caller may use either:
  *
- * - **`name`** renders a hidden input, so the editor drops straight into a
- *   `<form action={saveEntry}>` and the server action reads it out of
- *   `FormData` like any other field. No client state in the parent, and the
- *   parent stays a Server Component.
- * - **`onChange`** hands over the HTML on every keystroke, for a caller that
- *   wants a dirty flag or an autosave.
+ * - **`onChange`** hands over the HTML after every change. This is the door
+ *   E1-T3's `savePageAction` fits: it takes a typed `{ slug, title, bodyHtml }`
+ *   rather than `FormData`, so its caller holds the body and passes it in.
+ * - **`name`** renders a hidden input instead, for a caller that submits a
+ *   plain `<form>` and reads the body out of `FormData`. Nothing does today —
+ *   it is here because it costs one element and it is the only shape that
+ *   keeps the parent a Server Component with no client state of its own.
+ *
+ * A caller uses one or the other; both work at once and neither is required.
  *
  * The HTML is *not* sanitised here, deliberately. `lib/sanitize-html.ts` runs
  * on the server on write and again on read; a client-side pass would be
