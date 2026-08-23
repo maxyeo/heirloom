@@ -120,6 +120,20 @@ What this exercises:
 
 If the tree renders this correctly, the hard part works.
 
+### Date precision
+
+A `date` column can only hold an exact day, and genealogical sources routinely
+do not supply one — "about 1890", "before 1920", a year read off a headstone.
+Every date column therefore has a `date_qualifier` sibling
+(`exact` / `about` / `before` / `after`, defaulting to `exact`):
+`individuals.birth_date`, `individuals.death_date`, `unions.start_date`, and
+`unions.end_date`.
+
+Two consequences worth naming. Imprecision no longer has to hide in `notes`,
+where nothing can query or format it; and the four values are exactly GEDCOM
+5.5.1's date modifiers, so `ABT`/`BEF`/`AFT` survive a round trip through
+import and export instead of being silently discarded.
+
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations
@@ -159,9 +173,6 @@ Node host with any Postgres:
 
 ## Known limitations
 
-- **Date precision.** Dates are stored as `date`, which cannot express "about
-  1890" or "before 1920" — both common in genealogy. The `notes` field is the
-  current escape hatch. A proper fix would add a qualifier column.
 - **No RLS.** By design (see above), but it means a route handler that forgets
   `requireSession()` has nothing underneath it to fail safe.
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of

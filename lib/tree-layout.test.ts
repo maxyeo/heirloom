@@ -50,7 +50,9 @@ function person(overrides: Partial<FamilyGraph["people"][number]> & { id: string
     surname: "Hale",
     sex: "female",
     birthDate: null,
+    birthDateQualifier: "exact",
     deathDate: null,
+    deathDateQualifier: "exact",
     pageId: null,
     ...overrides,
   } satisfies FamilyGraph["people"][number];
@@ -63,6 +65,7 @@ function union(overrides: Partial<FamilyGraph["unions"][number]> & { id: string 
     endReason: "ongoing",
     sequence: 1,
     startDate: null,
+    startDateQualifier: "exact",
     ...overrides,
   } satisfies FamilyGraph["unions"][number];
 }

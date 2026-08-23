@@ -57,10 +57,16 @@ async function main() {
         deathDate: "1989-01-19",
       },
       {
+        // Walter is the imprecise one. His birth is known only as "about
+        // 1905" — a headstone age, not a register entry — and the qualifier
+        // is what keeps that from being rounded up into a false certainty.
+        // Every date rendering path should be exercised by at least one row
+        // that is not `exact`.
         givenName: "Walter",
         surname: "Shaw",
         sex: "male",
         birthDate: "1905-09-08",
+        birthDateQualifier: "about" as const,
         deathDate: "1978-04-25",
       },
     ])
@@ -133,7 +139,10 @@ async function main() {
         partnerAId: rose.id,
         partnerBId: walter.id,
         type: "marriage" as const,
+        // The year is remembered, the day is not — so the union carries a
+        // qualifier too, not just the individuals.
         startDate: "1948-07-03",
+        startDateQualifier: "about" as const,
         endReason: "ongoing" as const,
         sequence: 3,
       },

@@ -21,11 +21,13 @@ import { getFamilyGraph } from "@/lib/family-graph";
 // exactly what this file created, and assertions can ignore whatever else the
 // database already holds.
 const ROSE = "00000000-0000-4000-8000-00000000f001";
+const WALTER = "00000000-0000-4000-8000-00000000f002";
 const UNIONS = {
   thirdBySequence: "00000000-0000-4000-8000-00000000f103",
   firstBySequence: "00000000-0000-4000-8000-00000000f101",
   secondNoDate: "00000000-0000-4000-8000-00000000f102",
   secondEarlierDate: "00000000-0000-4000-8000-00000000f104",
+  qualified: "00000000-0000-4000-8000-00000000f105",
 } as const;
 
 /**
@@ -33,7 +35,9 @@ const UNIONS = {
  * `partner_b_id` are ON DELETE CASCADE, so her unions go with her.
  */
 async function removeFixture() {
-  await db.delete(schema.individuals).where(inArray(schema.individuals.id, [ROSE]));
+  await db
+    .delete(schema.individuals)
+    .where(inArray(schema.individuals.id, [ROSE, WALTER]));
 }
 
 beforeAll(async () => {
@@ -43,11 +47,22 @@ beforeAll(async () => {
   // runs this next.
   await removeFixture();
 
-  await db.insert(schema.individuals).values({
-    id: ROSE,
-    givenName: "Rose",
-    surname: "Fixture",
-  });
+  await db.insert(schema.individuals).values([
+    {
+      id: ROSE,
+      givenName: "Rose",
+      surname: "Fixture",
+    },
+    // Inserted with no qualifier at all, which is what an existing row looks
+    // like the moment after the migration runs.
+    {
+      id: WALTER,
+      givenName: "Walter",
+      surname: "Fixture",
+      birthDate: "1905-09-08",
+      deathDate: "1978-04-25",
+    },
+  ]);
 
   // Inserted deliberately out of order, so a query that lost its ORDER BY
   // would come back in a different order than the assertion expects rather
@@ -61,6 +76,14 @@ beforeAll(async () => {
       partnerAId: ROSE,
       sequence: 2,
       startDate: "1946-04-01",
+    },
+    {
+      id: UNIONS.qualified,
+      partnerAId: ROSE,
+      partnerBId: WALTER,
+      sequence: 4,
+      startDate: "1948-07-03",
+      startDateQualifier: "about",
     },
   ]);
 });
@@ -82,7 +105,36 @@ describe("getFamilyGraph", () => {
       UNIONS.secondEarlierDate,
       UNIONS.secondNoDate,
       UNIONS.thirdBySequence,
+      UNIONS.qualified,
     ]);
+  });
+
+  /**
+   * The qualifier columns are `not null default 'exact'`, so a row written
+   * without one — every row that predates the migration — has to come back
+   * qualified rather than null. That default lives in Postgres, which is why
+   * this assertion cannot move to a unit test.
+   */
+  it("defaults a date qualifier to exact when none was written", async () => {
+    const graph = await getFamilyGraph();
+    const walter = graph.people.find((person) => person.id === WALTER);
+    const union = graph.unions.find((u) => u.id === UNIONS.secondNoDate);
+
+    expect(walter).toMatchObject({
+      birthDateQualifier: "exact",
+      deathDateQualifier: "exact",
+    });
+    expect(union).toMatchObject({ startDateQualifier: "exact" });
+  });
+
+  it("carries a stored qualifier through to the graph", async () => {
+    const graph = await getFamilyGraph();
+    const union = graph.unions.find((u) => u.id === UNIONS.qualified);
+
+    expect(union).toMatchObject({
+      startDate: "1948-07-03",
+      startDateQualifier: "about",
+    });
   });
 
   it("returns the fixture partner among the people it loads", async () => {
