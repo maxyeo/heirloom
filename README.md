@@ -9,6 +9,8 @@ Built for Vercel + Supabase, but it runs on any Node host with any Postgres.
 
 - [Product overview](docs/product.md) — what it is and who it is for
 - [Architecture](docs/architecture.md) — the data model and the security model
+- [Testing](docs/testing.md) — how the suite is split, and how to test
+  something that needs Postgres
 
 ## Status
 
@@ -67,6 +69,20 @@ marriages across four adults and eleven children. It exists to prove the tree
 renders the hard cases. See
 [the worked example](docs/architecture.md#the-worked-example).
 
+## Tests
+
+```bash
+npm test                 # everything that needs no database
+npm run test:watch
+npm run test:db          # only the tests that do need one
+```
+
+The suite is split on a filename: `*.test.ts` is pure and runs in CI,
+`*.db.test.ts` needs Postgres and runs only under `npm run test:db`. CI runs
+`npm test` with no `DATABASE_URL` and no `AUTH_*` at all, which is what keeps
+that boundary honest. See [Testing](docs/testing.md) before writing a test that
+needs a database.
+
 ## Deploying
 
 Push to GitHub, import the repo in Vercel, and set the same environment
@@ -104,6 +120,9 @@ any Postgres provider works.
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Tests that need no database — what CI runs |
+| `npm run test:watch` | The same suite, in watch mode |
+| `npm run test:db` | Tests that need a database |
 | `npm run db:generate` | Generate a migration from schema changes |
 | `npm run db:migrate` | Apply migrations |
 | `npm run db:seed` | Reset and load the example family |
