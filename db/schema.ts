@@ -24,6 +24,32 @@ import {
 
 export const sex = pgEnum("sex", ["male", "female", "other", "unknown"]);
 
+/**
+ * How much to trust the `date` column sitting next to this one.
+ *
+ * Genealogical sources are rarely precise: a headstone gives a year, a parish
+ * register says "about 1890", a will proves someone was already dead "before
+ * 1920". Postgres `date` can only store a single exact day, so without this
+ * the imprecision has nowhere to go but the `notes` field — where no query,
+ * no formatter, and no GEDCOM export can see it.
+ *
+ * The four values are exactly GEDCOM 5.5.1's date modifiers (`ABT`, `BEF`,
+ * `AFT`, plus the unmodified case), so import and export are lossless for the
+ * overwhelming majority of real dates.
+ *
+ * `exact` is the default, which is what makes this migration safe: every
+ * existing row keeps meaning precisely what it meant before. The columns are
+ * `not null` rather than nullable for the same reason — a qualifier is only
+ * ever read alongside its date, so "no date at all" is already expressed by
+ * the `date` column being null and needs no second way of saying it.
+ */
+export const dateQualifier = pgEnum("date_qualifier", [
+  "exact",
+  "about",
+  "before",
+  "after",
+]);
+
 export const unionType = pgEnum("union_type", [
   "marriage",
   "partnership",
@@ -97,8 +123,14 @@ export const individuals = pgTable(
     surname: text("surname"),
     sex: sex("sex").notNull().default("unknown"),
     birthDate: date("birth_date"),
+    birthDateQualifier: dateQualifier("birth_date_qualifier")
+      .notNull()
+      .default("exact"),
     birthPlace: text("birth_place"),
     deathDate: date("death_date"),
+    deathDateQualifier: dateQualifier("death_date_qualifier")
+      .notNull()
+      .default("exact"),
     deathPlace: text("death_place"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -123,7 +155,13 @@ export const unions = pgTable("unions", {
   }),
   type: unionType("type").notNull().default("marriage"),
   startDate: date("start_date"),
+  startDateQualifier: dateQualifier("start_date_qualifier")
+    .notNull()
+    .default("exact"),
   endDate: date("end_date"),
+  endDateQualifier: dateQualifier("end_date_qualifier")
+    .notNull()
+    .default("exact"),
   endReason: unionEndReason("end_reason").notNull().default("ongoing"),
   /**
    * Display order when dates are unknown. Families often remember the sequence
