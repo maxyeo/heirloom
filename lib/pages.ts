@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { compareEntriesByTitle } from "@/lib/page-index";
 
 /**
  * An entry's identity and its content — what a caller needs in order to
@@ -58,4 +59,75 @@ export async function getPageBySlug(
     .limit(1);
 
   return entry;
+}
+
+/**
+ * One row of the page index (E1-T9): enough to link to an entry and to say
+ * when it last changed.
+ *
+ * `bodyHtml` is the deliberate omission here, for the same narrow-select
+ * reason `WikiEntry` above gives for its own. The index renders no prose, and
+ * a few hundred entries' worth of article HTML is a payload this route would
+ * fetch across the wire, hold in memory and then throw away.
+ *
+ * `id` is absent too, and that is not an oversight: the index links and
+ * nothing more, and `slug` is both the address it links to and a unique key
+ * for the list. `WikiEntry` carries `id` because its callers write; this one's
+ * do not.
+ */
+export type WikiEntrySummary = {
+  slug: string;
+  title: string;
+  updatedAt: Date;
+};
+
+/**
+ * Every entry, in the order a reader should meet them.
+ *
+ * ## Why the whole table
+ *
+ * There is no `limit`, no cursor and no count query, because the ticket says
+ * there does not need to be: the corpus is a family's entries, a few hundred
+ * at the outside. That is the same judgement `getFamilyGraph` makes about the
+ * individuals table, and the index is the fallback navigation until search
+ * (E8) exists — a paginated fallback would be a worse one.
+ *
+ * ## Why the ordering is not an `ORDER BY`
+ *
+ * docs/testing.md holds up `getFamilyGraph`'s ordering as the case for putting
+ * an `ORDER BY` in SQL, and this is the deliberate exception to it.
+ * "Alphabetical" is a question about language, and Postgres answers it out of
+ * the database's collation — which is not this application's to choose. A
+ * local `createdb` on macOS produces a `C`-collated database, where
+ * `ORDER BY title` reads:
+ *
+ *     Ada Byron, Zoe, alice, de Vere, Émile Lefèvre
+ *
+ * — every capital ahead of every lowercase, and every accented letter behind
+ * both. `lower(title)` corrects the first half and not the second. Supabase
+ * creates its databases `en_US.UTF-8`, which gets both right, so the fault
+ * would be invisible in production and permanent on the machine the entries
+ * are written on.
+ *
+ * `Intl.Collator` is the same Unicode collation algorithm, pinned to one
+ * locale by the application rather than inherited from whichever server the
+ * rows happen to sit on. Using it costs reading the table before sorting it,
+ * which the paragraph above already grants — and it buys an order that is
+ * identical everywhere and testable under `npm test`, where CI can see it.
+ * See `lib/page-index.ts`.
+ *
+ * @returns every entry, alphabetically by title
+ */
+export async function listPages(): Promise<WikiEntrySummary[]> {
+  const entries = await db
+    .select({
+      slug: schema.pages.slug,
+      title: schema.pages.title,
+      updatedAt: schema.pages.updatedAt,
+    })
+    .from(schema.pages);
+
+  // Sorting in place is safe: `entries` is an array Drizzle built for this
+  // call, and nothing else holds a reference to it.
+  return entries.sort(compareEntriesByTitle);
 }
