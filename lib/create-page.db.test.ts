@@ -1,9 +1,9 @@
-import { asc, eq, like, sql } from "drizzle-orm";
+import { asc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { createPage } from "@/lib/create-page";
-import { slugFromTitle } from "@/lib/entry-slug";
+import { RESERVED_SLUGS, slugFromTitle } from "@/lib/entry-slug";
 
 /**
  * Database tests for the create path (E1-T8). Run with `npm run test:db`; the
@@ -30,9 +30,23 @@ function title(suffix: string): string {
   return `${PREFIX} ${suffix}`;
 }
 
+/**
+ * The one test that cannot use the fixture prefix: proving a reserved slug is
+ * skipped means asking for the address `new` itself, which by definition does
+ * not start with anything. Cleaned up by exact slug instead.
+ */
+const RESERVED_CASE_SLUGS = ["new", "new-2"];
+
 /** Revisions cascade with their page, so deleting the pages is enough. */
 async function removeFixture() {
-  await db.delete(schema.pages).where(like(schema.pages.slug, `${PREFIX}%`));
+  await db
+    .delete(schema.pages)
+    .where(
+      or(
+        like(schema.pages.slug, `${PREFIX}%`),
+        inArray(schema.pages.slug, RESERVED_CASE_SLUGS),
+      ),
+    );
 }
 
 async function readPage(id: string) {
@@ -205,15 +219,43 @@ describe("createPage", () => {
     });
 
     /**
+     * The `RESERVED_SLUGS` branch, proved end to end rather than only as a
+     * property of the set. `lib/entry-slug.test.ts` checks that the set names
+     * every static directory under `app/wiki`; nothing there would notice if
+     * `createPage` stopped consulting it, and the symptom would be an entry
+     * whose address silently renders the create form instead of the entry.
+     *
+     * This is the one case that cannot wear the fixture prefix — the address
+     * under test is `new` itself.
+     */
+    it("skips an address a static route already answers", async () => {
+      const result = await createPage({ title: "New", createdBy: AUTHOR });
+
+      expect(RESERVED_SLUGS.has(slugFromTitle("New"))).toBe(true);
+      expect(result).toMatchObject({ status: "created", slug: "new-2" });
+
+      // And it is a real entry, with a real history, rather than a row that
+      // merely dodged the collision.
+      if (result.status !== "created") throw new Error("expected a page");
+      expect(await readRevisions(result.pageId)).toHaveLength(1);
+    });
+
+    /**
      * The reason `createPage` inserts with `on conflict do nothing` inside a
      * loop rather than checking whether a slug is free and then taking it.
      * Two family members starting an entry with the same title at the same
      * moment must end up with two entries at two addresses — not one crash,
      * and not one silently lost.
      *
-     * Replace the insert with a select-then-insert and this fails: both
-     * transactions read the same empty result and one of them then violates
-     * `pages_slug_unique`.
+     * Worth being honest about what this proves. The guarantee itself comes
+     * from Postgres: `on conflict` uses a speculative insertion, so the loser
+     * of a race waits for the winner to commit and then reliably sees the
+     * conflict. This test demonstrates that rather than enforcing it — a
+     * select-then-insert version would usually fail here, given the warmed
+     * pool, but it is two round trips racing rather than one, so failing is a
+     * matter of timing. That makes it a weaker guarantee than the `for update`
+     * race test in `lib/save-page.db.test.ts`, where the row lock forces the
+     * interleaving no matter how the two calls line up.
      */
     it("gives two racing authors two addresses", async () => {
       await warmPool();

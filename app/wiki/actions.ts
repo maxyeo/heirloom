@@ -148,6 +148,15 @@ export async function createPageAction(
   }
 
   /**
+   * The index (E1-T9) lists every entry, so it is stale the moment one is
+   * created. Revalidated before the redirect rather than after, because
+   * `redirect` throws — and a bare path rather than `"layout"`, matching
+   * `savePageAction` above: the entry's own route has nothing cached to
+   * clear, since it has only just started existing.
+   */
+  revalidatePath("/wiki");
+
+  /**
    * Into the editor, which is where "create an entry" actually finishes — the
    * page that exists now has a title and an empty body. `redirect` throws, so
    * nothing below runs and the function's return type is never reached.

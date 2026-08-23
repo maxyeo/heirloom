@@ -97,7 +97,17 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
           E11-T7 absorbs it into the tab row rather than building history
           discovery from scratch.
         */}
-        <p className="mb-4 text-note">
+        <p className="mb-4 flex gap-3 text-note">
+          {/*
+            Alongside the history link, and for the same reason it gives:
+            E1-T8 added the editor at `/wiki/[slug]/edit` so its create flow
+            had somewhere to land, and without this the only way back into an
+            entry you have already started is to type the URL. E11-T7 absorbs
+            both of these into the real tab row.
+          */}
+          <Link href={`/wiki/${encodeURIComponent(entry.slug)}/edit`}>
+            Edit
+          </Link>
           <Link href={`/wiki/${entry.slug}/history`}>View history</Link>
         </p>
 
