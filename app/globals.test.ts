@@ -107,7 +107,12 @@ describe("call sites", () => {
   }
 
   it("declares every colour in globals.css and nowhere else", () => {
-    const hex = /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/;
+    // The lookbehind excludes HTML numeric character references, which are a
+    // `#` followed by digits and so are otherwise indistinguishable from a
+    // short hex. `lib/sanitize-html.test.ts` contains `java&#115;cript:` — an
+    // entity-encoded scheme, not a colour — and without this the guard reads
+    // `#115` as one and fails on a file that declares no colour at all.
+    const hex = /(?<!&)#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/;
 
     const files = sourceFiles();
     // A guard that scans nothing passes for the wrong reason.
