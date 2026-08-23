@@ -67,7 +67,13 @@ export default async function WikiIndexPage() {
           {/* Chrome, not prose, so it stays outside `.wiki-body` and keeps
               Tailwind preflight's stripped list markers. The rule under each
               row is what separates one entry from the next instead. */}
-          <ul className="mt-4">
+          {/* `role="list"` restores what the styling takes away. Preflight
+              sets `list-style: none`, and Safari/VoiceOver drops a list's
+              implicit semantics when it sees that — so without this a screen
+              reader announces a run of links rather than "list, 24 items".
+              Spelled out here and not on the app's other bullet lists because
+              this is the one whose entire job is being a browsable list. */}
+          <ul role="list" className="mt-4">
             {entries.map((entry) => (
               <li
                 key={entry.slug}
