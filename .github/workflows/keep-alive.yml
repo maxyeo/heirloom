@@ -33,9 +33,11 @@ jobs:
   ping:
     name: Ping the database
     runs-on: ubuntu-latest
-    # A database that accepts the connection and then never answers would
-    # otherwise sit here for six hours. Failing fast keeps the signal honest.
-    timeout-minutes: 5
+    # A generous backstop for the whole job. The tight bound that matters is
+    # on the ping step itself; this one only exists so nothing can sit here
+    # for six hours, and it is deliberately loose enough that a slow npm ci
+    # can never trip it.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +49,16 @@ jobs:
       - run: npm ci
 
       - name: Ping
+        # A database that accepts the connection and then never answers is the
+        # failure this guards against. The bound belongs on the step rather
+        # than the job for a reason that is easy to get wrong: exceeding a
+        # *job* timeout cancels the job, and a cancelled job skips every step
+        # conditioned on failure() — so the reporting below would never run,
+        # which is exactly the silent breakage this workflow exists to avoid.
+        # Exceeding a *step* timeout is an ordinary step failure, so failure()
+        # fires and the issue gets filed. `select 1` answers in well under a
+        # second; two minutes is already far past dead.
+        timeout-minutes: 2
         run: npm run db:keep-alive
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -58,7 +70,13 @@ jobs:
       # exists while the keep-alive is broken and closes itself when the next
       # run succeeds. Repeat failures comment rather than pile up new issues.
       - name: Open or update the failure issue
-        if: failure()
+        # cancelled() as well as failure(): the job-level timeout above and a
+        # cancellation from the Actions UI both land here rather than in
+        # failure(), and a keep-alive that stopped reporting because it was
+        # cancelled is still a keep-alive that is not keeping anything alive.
+        # A manual cancellation filing an issue is a rare, self-healing
+        # false positive — the next green run closes it.
+        if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
