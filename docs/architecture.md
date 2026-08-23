@@ -52,6 +52,22 @@ Google's app verification. The 7-day refresh-token expiry that Testing mode
 imposes is irrelevant here — Google is used for identity only, never to call
 Google APIs on a user's behalf.
 
+### Entry HTML
+
+Entry bodies are the one place authored markup reaches the browser. TipTap
+writes them into a `text` column and the read route (E1-T1) will render them
+through `dangerouslySetInnerHTML`, so `lib/sanitize-html.ts` reduces them to an
+allowlist — the E1-T2 toolbar and nothing wider — on **write and on read**.
+
+Both ends, not one. Sanitising only on write trusts every row already in the
+table, including whatever a seed script or a SQL console put there.
+Sanitising only on read leaves the stored value hostile, so the next consumer
+— search indexing, diffs, export — inherits the same bug. The function is
+idempotent, so the second pass costs a parse and nothing else.
+
+This matters more here than it would elsewhere. With no RLS underneath and no
+CSP over the top, the allowlist is the whole defence.
+
 ### Secrets
 
 `DATABASE_URL`, `AUTH_SECRET`, and `AUTH_GOOGLE_SECRET` live in Vercel's
