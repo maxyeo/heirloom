@@ -1,0 +1,56 @@
+name: CI
+
+# Both triggers are deliberate. `pull_request` is what gates a merge; `push`
+# also covers commits that never open a PR, so a direct push to main cannot
+# quietly break the build. A commit on a PR branch therefore runs twice — the
+# cost is a minute of a free runner, and the alternative (restricting `push`
+# to main) leaves branch pushes unchecked until a PR exists.
+on:
+  push:
+  pull_request:
+
+# Least privilege: nothing here writes to the repository.
+permissions:
+  contents: read
+
+# Superseded runs of the *same* trigger on the same ref are pointless once a
+# newer commit exists. Keying on `event_name` as well keeps the `push` and
+# `pull_request` runs of one commit out of each other's group, so neither
+# cancels the other's check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck, lint, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Next 16 requires Node >=20.9; this is developed on 22, so CI pins the
+      # same major rather than drifting with whatever the runner image ships.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` rather than `npm install`: the lockfile is committed, and CI
+      # should fail on a lockfile that disagrees with package.json instead of
+      # silently resolving a different dependency tree than a developer has.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      # E10-T1 (YEO-65) adds the `npm test` step here, once a test runner exists.
+
+      # No DATABASE_URL, no AUTH_* — deliberately. `next build` evaluates every
+      # module while it collects route data, so a build that needs a live
+      # database is a defect that surfaces first in CI. db/index.ts connects
+      # lazily behind a Proxy precisely so it does not, and running this step
+      # with an empty environment is what keeps that true.
+      - run: npm run build
