@@ -3,14 +3,23 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 
 /**
- * What the read route needs off a `pages` row, and nothing else.
+ * An entry's identity and its content — what a caller needs in order to
+ * render the entry or to act on it, and nothing beyond that.
  *
  * Spelled out rather than inferred from the Drizzle table so the select below
  * has something to be checked against: widening the query and widening the
- * type are then the same edit, and a column nobody renders cannot drift into
- * the payload unnoticed. `updatedAt`/`updatedBy` are deliberately absent —
- * the "last edited by" line belongs to the article chrome (E11-T2), which is
- * where the column and its formatting should arrive together.
+ * type are then the same edit, and a column nobody asked for cannot drift
+ * into the payload unnoticed.
+ *
+ * `id` and `slug` are here despite the read route rendering neither, because
+ * they are the row's identity rather than a column of content: `id` is what a
+ * write path hangs off (`revisions.page_id`, E1-T3) and `slug` is what a
+ * caller builds a link back to. A lookup that handed back content without
+ * saying which row it came from would only make its callers query twice.
+ *
+ * `updatedAt`/`updatedBy` are the deliberate omission — those *are* content,
+ * and the "last edited by" line belongs to the article chrome (E11-T2), which
+ * is where the column and its formatting should arrive together.
  */
 export type WikiEntry = {
   id: string;
