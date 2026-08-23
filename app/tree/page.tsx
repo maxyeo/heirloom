@@ -10,9 +10,11 @@ export default async function TreePage() {
 
   return (
     <main className="flex h-dvh flex-col">
-      <header className="border-b border-stone-200 px-4 py-3 dark:border-stone-700">
-        <h1 className="text-lg font-semibold">Family tree</h1>
-        <p className="text-sm text-stone-500 dark:text-stone-400">
+      {/* The h1 carries its own rule (globals.css), so the header needs no
+          border of its own. */}
+      <header className="px-4 py-3">
+        <h1>Family tree</h1>
+        <p className="text-caption text-ink-muted">
           {graph.people.length} people · {graph.unions.length} unions
         </p>
       </header>

@@ -12,9 +12,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="bg-white text-stone-900 antialiased dark:bg-stone-900 dark:text-stone-100">
-        {children}
-      </body>
+      {/* Surface, ink and type all come from the theme tokens in
+          globals.css, so nothing is set here. */}
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

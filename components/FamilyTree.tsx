@@ -22,15 +22,11 @@ function PersonNode({ data }: NodeProps<Node<Record<string, unknown>>>) {
   const lifespan = String(data.lifespan ?? "");
 
   return (
-    <div className="w-44 rounded-md border border-stone-300 bg-white px-3 py-2 shadow-sm dark:border-stone-600 dark:bg-stone-800">
+    <div className="w-44 rounded-panel border border-rule bg-paper px-3 py-2 shadow-sm">
       <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <div className="truncate text-sm font-medium text-stone-900 dark:text-stone-100">
-        {name}
-      </div>
+      <div className="truncate font-medium text-ink">{name}</div>
       {lifespan ? (
-        <div className="text-xs text-stone-500 dark:text-stone-400">
-          {lifespan}
-        </div>
+        <div className="text-note text-ink-muted">{lifespan}</div>
       ) : null}
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
@@ -43,7 +39,7 @@ function PersonNode({ data }: NodeProps<Node<Record<string, unknown>>>) {
  */
 function UnionNode() {
   return (
-    <div className="h-3.5 w-3.5 rounded-full border-2 border-stone-400 bg-white dark:border-stone-500 dark:bg-stone-800">
+    <div className="h-3.5 w-3.5 rounded-full border-2 border-rule bg-paper">
       <Handle type="target" position={Position.Top} className="!opacity-0" />
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
