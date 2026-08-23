@@ -36,6 +36,55 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
  * ever been in has a row of its own, including the current one.
  */
 
+/**
+ * The transaction handle Drizzle hands to a `db.transaction` callback.
+ *
+ * Derived from `db` rather than imported as `PgTransaction<…>` because that
+ * type takes four generic parameters, all of which are already fixed by the
+ * database instance — spelling them out again would be a second place for the
+ * schema to be named, and the first one to go stale when it changes.
+ */
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Append one row to a page's history.
+ *
+ * Takes a transaction rather than opening one, which is the whole point: a
+ * revision has to land in the same transaction as the write to `pages` that
+ * it records, and a helper that opened its own would reintroduce exactly the
+ * gap the module header argues against.
+ *
+ * Shared with `lib/create-page.ts` (E1-T8), so a page's first revision is
+ * written by the same code as its hundredth — including the rule above it,
+ * that a revision holds the state being *saved* rather than the one being
+ * replaced. The values arrive already trimmed and sanitised, deliberately:
+ * this is the last step rather than a second place content gets cleaned up,
+ * so there is one answer to what exactly ends up stored.
+ *
+ * @returns the new revision's id
+ */
+export async function writeRevision(
+  tx: Transaction,
+  entry: {
+    pageId: string;
+    title: string;
+    bodyHtml: string;
+    editedBy: string;
+  },
+): Promise<string> {
+  const [revision] = await tx
+    .insert(schema.revisions)
+    .values({
+      pageId: entry.pageId,
+      title: entry.title,
+      bodyHtml: entry.bodyHtml,
+      createdBy: entry.editedBy,
+    })
+    .returning({ id: schema.revisions.id });
+
+  return revision.id;
+}
+
 export type SavePageEdit = {
   /** Which page. The URL-facing identifier, not the primary key. */
   slug: string;
@@ -125,10 +174,12 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
       return { status: "unchanged", pageId: page.id };
     }
 
-    const [revision] = await tx
-      .insert(schema.revisions)
-      .values({ pageId: page.id, title, bodyHtml, createdBy: input.editedBy })
-      .returning({ id: schema.revisions.id });
+    const revisionId = await writeRevision(tx, {
+      pageId: page.id,
+      title,
+      bodyHtml,
+      editedBy: input.editedBy,
+    });
 
     /**
      * `now()` rather than a JavaScript `Date`, because `revisions.created_at`
@@ -147,6 +198,6 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
       })
       .where(eq(schema.pages.id, page.id));
 
-    return { status: "saved", pageId: page.id, revisionId: revision.id };
+    return { status: "saved", pageId: page.id, revisionId };
   });
 }
