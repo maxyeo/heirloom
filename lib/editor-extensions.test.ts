@@ -1,5 +1,5 @@
 import { getSchema } from "@tiptap/core";
-import { StarterKit } from "@tiptap/starter-kit";
+import { Link } from "@tiptap/extension-link";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -37,27 +37,14 @@ import {
  * will actually emit. `STARTER_KIT_OPTIONS.link` is what this repo asked for;
  * this is what it got.
  *
- * StarterKit builds its children in `addExtensions()`, so calling that with the
- * configured kit as the receiver resolves them in plain Node, no DOM involved.
+ * `configure()` is the same call StarterKit makes internally for its `link`
+ * child, so this resolves the identical options without a DOM and without
+ * reaching into how StarterKit assembles itself.
  */
 function resolvedLinkOptions(): { HTMLAttributes: Record<string, unknown> } {
-  const kit = StarterKit.configure(STARTER_KIT_OPTIONS);
-  const children =
-    kit.config.addExtensions?.call({
-      name: kit.name,
-      options: kit.options,
-      storage: kit.storage,
-      parent: undefined,
-    }) ?? [];
-  const link = children.find((extension) => extension.name === "link");
-
-  if (link === undefined) {
-    throw new Error(
-      "StarterKit no longer provides a `link` extension — this test is looking at nothing.",
-    );
-  }
-
-  return link.options as { HTMLAttributes: Record<string, unknown> };
+  return Link.configure(STARTER_KIT_OPTIONS.link).options as {
+    HTMLAttributes: Record<string, unknown>;
+  };
 }
 
 describe("the toolbar", () => {
