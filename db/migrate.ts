@@ -40,8 +40,37 @@ import postgres from "postgres";
  * Postgres a one-variable setup — there is only one URL to have there, and it
  * is already the right kind.
  */
-const connectionString =
-  process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL;
+const source = process.env.MIGRATE_DATABASE_URL
+  ? "MIGRATE_DATABASE_URL"
+  : "DATABASE_URL";
+const connectionString = process.env[source];
+
+/**
+ * Which variable was used, and against what host.
+ *
+ * The fallback above is the quiet failure this guards. Forgetting to set
+ * `MIGRATE_DATABASE_URL` in the deploy environment does not raise anything:
+ * migrations simply run over the transaction pooler, and with `prepare: false`
+ * and `max: 1` ordinary additive DDL usually succeeds there. The
+ * misconfiguration then sits unnoticed until some later migration needs
+ * something the transaction pooler cannot do, and the build that breaks is not
+ * the one that introduced the mistake. A line in the build log is enough to
+ * make it visible on the first deploy instead.
+ *
+ * Host and port only. A connection string carries a password, and build logs
+ * are not a place to put one.
+ */
+function describe(url: string) {
+  try {
+    const { hostname, port } = new URL(url);
+    return `${source} -> ${hostname}${port ? `:${port}` : ""}`;
+  } catch {
+    // Not a defect worth failing on: postgres.js accepts forms that `URL`
+    // does not, and the connection attempt below is the real test of whether
+    // the string is usable.
+    return `${source} (unparseable, not logged)`;
+  }
+}
 
 async function main() {
   if (!connectionString) {
@@ -51,10 +80,34 @@ async function main() {
     );
   }
 
-  // `prepare: false` for the same reason as `db/index.ts` — required if this
-  // ever does run through the transaction pooler, harmless otherwise. `max: 1`
-  // so every statement lands on one backend, in order.
-  const client = postgres(connectionString, { prepare: false, max: 1 });
+  console.log(`Migrating: ${describe(connectionString)}`);
+
+  const client = postgres(connectionString, {
+    // For the same reason as `db/index.ts` — required if this ever does run
+    // through the transaction pooler, harmless otherwise.
+    prepare: false,
+    // So every statement lands on one backend, in order.
+    max: 1,
+    connection: {
+      /**
+       * Two merges landing within a minute build concurrently, and the second
+       * build's DDL waits on a lock the first build's open transaction holds.
+       * Usually that resolves the moment the first commits. If it does not,
+       * the wait is otherwise unbounded and the second build burns until the
+       * platform's own build timeout kills it — which reports as a timeout
+       * rather than as the lock contention it was. Thirty seconds is far
+       * longer than a healthy migration holds anything, so a build that trips
+       * this fails fast and says why.
+       */
+      lock_timeout: 30_000,
+      /**
+       * A backstop for the other shape of stall: a statement that acquired its
+       * locks and then never finished. Generous, because a future backfill is
+       * allowed to be slow, but still well inside a build timeout.
+       */
+      statement_timeout: 300_000,
+    },
+  });
 
   const started = Date.now();
   try {
@@ -64,9 +117,17 @@ async function main() {
     await migrate(drizzle(client), { migrationsFolder: "./drizzle" });
     console.log(`Migrations up to date in ${Date.now() - started}ms.`);
   } finally {
-    // Unlike the app's pool, this connection is ours to close, so the build
-    // step exits instead of idling until a timeout.
-    await client.end();
+    /**
+     * Unlike the app's pool, this connection is ours to close, so the build
+     * step exits instead of idling until a timeout.
+     *
+     * Bounded, because `finally` replaces the in-flight error with anything
+     * thrown here: a close that hangs would turn a legible migration failure
+     * into a hang, and a close that rejects would report itself instead of the
+     * failure that mattered. The exit code is 1 either way, but the log is the
+     * only thing anyone reads.
+     */
+    await client.end({ timeout: 5 }).catch(() => {});
   }
 }
 

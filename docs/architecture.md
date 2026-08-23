@@ -206,6 +206,21 @@ port 5432), not the transaction pooler the app uses. A transaction pooler hands
 out a different backend per transaction, which is right for serverless request
 handlers and wrong for DDL.
 
+`MIGRATE_DATABASE_URL` falls back to `DATABASE_URL` when unset, which is right
+locally and wrong in production — and silently so, since ordinary additive DDL
+usually succeeds over the transaction pooler anyway. `db/migrate.ts` therefore
+logs which variable it used and against which host (never the password), so a
+missing variable shows up in the first build log rather than in a later
+migration that fails for reasons nobody connects to it.
+
+Drizzle applies every pending migration inside **one** transaction. That is
+what makes a half-applied migration impossible, and it also means
+`CREATE INDEX CONCURRENTLY` — which cannot run in a transaction block — will
+fail here. This is a property of the migrator rather than of this setup
+(`drizzle-kit migrate` behaves the same), but it matters more now that
+migrations gate every merge: an index on a table large enough to care about
+locking needs applying by hand, outside the deploy.
+
 `db/migrate.ts` uses `drizzle-orm`'s migrator rather than `drizzle-kit migrate`,
 because drizzle-kit is a development tool that opens its own connection — there
 is no way to give it `prepare: false` and `max: 1`. `npm run db:migrate` remains
