@@ -133,6 +133,7 @@ variables are named generically so any Postgres provider works.
 | `npm run test:db` | Tests that need a database |
 | `npm run db:generate` | Generate a migration from schema changes |
 | `npm run db:migrate` | Apply migrations |
+| `npm run db:migrate:deploy` | Apply migrations the way the deploy does |
 | `npm run db:seed` | Reset and load the example family |
 | `npm run db:keep-alive` | Ping the database so Supabase does not pause it |
 | `npm run db:studio` | Drizzle Studio |
