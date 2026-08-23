@@ -27,6 +27,25 @@ project.
 stop using the site and not tell you why. The editor is WYSIWYG with a small
 toolbar — bold, italic, heading, list, link, image. Nothing else.
 
+**It looks like Wikipedia.** Not "inspired by" — the entries use Wikipedia's
+visual language directly: the Vector 2022 skin, the serif headings with their
+bottom rule, the sans-serif body, the blue links and the red ones, the pinned
+table of contents, the infobox in the top right. The reason is recognition. A
+non-technical author already knows how to read a Wikipedia article and already
+knows what the blue link and the [edit] beside a heading will do. Borrowing a
+familiar interface is cheaper than teaching a new one, and it sets the right
+expectation about what an entry is for: a factual account, edited over time,
+not a blog post.
+
+Two deliberate departures, both downstream of the principles above:
+
+- **The infobox is generated, never typed.** On Wikipedia an infobox is
+  hand-written template markup. Here the facts already exist as records, so the
+  box is derived from the tree and updates itself when the tree changes. The
+  author never edits one.
+- **There are no Talk pages.** Discussion apparatus belongs to a project with
+  disputes to resolve between strangers. See Non-goals.
+
 **Nobody positions anything.** The family tree lays itself out. There is no
 dragging boxes, no arranging, no "save layout" button. Adding a person means
 filling in a form and watching the tree redraw. This is also less code — see
