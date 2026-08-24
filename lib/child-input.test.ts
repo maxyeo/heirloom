@@ -27,7 +27,12 @@ const UNION = "11111111-1111-4111-8111-111111111111";
 const CHILD = "22222222-2222-4222-8222-222222222222";
 
 function link(overrides: ChildLinkInput = {}): ChildLinkInput {
-  return { unionId: UNION, childId: CHILD, relation: "biological", ...overrides };
+  return {
+    unionId: UNION,
+    childId: CHILD,
+    relation: "biological",
+    ...overrides,
+  };
 }
 
 function submission(overrides: Partial<AddChildInput> = {}): AddChildInput {
@@ -51,7 +56,9 @@ function refusal(input: ChildLinkInput) {
 function accepted(input: ChildLinkInput) {
   const result = validateChildLink(input);
   if (!result.ok) {
-    throw new Error(`expected the link to be accepted: ${JSON.stringify(result.issues)}`);
+    throw new Error(
+      `expected the link to be accepted: ${JSON.stringify(result.issues)}`,
+    );
   }
   return result.value;
 }
@@ -185,9 +192,9 @@ describe("one add-child submission", () => {
     if (result.ok) throw new Error("expected the submission to be refused");
 
     expect(childFieldErrorsFrom(result.linkIssues).unionId).toBeDefined();
-    expect(result.childIssues.some((issue) => issue.field === "givenName")).toBe(
-      true,
-    );
+    expect(
+      result.childIssues.some((issue) => issue.field === "givenName"),
+    ).toBe(true);
   });
 
   /**

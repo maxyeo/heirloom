@@ -410,9 +410,6 @@ const FIELD_NAMES = Object.keys({
  * back to `exact` and write nothing. Over-warning costs a keystroke;
  * under-warning costs the edit.
  */
-function sameValues(
-  a: IndividualFormValues,
-  b: IndividualFormValues,
-): boolean {
+function sameValues(a: IndividualFormValues, b: IndividualFormValues): boolean {
   return FIELD_NAMES.every((field) => a[field].trim() === b[field].trim());
 }

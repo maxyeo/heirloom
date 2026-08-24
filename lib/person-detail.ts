@@ -151,8 +151,7 @@ export function derivePersonDetail(
   // life the same way whoever built the `FamilyGraph` did or did not.
   const ownUnions = graph.unions
     .filter(
-      (union) =>
-        union.partnerAId === personId || union.partnerBId === personId,
+      (union) => union.partnerAId === personId || union.partnerBId === personId,
     )
     .sort(compareUnions);
 
@@ -236,7 +235,10 @@ function toSummary(person: GraphPerson): PersonSummary {
   };
 }
 
-function toLifeEvent(date: string | null, place: string | null): LifeEvent | null {
+function toLifeEvent(
+  date: string | null,
+  place: string | null,
+): LifeEvent | null {
   return date === null && place === null ? null : { date, place };
 }
 

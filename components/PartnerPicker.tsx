@@ -154,7 +154,10 @@ export function PartnerPicker({
               >
                 {candidate.name}
                 {candidate.lifespan ? (
-                  <span className="text-ink-muted"> ({candidate.lifespan})</span>
+                  <span className="text-ink-muted">
+                    {" "}
+                    ({candidate.lifespan})
+                  </span>
                 ) : null}
               </button>
             </li>

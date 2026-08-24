@@ -263,13 +263,7 @@ export function PersonPanel({
   );
 }
 
-function Fact({
-  term,
-  event,
-}: {
-  term: string;
-  event: PersonDetail["birth"];
-}) {
+function Fact({ term, event }: { term: string; event: PersonDetail["birth"] }) {
   if (!event) return null;
 
   return (
@@ -305,9 +299,7 @@ function Section({
     <section>
       <h3>{title}</h3>
       {count === 0 ? (
-        <p className="text-caption text-ink-muted">
-          None recorded
-        </p>
+        <p className="text-caption text-ink-muted">None recorded</p>
       ) : (
         <ul className="space-y-1">{children}</ul>
       )}

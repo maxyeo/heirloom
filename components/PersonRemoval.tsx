@@ -250,7 +250,9 @@ function RemovalChoices({
         Delete the person
       </h3>
       <ChoiceButton
-        onClick={() => onChoose({ kind: "person", personId: preview.person.id })}
+        onClick={() =>
+          onChoose({ kind: "person", personId: preview.person.id })
+        }
         label={`Delete ${preview.person.name} from the tree`}
         note="Removes their record and every relationship recorded with it"
         destructive
@@ -474,16 +476,16 @@ function PartnerDetachmentCopy({
             {preview.children.length === 1 ? "child" : "children"}.
             {preview.partner ? (
               <span className="block text-note text-ink-muted">
-                They keep {preview.partner.name} as a parent, and stay in
-                the tree.
+                They keep {preview.partner.name} as a parent, and stay in the
+                tree.
               </span>
             ) : null}
           </li>
         ) : null}
         {preview.removesUnion ? (
           <li>
-            The union record itself goes, because nobody at all would be
-            left in it — no partners and no children.
+            The union record itself goes, because nobody at all would be left in
+            it — no partners and no children.
           </li>
         ) : null}
       </ul>
@@ -531,8 +533,8 @@ function ChildDetachmentCopy({ preview }: { preview: ChildDetachmentPreview }) {
         </li>
         {preview.removesUnion ? (
           <li>
-            The union record itself goes, because nobody at all would be
-            left in it — no partners and no children.
+            The union record itself goes, because nobody at all would be left in
+            it — no partners and no children.
           </li>
         ) : null}
       </ul>

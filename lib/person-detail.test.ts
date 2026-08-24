@@ -44,7 +44,12 @@ function seedGraph(): FamilyGraph {
       person({ id: "rose", givenName: "Rose", birthDate: "1910-05-05" }),
       person({ id: "walter", givenName: "Walter", sex: "male" }),
       person({ id: "alice", givenName: "Alice", birthDate: "1925-02-01" }),
-      person({ id: "brian", givenName: "Brian", sex: "male", birthDate: "1934-04-04" }),
+      person({
+        id: "brian",
+        givenName: "Brian",
+        sex: "male",
+        birthDate: "1934-04-04",
+      }),
       person({ id: "clara", givenName: "Clara", birthDate: "1932-01-09" }),
       person({ id: "dora", givenName: "Dora" }),
       person({ id: "silas", givenName: "Silas", sex: "male" }),
@@ -141,7 +146,10 @@ describe("the person's own record", () => {
     expect(thomas.lifespan).toBe("1898–1947");
     // "about" is recorded on the birth date and has to survive to the page,
     // which is the entire reason the qualifier columns exist.
-    expect(thomas.birth).toEqual({ date: "about 20 November 1898", place: null });
+    expect(thomas.birth).toEqual({
+      date: "about 20 November 1898",
+      place: null,
+    });
     expect(thomas.death).toEqual({ date: "11 June 1947", place: null });
     expect(thomas.notes).toBe("Emigrated in 1921.");
   });

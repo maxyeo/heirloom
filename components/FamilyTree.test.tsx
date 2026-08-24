@@ -536,7 +536,8 @@ describe("a tree with nobody connected", () => {
  */
 describe("reaching the edit form", () => {
   /** An edit action that records nothing and refuses nothing. */
-  const inertUpdate: IndividualFormAction = async () => emptyIndividualFormState;
+  const inertUpdate: IndividualFormAction = async () =>
+    emptyIndividualFormState;
 
   it("offers nothing when the canvas was given no action", () => {
     // `/tree` always passes one, but the prop is optional so that this file
@@ -563,9 +564,9 @@ describe("reaching the edit form", () => {
     ).toBe("Rose");
     // The hidden reference is what makes this an edit rather than a second
     // Rose, so it is worth asserting from the outside as well.
-    expect(host.querySelector<HTMLInputElement>('input[name="id"]')?.value).toBe(
-      "rose",
-    );
+    expect(
+      host.querySelector<HTMLInputElement>('input[name="id"]')?.value,
+    ).toBe("rose");
   });
 
   it("edits whoever the panel is currently showing", () => {

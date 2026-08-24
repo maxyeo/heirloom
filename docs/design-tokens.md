@@ -14,12 +14,12 @@ Tailwind 4 is configured **in CSS**. There is no `tailwind.config.js` and there
 should not be one — `@theme` in `app/globals.css` is the config, and each
 namespace generates its own utilities:
 
-| Namespace | Generates |
-| --- | --- |
-| `--color-*` | `text-ink`, `bg-panel`, `border-rule`, … |
-| `--text-*` | `text-body` — font size **and** its leading together |
-| `--container-*` | `max-w-content`, `w-thumb` |
-| `--radius-*` | `rounded-panel` |
+| Namespace       | Generates                                            |
+| --------------- | ---------------------------------------------------- |
+| `--color-*`     | `text-ink`, `bg-panel`, `border-rule`, …             |
+| `--text-*`      | `text-body` — font size **and** its leading together |
+| `--container-*` | `max-w-content`, `w-thumb`                           |
+| `--radius-*`    | `rounded-panel`                                      |
 
 ## The tokens
 
@@ -28,14 +28,14 @@ namespace generates its own utilities:
 Serif headings over a sans body is the single most recognisable thing about a
 Wikipedia page.
 
-| Token | Value |
-| --- | --- |
-| `--font-serif` | `"Linux Libertine", Georgia, Times, serif` |
-| `--font-sans` | the system sans stack |
-| `--text-body` | `0.875rem` / `1.6` — the content column |
-| `--text-caption` | `0.8rem` / `1.5` — captions, taglines, infobox rows |
-| `--text-note` | `0.75rem` / `1.5` — `[edit]` links, footer furniture |
-| `--text-h1` … `--text-h4` | `1.8rem`, `1.35rem`, `1rem`, `0.875rem` |
+| Token                     | Value                                                |
+| ------------------------- | ---------------------------------------------------- |
+| `--font-serif`            | `"Linux Libertine", Georgia, Times, serif`           |
+| `--font-sans`             | the system sans stack                                |
+| `--text-body`             | `0.875rem` / `1.6` — the content column              |
+| `--text-caption`          | `0.8rem` / `1.5` — captions, taglines, infobox rows  |
+| `--text-note`             | `0.75rem` / `1.5` — `[edit]` links, footer furniture |
+| `--text-h1` … `--text-h4` | `1.8rem`, `1.35rem`, `1rem`, `0.875rem`              |
 
 **On the heading face.** Linux Libertine is Wikipedia's actual heading font and
 is SIL Open Font Licensed, but self-hosting it means a webfont request on every
@@ -49,22 +49,22 @@ dense article read as an encyclopedia entry rather than a blog post.
 
 ### Colour
 
-| Token | Value | Used for |
-| --- | --- | --- |
-| `--color-paper` | `#ffffff` | the article surface |
-| `--color-panel` | `#f8f9fa` | infoboxes, tables, code — the filled surface |
-| `--color-wash` | `#eaecf0` | table headers, hairlines |
-| `--color-ink` | `#202122` | body text |
-| `--color-ink-muted` | `#54595d` | captions, secondary text |
-| `--color-rule` | `#a2a9b1` | heading rules, panel borders |
-| `--color-rule-soft` | `#c8ccd1` | borders *inside* a panel |
-| `--color-link` | `#3366cc` | unvisited |
-| `--color-link-visited` | `#795cb2` | visited |
-| `--color-link-new` | `#d33` | a red link (E11-T6) |
-| `--color-diff-added` | `#eaf3ff` | a block a revision added |
-| `--color-diff-added-rule` | `#a3d3ff` | its left border |
-| `--color-diff-removed` | `#fef6e7` | a block a revision removed |
-| `--color-diff-removed-rule` | `#ffe49c` | its left border |
+| Token                       | Value     | Used for                                     |
+| --------------------------- | --------- | -------------------------------------------- |
+| `--color-paper`             | `#ffffff` | the article surface                          |
+| `--color-panel`             | `#f8f9fa` | infoboxes, tables, code — the filled surface |
+| `--color-wash`              | `#eaecf0` | table headers, hairlines                     |
+| `--color-ink`               | `#202122` | body text                                    |
+| `--color-ink-muted`         | `#54595d` | captions, secondary text                     |
+| `--color-rule`              | `#a2a9b1` | heading rules, panel borders                 |
+| `--color-rule-soft`         | `#c8ccd1` | borders _inside_ a panel                     |
+| `--color-link`              | `#3366cc` | unvisited                                    |
+| `--color-link-visited`      | `#795cb2` | visited                                      |
+| `--color-link-new`          | `#d33`    | a red link (E11-T6)                          |
+| `--color-diff-added`        | `#eaf3ff` | a block a revision added                     |
+| `--color-diff-added-rule`   | `#a3d3ff` | its left border                              |
+| `--color-diff-removed`      | `#fef6e7` | a block a revision removed                   |
+| `--color-diff-removed-rule` | `#ffe49c` | its left border                              |
 
 **On the diff pair.** Blue and yellow, not green and red. That is
 MediaWiki's choice and the reason for it is worth keeping: red and green
@@ -75,11 +75,11 @@ to everyone who reads it at a glance.
 
 ### Layout
 
-| Token | Value |
-| --- | --- |
-| `--container-content` | `46em` — Vector 2022's measure |
-| `--container-thumb` | `220px` — Wikipedia's default thumbnail width |
-| `--radius-panel` | `2px` — Vector 2022 rounds almost nothing |
+| Token                 | Value                                         |
+| --------------------- | --------------------------------------------- |
+| `--container-content` | `46em` — Vector 2022's measure                |
+| `--container-thumb`   | `220px` — Wikipedia's default thumbnail width |
+| `--radius-panel`      | `2px` — Vector 2022 rounds almost nothing     |
 
 The measure is in `em` deliberately, so it scales with the content type rather
 than drifting away from it. At the 14px body size it resolves to ~644px, which

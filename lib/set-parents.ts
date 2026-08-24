@@ -123,174 +123,176 @@ export async function setParents(
 
   const { mode, value } = checked;
 
-  return db.transaction(async (tx): Promise<SetParentsResult> => {
-    /**
-     * Checked rather than left to the foreign key, and checked first: every
-     * later step is about a person, so there is nothing worth doing if they
-     * are gone. A constraint violation would surface as a thrown error and an
-     * error boundary, where this is a sentence the panel can render.
-     */
-    if (!(await individualExists(tx, value.childId))) {
-      refuse({ status: "child-not-found" });
-    }
-
-    /**
-     * The move, before anything else. Doing it first is what lets the cycle
-     * check further down reason about the tree this write is producing rather
-     * than the one it started from.
-     *
-     * `returning` for the reason `removePerson` uses it: a bare delete reports
-     * success whether or not it matched anything, so a link already removed in
-     * another tab would be reported as moved when nothing moved at all.
-     */
-    if (value.fromUnionId !== null) {
-      const [detached] = await tx
-        .delete(schema.unionChildren)
-        .where(
-          and(
-            eq(schema.unionChildren.unionId, value.fromUnionId),
-            eq(schema.unionChildren.childId, value.childId),
-          ),
-        )
-        .returning({ childId: schema.unionChildren.childId });
-
-      if (detached === undefined) refuse({ status: "not-recorded-there" });
-    }
-
-    let unionId = value.unionId;
-    let createdUnion = false;
-
-    if (mode === "new") {
+  return db
+    .transaction(async (tx): Promise<SetParentsResult> => {
       /**
-       * A family named by its parents rather than chosen from the tree. Both
-       * ids are optional and at least one is present — `validateSetParents`
-       * settled that — so this loop checks whichever were given and leaves the
-       * other column null. That null is the ticket's "one known parent and one
-       * unknown", and it is why no placeholder person is invented anywhere in
-       * this flow.
+       * Checked rather than left to the foreign key, and checked first: every
+       * later step is about a person, so there is nothing worth doing if they
+       * are gone. A constraint violation would surface as a thrown error and an
+       * error boundary, where this is a sentence the panel can render.
        */
-      const parentIds = [value.parentAId, value.parentBId].filter(
-        (id): id is string => id !== null,
-      );
-
-      for (const parentId of parentIds) {
-        /**
-         * Refused with a throw like every other refusal in here, and this one
-         * is the reason the rule is "every refusal, without exception" rather
-         * than "the ones that obviously need it". The detach above has already
-         * run by the time this loop does — a move into a family being created
-         * inline is an ordinary combination, and the form offers both controls
-         * at once — so a plain `return` would commit the detach, create
-         * nothing, attach nothing, and leave the child with no parents at all.
-         */
-        if (!(await individualExists(tx, parentId))) {
-          refuse({ status: "parent-not-found" });
-        }
+      if (!(await individualExists(tx, value.childId))) {
+        refuse({ status: "child-not-found" });
       }
 
-      const [created] = await tx
-        .insert(schema.unions)
-        .values({
-          /**
-           * The known parent lands in the first slot whichever picker the
-           * author filled in. The two columns carry no meaning of their own —
-           * neither is "the mother" — so a row that leaves the *first* one
-           * empty says nothing extra and only makes every reader of this table
-           * handle a shape it never needs to see.
-           */
-          partnerAId: parentIds[0] ?? null,
-          partnerBId: parentIds[1] ?? null,
-          /**
-           * `unknown`, and deliberately not `marriage`. What the author has
-           * said is that these two people are somebody's parents; whether they
-           * married, and when, is a separate fact they have not been asked
-           * for. The column's own default is `marriage`, which is exactly the
-           * kind of quietly-asserted value `lib/child-input.ts` warns about —
-           * fine until somebody exports it.
-           */
-          type: "unknown",
-          sequence: await nextSequence(tx, parentIds),
-        })
-        .returning({ id: schema.unions.id });
-
-      unionId = created.id;
-      createdUnion = true;
-    }
-
-    if (unionId === null) {
-      // `existing` mode validated a union id and `new` mode has just minted
-      // one, so this is unreachable — and cheaper than widening the type.
-      throw new Error("unreachable: no family to record the child in");
-    }
-
-    /**
-     * The link itself, written by the module that owns `union_children` and
-     * every rule about it — including the ancestor walk, run here against a
-     * read taken inside this transaction and therefore after the detach and
-     * the insert above.
-     *
-     * `childMode: "existing"` always. Creating a person inline is the
-     * add-child form's flow; this one starts from somebody who is already on
-     * the tree, which is the entire premise of "I added them standalone and
-     * now want to connect them".
-     */
-    const attached = await attachChild(tx, {
-      childMode: "existing",
-      childId: value.childId,
-      child: {},
-      link: { unionId, relation: value.relation },
-    });
-
-    switch (attached.status) {
-      case "invalid":
-        /**
-         * Not reachable through this door: every field `attachChild`
-         * re-validates was already checked by `validateSetParents`, and the
-         * two share `isRowId` and `CHILD_RELATIONS`. Refused the same way as
-         * everything else all the same, rather than being reasoned about — a
-         * rule added to one validator and not the other should show up as a
-         * refused submission, and it must not show up as a committed detach.
-         */
-        refuse({ status: "invalid", issues: attached.linkIssues });
-        break;
-
-      case "union-not-found":
-      case "child-not-found":
-      case "child-is-partner":
-      case "already-recorded":
-      case "child-is-ancestor":
-        refuse({ status: attached.status });
-        break;
-
-      case "added":
-        break;
-    }
-
-    if (value.fromUnionId !== null) {
       /**
-       * The family they left may now be holding nothing at all — it recorded
-       * one parent and an unknown partner, and this was its only child. That
-       * union is unreachable from every panel in the application, so leaving
-       * it would leave a row nothing can ever see or remove.
+       * The move, before anything else. Doing it first is what lets the cycle
+       * check further down reason about the tree this write is producing rather
+       * than the one it started from.
        *
-       * `deleteEmptyUnion` re-states the condition in SQL rather than trusting
-       * anything read earlier, so a family that gained a child in another tab
-       * between the detach and here is not swept up with it.
+       * `returning` for the reason `removePerson` uses it: a bare delete reports
+       * success whether or not it matched anything, so a link already removed in
+       * another tab would be reported as moved when nothing moved at all.
        */
-      await deleteEmptyUnion(tx, value.fromUnionId);
-    }
+      if (value.fromUnionId !== null) {
+        const [detached] = await tx
+          .delete(schema.unionChildren)
+          .where(
+            and(
+              eq(schema.unionChildren.unionId, value.fromUnionId),
+              eq(schema.unionChildren.childId, value.childId),
+            ),
+          )
+          .returning({ childId: schema.unionChildren.childId });
 
-    return {
-      status: "set",
-      unionId,
-      childId: value.childId,
-      createdUnion,
-      movedFrom: value.fromUnionId,
-    };
-  }).catch((error: unknown) => {
-    if (error instanceof Refusal) return error.result;
-    throw error;
-  });
+        if (detached === undefined) refuse({ status: "not-recorded-there" });
+      }
+
+      let unionId = value.unionId;
+      let createdUnion = false;
+
+      if (mode === "new") {
+        /**
+         * A family named by its parents rather than chosen from the tree. Both
+         * ids are optional and at least one is present — `validateSetParents`
+         * settled that — so this loop checks whichever were given and leaves the
+         * other column null. That null is the ticket's "one known parent and one
+         * unknown", and it is why no placeholder person is invented anywhere in
+         * this flow.
+         */
+        const parentIds = [value.parentAId, value.parentBId].filter(
+          (id): id is string => id !== null,
+        );
+
+        for (const parentId of parentIds) {
+          /**
+           * Refused with a throw like every other refusal in here, and this one
+           * is the reason the rule is "every refusal, without exception" rather
+           * than "the ones that obviously need it". The detach above has already
+           * run by the time this loop does — a move into a family being created
+           * inline is an ordinary combination, and the form offers both controls
+           * at once — so a plain `return` would commit the detach, create
+           * nothing, attach nothing, and leave the child with no parents at all.
+           */
+          if (!(await individualExists(tx, parentId))) {
+            refuse({ status: "parent-not-found" });
+          }
+        }
+
+        const [created] = await tx
+          .insert(schema.unions)
+          .values({
+            /**
+             * The known parent lands in the first slot whichever picker the
+             * author filled in. The two columns carry no meaning of their own —
+             * neither is "the mother" — so a row that leaves the *first* one
+             * empty says nothing extra and only makes every reader of this table
+             * handle a shape it never needs to see.
+             */
+            partnerAId: parentIds[0] ?? null,
+            partnerBId: parentIds[1] ?? null,
+            /**
+             * `unknown`, and deliberately not `marriage`. What the author has
+             * said is that these two people are somebody's parents; whether they
+             * married, and when, is a separate fact they have not been asked
+             * for. The column's own default is `marriage`, which is exactly the
+             * kind of quietly-asserted value `lib/child-input.ts` warns about —
+             * fine until somebody exports it.
+             */
+            type: "unknown",
+            sequence: await nextSequence(tx, parentIds),
+          })
+          .returning({ id: schema.unions.id });
+
+        unionId = created.id;
+        createdUnion = true;
+      }
+
+      if (unionId === null) {
+        // `existing` mode validated a union id and `new` mode has just minted
+        // one, so this is unreachable — and cheaper than widening the type.
+        throw new Error("unreachable: no family to record the child in");
+      }
+
+      /**
+       * The link itself, written by the module that owns `union_children` and
+       * every rule about it — including the ancestor walk, run here against a
+       * read taken inside this transaction and therefore after the detach and
+       * the insert above.
+       *
+       * `childMode: "existing"` always. Creating a person inline is the
+       * add-child form's flow; this one starts from somebody who is already on
+       * the tree, which is the entire premise of "I added them standalone and
+       * now want to connect them".
+       */
+      const attached = await attachChild(tx, {
+        childMode: "existing",
+        childId: value.childId,
+        child: {},
+        link: { unionId, relation: value.relation },
+      });
+
+      switch (attached.status) {
+        case "invalid":
+          /**
+           * Not reachable through this door: every field `attachChild`
+           * re-validates was already checked by `validateSetParents`, and the
+           * two share `isRowId` and `CHILD_RELATIONS`. Refused the same way as
+           * everything else all the same, rather than being reasoned about — a
+           * rule added to one validator and not the other should show up as a
+           * refused submission, and it must not show up as a committed detach.
+           */
+          refuse({ status: "invalid", issues: attached.linkIssues });
+          break;
+
+        case "union-not-found":
+        case "child-not-found":
+        case "child-is-partner":
+        case "already-recorded":
+        case "child-is-ancestor":
+          refuse({ status: attached.status });
+          break;
+
+        case "added":
+          break;
+      }
+
+      if (value.fromUnionId !== null) {
+        /**
+         * The family they left may now be holding nothing at all — it recorded
+         * one parent and an unknown partner, and this was its only child. That
+         * union is unreachable from every panel in the application, so leaving
+         * it would leave a row nothing can ever see or remove.
+         *
+         * `deleteEmptyUnion` re-states the condition in SQL rather than trusting
+         * anything read earlier, so a family that gained a child in another tab
+         * between the detach and here is not swept up with it.
+         */
+        await deleteEmptyUnion(tx, value.fromUnionId);
+      }
+
+      return {
+        status: "set",
+        unionId,
+        childId: value.childId,
+        createdUnion,
+        movedFrom: value.fromUnionId,
+      };
+    })
+    .catch((error: unknown) => {
+      if (error instanceof Refusal) return error.result;
+      throw error;
+    });
 }
 
 /**

@@ -188,10 +188,18 @@ describe("UnionOrder", () => {
   it("does not offer a move that would run off either end", () => {
     const { host } = mount([THOMAS, WALTER]);
 
-    expect(findButton(host, "Move Thomas Hale from position 1 earlier").disabled).toBe(true);
-    expect(findButton(host, "Move Thomas Hale from position 1 later").disabled).toBe(false);
-    expect(findButton(host, "Move Walter Byrne from position 2 earlier").disabled).toBe(false);
-    expect(findButton(host, "Move Walter Byrne from position 2 later").disabled).toBe(true);
+    expect(
+      findButton(host, "Move Thomas Hale from position 1 earlier").disabled,
+    ).toBe(true);
+    expect(
+      findButton(host, "Move Thomas Hale from position 1 later").disabled,
+    ).toBe(false);
+    expect(
+      findButton(host, "Move Walter Byrne from position 2 earlier").disabled,
+    ).toBe(false);
+    expect(
+      findButton(host, "Move Walter Byrne from position 2 later").disabled,
+    ).toBe(true);
   });
 
   it("shows the new order when the revalidated graph arrives", async () => {

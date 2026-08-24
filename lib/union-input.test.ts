@@ -148,7 +148,9 @@ describe("the partners", () => {
   });
 
   it("refuses a partner reference that is not text", () => {
-    expect(expectInvalid({ ...MINIMAL, partnerBId: 7 })).toEqual(["partnerBId"]);
+    expect(expectInvalid({ ...MINIMAL, partnerBId: 7 })).toEqual([
+      "partnerBId",
+    ]);
   });
 });
 
@@ -245,16 +247,20 @@ describe("the dates", () => {
 
   it("does not fault the end date when the start date was unreadable", () => {
     expect(
-      expectInvalid({ ...MINIMAL, startDate: "nonsense", endDate: "1800-01-01" }),
+      expectInvalid({
+        ...MINIMAL,
+        startDate: "nonsense",
+        endDate: "1800-01-01",
+      }),
     ).toEqual(["startDate", "endReason"]);
   });
 });
 
 describe("how a union ended", () => {
   it("refuses an end date on a union still described as ongoing", () => {
-    expect(
-      expectInvalid({ ...MINIMAL, endDate: "1938-02-19" }),
-    ).toEqual(["endReason"]);
+    expect(expectInvalid({ ...MINIMAL, endDate: "1938-02-19" })).toEqual([
+      "endReason",
+    ]);
   });
 
   /**

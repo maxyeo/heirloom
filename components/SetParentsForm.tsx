@@ -270,8 +270,8 @@ export function SetParentsForm({
                 placeholder individual.
               */}
               <p className="text-note text-ink-muted">
-                Name whichever parents are on the tree. Leave the other blank
-                if they are not known — no placeholder person is created.
+                Name whichever parents are on the tree. Leave the other blank if
+                they are not known — no placeholder person is created.
               </p>
 
               {/*

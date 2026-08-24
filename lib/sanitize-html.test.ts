@@ -100,7 +100,10 @@ describe("sanitizeHtml", () => {
       ['<p onclick="alert(1)">t</p>', "<p>t</p>"],
       ['<p ONCLICK="alert(1)">t</p>', "<p>t</p>"],
       ['<a href="/x" onmouseover="alert(1)">t</a>', '<a href="/x">t</a>'],
-      ['<strong onfocus="alert(1)" tabindex="1">t</strong>', "<strong>t</strong>"],
+      [
+        '<strong onfocus="alert(1)" tabindex="1">t</strong>',
+        "<strong>t</strong>",
+      ],
       // `onerror` on an image is the canonical no-user-interaction payload.
       // `img` is not allowlisted yet either, so both halves go.
       ["<img src=x onerror=alert(1)>", ""],
@@ -164,25 +167,36 @@ describe("sanitizeHtml", () => {
   describe("tags outside the allowlist", () => {
     it("strips <iframe> and its fallback content", () => {
       expect(
-        sanitizeHtml('<iframe src="https://evil.example">fallback</iframe><p>after</p>'),
+        sanitizeHtml(
+          '<iframe src="https://evil.example">fallback</iframe><p>after</p>',
+        ),
       ).toBe("<p>after</p>");
     });
 
     it("strips <style> and the rules inside it", () => {
       // Keeping the tag's text would dump the CSS source into the article; a
       // surviving `<style>` could hide or reposition the page chrome around it.
-      expect(sanitizeHtml("<style>body{display:none}</style><p>after</p>")).toBe(
-        "<p>after</p>",
-      );
+      expect(
+        sanitizeHtml("<style>body{display:none}</style><p>after</p>"),
+      ).toBe("<p>after</p>");
     });
 
     it.each([
       ["<object>", '<object data="evil.swf"></object><p>after</p>'],
       ["<embed>", '<embed src="evil.swf"><p>after</p>'],
-      ["<form>", '<form action="https://evil.example"><input name="x"></form><p>after</p>'],
+      [
+        "<form>",
+        '<form action="https://evil.example"><input name="x"></form><p>after</p>',
+      ],
       ["<base>", '<base href="https://evil.example/"><p>after</p>'],
-      ["<meta refresh>", '<meta http-equiv="refresh" content="0;url=https://evil.example"><p>after</p>'],
-      ["<link>", '<link rel="stylesheet" href="https://evil.example/x.css"><p>after</p>'],
+      [
+        "<meta refresh>",
+        '<meta http-equiv="refresh" content="0;url=https://evil.example"><p>after</p>',
+      ],
+      [
+        "<link>",
+        '<link rel="stylesheet" href="https://evil.example/x.css"><p>after</p>',
+      ],
     ])("strips %s", (_label, dirty) => {
       expect(sanitizeHtml(dirty)).toBe("<p>after</p>");
     });
@@ -192,7 +206,9 @@ describe("sanitizeHtml", () => {
       // page), `class` and `id` let authored content collide with the app's
       // own stylesheet and DOM ids.
       expect(
-        sanitizeHtml('<p style="position:fixed;top:0" class="site-header" id="main">t</p>'),
+        sanitizeHtml(
+          '<p style="position:fixed;top:0" class="site-header" id="main">t</p>',
+        ),
       ).toBe("<p>t</p>");
     });
 
@@ -203,11 +219,15 @@ describe("sanitizeHtml", () => {
       // goes and its inline content stays.
       expect(sanitizeHtml("<h1>title</h1>")).toBe("title");
       expect(sanitizeHtml("<ol><li>one</li></ol>")).toBe("<li>one</li>");
-      expect(sanitizeHtml("<blockquote><p>q</p></blockquote>")).toBe("<p>q</p>");
+      expect(sanitizeHtml("<blockquote><p>q</p></blockquote>")).toBe(
+        "<p>q</p>",
+      );
       expect(sanitizeHtml("<pre><code>x</code></pre>")).toBe("x");
       expect(sanitizeHtml("<hr>")).toBe("");
       // `img` waits for E5-T3, which is blocked on this module for that reason.
-      expect(sanitizeHtml('<p><img src="/photo.jpg" alt="Rose"></p>')).toBe("<p></p>");
+      expect(sanitizeHtml('<p><img src="/photo.jpg" alt="Rose"></p>')).toBe(
+        "<p></p>",
+      );
     });
   });
 
@@ -217,7 +237,16 @@ describe("sanitizeHtml", () => {
     // grep through option objects.
     it("names only the tags the toolbar can produce", () => {
       expect([...ALLOWED_TAGS].sort()).toEqual([
-        "a", "br", "em", "h2", "h3", "h4", "li", "p", "strong", "ul",
+        "a",
+        "br",
+        "em",
+        "h2",
+        "h3",
+        "h4",
+        "li",
+        "p",
+        "strong",
+        "ul",
       ]);
     });
 

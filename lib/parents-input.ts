@@ -138,9 +138,7 @@ export type SetParentsInput = {
  * @param input the submission as it arrived, untrusted and untyped
  * @returns the cleaned submission, or every problem found
  */
-export function validateSetParents(
-  input: SetParentsInput,
-): ParentsValidation {
+export function validateSetParents(input: SetParentsInput): ParentsValidation {
   const issues: ParentsValidationIssue[] = [];
 
   /**
@@ -267,7 +265,8 @@ export function validateSetParents(
   if (relation === undefined) {
     issues.push({
       field: "relation",
-      message: "Say whether this child is biological, adopted, step, or foster.",
+      message:
+        "Say whether this child is biological, adopted, step, or foster.",
     });
   }
 

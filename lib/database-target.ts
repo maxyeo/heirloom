@@ -49,9 +49,7 @@ function isDatabaseTarget(value: string): value is DatabaseTarget {
  *   the variable, rather than returning `undefined` and letting the failure
  *   surface later as an opaque connection error.
  */
-export function resolveDatabaseUrl(
-  env: NodeJS.ProcessEnv,
-): string | undefined {
+export function resolveDatabaseUrl(env: NodeJS.ProcessEnv): string | undefined {
   const target = env.DATABASE_TARGET;
 
   if (!target) {

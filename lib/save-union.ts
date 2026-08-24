@@ -221,7 +221,12 @@ export async function addSpouse(
 
     const [created] = await tx
       .insert(schema.unions)
-      .values({ ...union, partnerAId: personId, partnerBId: partnerId, sequence })
+      .values({
+        ...union,
+        partnerAId: personId,
+        partnerBId: partnerId,
+        sequence,
+      })
       .returning({ id: schema.unions.id });
 
     return { status: "added", unionId: created.id, partnerId };

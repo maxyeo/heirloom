@@ -431,7 +431,11 @@ function Child({
           disabled={disabled}
           autoFocusFirstField
         />
-        <button type="button" onClick={onSearchAgain} className={`mt-3 ${LINK_CLASS}`}>
+        <button
+          type="button"
+          onClick={onSearchAgain}
+          className={`mt-3 ${LINK_CLASS}`}
+        >
           Search the tree instead
         </button>
       </section>

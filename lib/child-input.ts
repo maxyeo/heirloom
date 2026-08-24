@@ -195,7 +195,8 @@ export function validateChildLink(input: ChildLinkInput): ChildValidation {
   if (relation === undefined) {
     issues.push({
       field: "relation",
-      message: "Say whether this child is biological, adopted, step, or foster.",
+      message:
+        "Say whether this child is biological, adopted, step, or foster.",
     });
   }
 
@@ -380,7 +381,8 @@ export function validateAddChild(input: AddChildInput): AddChildValidation {
   }
 
   const childChecked = mode === "new" ? validateIndividual(input.child) : null;
-  if (childChecked && !childChecked.ok) childIssues.push(...childChecked.issues);
+  if (childChecked && !childChecked.ok)
+    childIssues.push(...childChecked.issues);
 
   /**
    * `childId` is overwritten rather than read from `input.link`. Which person

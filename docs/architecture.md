@@ -2,16 +2,16 @@
 
 ## Stack
 
-| Layer | Choice | Why |
-| --- | --- | --- |
-| Framework | Next.js (App Router) | Server components mean the database is reachable without a separate API tier |
-| Host | Vercel | Free tier is sufficient; `output: "standalone"` keeps other hosts open |
-| Auth | Auth.js v5, Google provider | One-click sign-in for people who already live in Gmail |
-| Database | Postgres (Supabase free tier) | Used as *plain Postgres*, not as a backend-as-a-service |
-| Query layer | Drizzle + `postgres.js` | Typed SQL, no ORM ceremony, no vendor client |
-| Tree layout | dagre | Family trees are layered DAGs; dagre lays out layered DAGs |
-| Tree rendering | React Flow (`@xyflow/react`) | Pan, zoom, and edge routing for free |
-| Editor | TipTap | WYSIWYG, because the primary author does not write Markdown |
+| Layer          | Choice                        | Why                                                                          |
+| -------------- | ----------------------------- | ---------------------------------------------------------------------------- |
+| Framework      | Next.js (App Router)          | Server components mean the database is reachable without a separate API tier |
+| Host           | Vercel                        | Free tier is sufficient; `output: "standalone"` keeps other hosts open       |
+| Auth           | Auth.js v5, Google provider   | One-click sign-in for people who already live in Gmail                       |
+| Database       | Postgres (Supabase free tier) | Used as _plain Postgres_, not as a backend-as-a-service                      |
+| Query layer    | Drizzle + `postgres.js`       | Typed SQL, no ORM ceremony, no vendor client                                 |
+| Tree layout    | dagre                         | Family trees are layered DAGs; dagre lays out layered DAGs                   |
+| Tree rendering | React Flow (`@xyflow/react`)  | Pan, zoom, and edge routing for free                                         |
+| Editor         | TipTap                        | WYSIWYG, because the primary author does not write Markdown                  |
 
 ## The security model
 
@@ -25,7 +25,7 @@ This has a direct consequence: **there is no row-level security.** The app
 connects to Postgres as a single role rather than as the signed-in user, so
 RLS policies would have no JWT to act on. That is the correct trade for this
 architecture, not an oversight — but it means the application layer is the
-*only* boundary.
+_only_ boundary.
 
 So there is exactly one boundary, and it is `lib/session.ts`:
 
@@ -40,7 +40,7 @@ page is therefore protected the moment it exists.
 
 ### Access control
 
-Google sign-in establishes *identity*, not *authorisation* — anyone with a
+Google sign-in establishes _identity_, not _authorisation_ — anyone with a
 Google account can complete the handshake. `ALLOWED_EMAILS` is the entire
 membership model, checked in the `signIn` callback. Anyone not on the list is
 rejected at the door.
@@ -129,7 +129,7 @@ What this exercises:
 
 - Two people (Thomas, Rose) each appear in two unions — the case `d3-tree`
   cannot draw, because it assumes one parent slot per node
-- Half-siblings arise on *both* sides of the chain
+- Half-siblings arise on _both_ sides of the chain
 - u1's child and u3's children **share no parent at all.** They are not blood
   relations; they are connected only by the chain of remarriages. u2's children
   are the only people related by blood to both ends
@@ -181,7 +181,7 @@ import and export instead of being silently discarded.
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations
-exact marriage dates are often lost while the *order* is remembered perfectly
+exact marriage dates are often lost while the _order_ is remembered perfectly
 well ("she remarried after he died"). Sorting on dates alone would silently
 scramble the story whenever a year is missing.
 
@@ -210,7 +210,7 @@ production build is only ever a merge. That build runs migrations first:
 buildCommand: npm run db:migrate:deploy && npm run build
 ```
 
-The ordering is the design. Applying migrations *after* a deploy leaves a
+The ordering is the design. Applying migrations _after_ a deploy leaves a
 window in which the new code queries columns that do not exist yet; applying
 them before means the schema is always at or ahead of the code. And because
 `&&` short-circuits, a migration that fails fails the build, and a failed
@@ -229,7 +229,7 @@ Two consequences worth naming rather than discovering:
   same migration twice. At this project's rate of change the honest mitigation
   is to not merge twice in a minute.
 
-Migrations use the *session* pooler or direct connection (`MIGRATE_DATABASE_URL`,
+Migrations use the _session_ pooler or direct connection (`MIGRATE_DATABASE_URL`,
 port 5432), not the transaction pooler the app uses. A transaction pooler hands
 out a different backend per transaction, which is right for serverless request
 handlers and wrong for DDL.

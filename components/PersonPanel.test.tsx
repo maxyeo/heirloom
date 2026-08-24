@@ -89,9 +89,11 @@ describe("what the panel shows", () => {
 
     expect(host.textContent).toContain("Children");
     expect(host.querySelectorAll("h3")).toHaveLength(3);
-    expect([...host.querySelectorAll("p")].filter((p) =>
-      p.textContent?.includes("None recorded"),
-    )).toHaveLength(3);
+    expect(
+      [...host.querySelectorAll("p")].filter((p) =>
+        p.textContent?.includes("None recorded"),
+      ),
+    ).toHaveLength(3);
   });
 
   it("names the co-parent beside each child", () => {
@@ -298,11 +300,7 @@ describe("focus", () => {
 describe("starting the add-spouse flow", () => {
   it("offers nothing when no callback was given", () => {
     const host = render(
-      <PersonPanel
-        detail={detail()}
-        onSelectPerson={noop}
-        onClose={noop}
-      />,
+      <PersonPanel detail={detail()} onSelectPerson={noop} onClose={noop} />,
     );
 
     expect(

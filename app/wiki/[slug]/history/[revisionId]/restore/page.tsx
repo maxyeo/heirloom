@@ -142,9 +142,9 @@ export default async function RestoreRevisionPage({
         */}
         <p className="mt-2 text-caption text-ink-muted">
           Nothing will be deleted. Restoring saves the old content as a new
-          version, credited to you, on top of everything already in the
-          history — so the current version stays where it is, and you can undo
-          this afterwards by restoring it in turn.
+          version, credited to you, on top of everything already in the history
+          — so the current version stays where it is, and you can undo this
+          afterwards by restoring it in turn.
         </p>
       </div>
 

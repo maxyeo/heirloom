@@ -244,9 +244,9 @@ describe("choosing a family already on the tree", () => {
     const withOneParent = graph();
     withOneParent.unions.push(union({ id: "u-solo", partnerAId: "thomas" }));
 
-    expect(optionLabels(mount({ graph: withOneParent }).host, "unionId")).toContain(
-      "Thomas Hale and an unrecorded partner",
-    );
+    expect(
+      optionLabels(mount({ graph: withOneParent }).host, "unionId"),
+    ).toContain("Thomas Hale and an unrecorded partner");
   });
 
   /**
@@ -282,9 +282,7 @@ describe("choosing a family already on the tree", () => {
 describe("naming the parents when no family is recorded yet", () => {
   function openInlineMode() {
     const mounted = mount();
-    click(
-      buttonLabelled(mounted.host, "not recorded as a family yet"),
-    );
+    click(buttonLabelled(mounted.host, "not recorded as a family yet"));
     return mounted;
   }
 
@@ -481,7 +479,10 @@ describe("what comes back", () => {
   it("shows a refusal beside the control it belongs to", async () => {
     const { host } = mount({
       reply: parentsInvalidState([
-        { field: "unionId", message: "Choose which family this person belongs to." },
+        {
+          field: "unionId",
+          message: "Choose which family this person belongs to.",
+        },
       ]),
     });
 

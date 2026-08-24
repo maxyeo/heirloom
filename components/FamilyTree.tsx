@@ -389,7 +389,10 @@ function FamilyTreeCanvas({
         ? toRect(panelRef.current.getBoundingClientRect())
         : null,
     );
-    const { dx, dy } = panToReveal(toRect(node.getBoundingClientRect()), region);
+    const { dx, dy } = panToReveal(
+      toRect(node.getBoundingClientRect()),
+      region,
+    );
     if (dx === 0 && dy === 0) return;
 
     const viewport = getViewport();
@@ -511,10 +514,7 @@ function FamilyTreeCanvas({
                 tickets are editing.
               */}
               {updateIndividualAction && person ? (
-                <EditPerson
-                  person={person}
-                  action={updateIndividualAction}
-                />
+                <EditPerson person={person} action={updateIndividualAction} />
               ) : null}
               {/*
                 E3-T7's sequence editor. Between the edit form and the
@@ -533,17 +533,13 @@ function FamilyTreeCanvas({
             </>
           }
           onAddSpouse={
-            addSpouseAction
-              ? () => setAddingSpouseFor(detail.id)
-              : undefined
+            addSpouseAction ? () => setAddingSpouseFor(detail.id) : undefined
           }
           onAddChild={
             addChildAction ? () => setAddingChildFor(detail.id) : undefined
           }
           onSetParents={
-            setParentsAction
-              ? () => setSettingParentsFor(detail.id)
-              : undefined
+            setParentsAction ? () => setSettingParentsFor(detail.id) : undefined
           }
         />
       )}

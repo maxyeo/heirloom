@@ -41,14 +41,18 @@ describe("extractContentBlocks", () => {
     // the reader sees, with the tags that produced it discarded.
     expect(
       extractContentBlocks(
-        '<p>Rose was born in <strong>1912</strong>, in <em>Norfolk</em>.</p>',
+        "<p>Rose was born in <strong>1912</strong>, in <em>Norfolk</em>.</p>",
       ),
-    ).toEqual([{ kind: "paragraph", text: "Rose was born in 1912, in Norfolk." }]);
+    ).toEqual([
+      { kind: "paragraph", text: "Rose was born in 1912, in Norfolk." },
+    ]);
   });
 
   it("keeps headings apart from paragraphs, and apart from each other", () => {
     expect(
-      extractContentBlocks("<h2>Early life</h2><h3>Schooling</h3><p>She read.</p>"),
+      extractContentBlocks(
+        "<h2>Early life</h2><h3>Schooling</h3><p>She read.</p>",
+      ),
     ).toEqual([
       { kind: "heading2", text: "Early life" },
       { kind: "heading3", text: "Schooling" },
@@ -172,7 +176,10 @@ describe("extractContentBlocks", () => {
 
 describe("diffContent", () => {
   it("reports no changes between two copies of the same body", () => {
-    const rows = diffContent("<p>One.</p><p>Two.</p>", "<p>One.</p><p>Two.</p>");
+    const rows = diffContent(
+      "<p>One.</p><p>Two.</p>",
+      "<p>One.</p><p>Two.</p>",
+    );
 
     expect(statuses(rows)).toEqual(["unchanged", "unchanged"]);
     expect(hasContentChanges(rows)).toBe(false);
@@ -246,8 +253,10 @@ describe("diffContent", () => {
     // here — it says two paragraphs left the top and two arrived at the
     // bottom — but the author then has to compare them by eye to work out
     // that nothing was lost. Both ends are labelled instead.
-    const before = "<h2>Early life</h2><p>She read.</p><h2>Later</h2><p>She wrote.</p>";
-    const after = "<h2>Later</h2><p>She wrote.</p><h2>Early life</h2><p>She read.</p>";
+    const before =
+      "<h2>Early life</h2><p>She read.</p><h2>Later</h2><p>She wrote.</p>";
+    const after =
+      "<h2>Later</h2><p>She wrote.</p><h2>Early life</h2><p>She read.</p>";
 
     const rows = diffContent(before, after);
 

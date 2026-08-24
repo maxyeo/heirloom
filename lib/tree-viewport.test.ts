@@ -95,9 +95,7 @@ describe("panToReveal", () => {
     const covered = { ...node, x: 700, y: 250 };
 
     expect(panToReveal(covered, region)).toEqual({ dx: -220, dy: 0 });
-    expect(covered.x - 220 + covered.width).toBe(
-      region.width - REVEAL_PADDING,
-    );
+    expect(covered.x - 220 + covered.width).toBe(region.width - REVEAL_PADDING);
   });
 
   it("brings a node back that is off the canvas entirely", () => {

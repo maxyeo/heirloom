@@ -193,11 +193,12 @@ describe("addChild", () => {
     const thomas = await makePerson("Thomas");
     const unionId = await makeUnion(rose, thomas);
 
-    expect((await addChild(submission({ childId: rose, link: { unionId } }))).status).toBe(
-      "child-is-partner",
-    );
     expect(
-      (await addChild(submission({ childId: thomas, link: { unionId } }))).status,
+      (await addChild(submission({ childId: rose, link: { unionId } }))).status,
+    ).toBe("child-is-partner");
+    expect(
+      (await addChild(submission({ childId: thomas, link: { unionId } })))
+        .status,
     ).toBe("child-is-partner");
   });
 
@@ -297,7 +298,10 @@ describe("half-siblings", () => {
       [brian, dora].includes(child.person.id),
     );
     expect(mine).toHaveLength(2);
-    expect(mine.map((child) => child.otherParent?.id)).toEqual([thomas, walter]);
+    expect(mine.map((child) => child.otherParent?.id)).toEqual([
+      thomas,
+      walter,
+    ]);
 
     // Nothing was stored to say so. Every link written here is `biological`;
     // the half-sibling relationship is derived, and there is no column for it.
@@ -309,9 +313,9 @@ describe("half-siblings", () => {
     // Read from the other end, each child has exactly the two parents their
     // own union names — and no sibling relation of any kind is recorded.
     const brianDetail = derivePersonDetail(graph, brian);
-    expect(brianDetail?.parents.map((parent) => parent.person.id).sort()).toEqual(
-      [rose, thomas].sort(),
-    );
+    expect(
+      brianDetail?.parents.map((parent) => parent.person.id).sort(),
+    ).toEqual([rose, thomas].sort());
   });
 });
 
@@ -335,16 +339,16 @@ describe("nobody becomes their own ancestor", () => {
     const walter = await makePerson("Walter");
 
     const granUnion = await makeUnion(gran, null);
-    await add(
-      submission({ childId: rose, link: { unionId: granUnion } }),
-    );
+    await add(submission({ childId: rose, link: { unionId: granUnion } }));
     const roseUnion = await makeUnion(rose, walter);
 
     // Neither partner of `roseUnion` is Gran, so the `child-is-partner` check
     // that predates this ticket sees nothing wrong. The walk is what finds
     // Rose one rank below her.
     expect(
-      await addChild(submission({ childId: gran, link: { unionId: roseUnion } })),
+      await addChild(
+        submission({ childId: gran, link: { unionId: roseUnion } }),
+      ),
     ).toEqual({ status: "child-is-ancestor" });
 
     expect(await childrenOf(roseUnion)).toEqual([]);

@@ -90,8 +90,7 @@ import type { Transaction } from "@/lib/save-page";
  * always moves something.
  */
 export type RemovalResult<Preview> =
-  | { status: "removed"; preview: Preview }
-  | { status: "not-found" };
+  { status: "removed"; preview: Preview } | { status: "not-found" };
 
 export type RemovePersonResult = RemovalResult<PersonRemovalPreview>;
 export type DetachPartnerResult = RemovalResult<PartnerDetachmentPreview>;
@@ -191,7 +190,9 @@ export async function detachPartner(
        * special case: both are tested, so both are cleared.
        */
       const clear = (column: AnyPgColumn) =>
-        sql<string | null>`case when ${column} = ${personId} then null else ${column} end`;
+        sql<
+          string | null
+        >`case when ${column} = ${personId} then null else ${column} end`;
 
       const [updated] = await tx
         .update(schema.unions)

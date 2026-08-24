@@ -246,8 +246,9 @@ describe("naming a child who is already on the tree", () => {
   it("does not offer either of the chosen family's own parents", () => {
     const { host } = mount({ unions: [WITH_THOMAS] });
 
-    const names = host.querySelector('ul[aria-label="Matching people"]')
-      ?.textContent;
+    const names = host.querySelector(
+      'ul[aria-label="Matching people"]',
+    )?.textContent;
     expect(names).toContain("Clara Hale");
     // Nobody is their own parent, and Thomas is the other half of this union.
     expect(names).not.toContain("Thomas Hale");
@@ -331,7 +332,12 @@ describe("what the form does with the answer", () => {
     const { host } = mount({
       unions: [WITH_THOMAS, WITH_WALTER],
       reply: childInvalidState(
-        [{ field: "unionId", message: "Choose which family this child belongs to." }],
+        [
+          {
+            field: "unionId",
+            message: "Choose which family this child belongs to.",
+          },
+        ],
         [{ field: "givenName", message: "Give this person a first name." }],
       ),
     });

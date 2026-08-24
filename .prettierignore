@@ -1,0 +1,26 @@
+# Prettier does not read .gitignore automatically, so build output and
+# other generated/tool-owned paths are listed explicitly here.
+
+.next/
+out/
+build/
+coverage/
+
+# drizzle-kit-generated migrations + snapshot JSON must byte-match the
+# generator's own output. Reformatting them gets noisily undone on the next
+# `db:generate`, so they are excluded rather than fought.
+drizzle/
+
+# npm-owned formatting, ~11k lines, not meant for human editing.
+package-lock.json
+
+next-env.d.ts
+*.tsbuildinfo
+
+# The header block in these files is written and re-inserted by `next dev`
+# itself (see the files' own comments). If that tool-generated content
+# doesn't match Prettier's markdown output byte-for-byte, `format:check`
+# goes red in CI purely because someone ran `next dev` before committing.
+# Exclude rather than fight the framework's generator.
+AGENTS.md
+CLAUDE.md
