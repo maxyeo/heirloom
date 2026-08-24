@@ -1,15 +1,35 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { FamilyTree } from "@/components/FamilyTree";
 import type { FamilyGraph } from "@/lib/family-graph";
+import { removedState } from "@/lib/removal-state";
 import {
   type AddSpouseFormAction,
   emptySpouseFormState,
   spouseSavedState,
 } from "@/lib/spouse-form-state";
 import { render as mount, rerender } from "@/test/render";
+
+/**
+ * The panel's footer (E3-T8) renders `components/PersonRemoval.tsx`, which
+ * imports `app/tree/actions.ts` so it can hand its form a server action —
+ * and that module reaches `@/auth`, which loads next-auth, which cannot be
+ * imported outside the Next.js runtime at all. Vitest fails on the import
+ * itself, before any of this file's own assertions run.
+ *
+ * So this is a stub for a module boundary rather than for behaviour, in the
+ * same category as the two browser APIs stubbed below, and it is the rule
+ * docs/testing.md states under "Mocking". Every future component test that
+ * mounts a tree reaching a server action — E3-T2's and E3-T4's forms
+ * included — will need the same three lines.
+ */
+vi.mock("@/app/tree/actions", () => ({
+  removePersonAction: async () => removedState,
+  detachPartnerAction: async () => removedState,
+  detachChildAction: async () => removedState,
+}));
 
 /**
  * The one thing in E2-T1 that cannot be checked without a document: that

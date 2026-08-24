@@ -64,19 +64,36 @@ export type FamilyGraph = {
 };
 
 /**
+ * Whatever can run the three selects below: the connection pool, or a
+ * transaction on it.
+ *
+ * Narrowed to `select` on purpose. `lib/remove-from-tree.ts` (E3-T8) reads
+ * the graph *inside* the transaction that then deletes from it, so that what
+ * the confirmation reports afterwards describes the same rows the delete
+ * actually saw. Passing the transaction in is all that takes — and typing the
+ * parameter as "something that can select" rather than as a whole database
+ * leaves this function unable to write, whichever of the two it is given.
+ */
+export type GraphReader = Pick<typeof db, "select">;
+
+/**
  * A family tree is small — hundreds of people at most — so the whole graph is
  * loaded at once and laid out client-side. No pagination, no virtualisation.
+ *
+ * @param reader the pool by default; a transaction when the caller has one
  */
-export async function getFamilyGraph(): Promise<FamilyGraph> {
+export async function getFamilyGraph(
+  reader: GraphReader = db,
+): Promise<FamilyGraph> {
   const [people, unions, childLinks] = await Promise.all([
-    db.select().from(schema.individuals),
+    reader.select().from(schema.individuals),
     // Sort by sequence first: families often remember that she remarried after
     // he died long after the actual years are lost.
-    db
+    reader
       .select()
       .from(schema.unions)
       .orderBy(asc(schema.unions.sequence), asc(schema.unions.startDate)),
-    db.select().from(schema.unionChildren),
+    reader.select().from(schema.unionChildren),
   ]);
 
   return {

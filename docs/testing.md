@@ -125,10 +125,12 @@ which a local `createdb heirloom_test` already gives you.
 
 The harness is deliberately small, and one thing is simply not set up:
 
-- **No mocking conventions.** Nothing has needed `vi.mock` yet. Route-handler
-  and server-action tests (E10-T2) will be the first to decide whether to mock
-  `@/lib/session` or drive real sessions, and whichever way that goes belongs
-  back in this document.
+- **No conventions for exercising a server action.** `vi.mock` now has exactly
+  one use — see "Mocking" below — but it stands in for a module Vitest cannot
+  load, not for behaviour worth driving. Nothing yet calls an action and
+  checks what it did. Route-handler and server-action tests (E10-T2) will be
+  the first to decide whether to mock `@/lib/session` or drive real sessions,
+  and whichever way that goes belongs back in this document.
 
   E3-T4 met the same wall from the component side and went around it rather
   than through it. A Client Component that *imports* a server action pulls
@@ -195,6 +197,26 @@ Flow measures nodes with a `ResizeObserver` and reads the zoom out of a
 `DOMMatrixReadOnly` — neither of which jsdom implements. Two no-op classes in a
 `beforeAll` are enough; nothing in that file depends on a measurement, only on
 clicks landing on the right elements.
+
+**Mocking: only for a module that cannot be loaded.**
+`components/PersonRemoval.test.tsx` is the one file that calls `vi.mock`, and
+the reason is narrow enough to be worth stating as the rule. That component
+imports `app/tree/actions.ts` in order to hand its form a server action; that
+module reaches `@/auth`, which loads next-auth, which cannot be imported
+outside the Next.js runtime — the import fails outright, in CI and locally
+alike.
+
+So the mock replaces a module boundary Vitest cannot cross, and nothing else.
+Everything on the test's side of it is the real component, the real preview
+logic and the real DOM. That is the bar for reaching for `vi.mock` here:
+**the import does not work**, not "the real thing is inconvenient". A stub
+that stands in for logic you could have called is a test that asserts the stub
+returns what the stub was told to return.
+
+The stubs are `vi.fn()`, which makes them do double duty: they are also how
+that file asserts *which* action each removal reaches and *what* it sends —
+the one part of the wiring that could silently invert without any other test
+noticing.
 
 **Prefer no DOM.** Most of what looks like component behaviour is a decision
 that can be moved into a plain module and checked in Node —

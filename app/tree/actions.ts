@@ -9,6 +9,16 @@ import {
   savedFormState,
 } from "@/lib/individual-form-state";
 import { individualInputFromFormData } from "@/lib/individual-input";
+import {
+  detachChild,
+  detachPartner,
+  removePerson,
+} from "@/lib/remove-from-tree";
+import {
+  failedRemovalState,
+  type RemovalState,
+  removedState,
+} from "@/lib/removal-state";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import { requireSession } from "@/lib/session";
@@ -206,4 +216,126 @@ export async function addSpouseAction(
       revalidateTree();
       return spouseSavedState(result.unionId);
   }
+}
+
+/**
+ * A row this form is entitled to name.
+ *
+ * Every field a removal sends is a *reference* rather than content — which is
+ * the split the Next.js server-actions guide asks for, and here it is the
+ * whole payload. A field that is missing, or that arrived as a `File`, is not
+ * a reference and did not come from one of these dialogues, so it is a caller
+ * error to throw on rather than something to show an author. Whether the id
+ * names a row that exists is `lib/remove-from-tree.ts`'s question, not this
+ * one's.
+ *
+ * Not exported: a `"use server"` module may only export async functions, and
+ * this has no business being a POST endpoint of its own.
+ */
+function rowReference(form: FormData, field: string): string {
+  const value = form.get(field);
+  if (typeof value !== "string") {
+    throw new TypeError(`Expected a ${field} field, as text.`);
+  }
+  return value;
+}
+
+/**
+ * Delete a person and everything the cascade takes with them (for E3-T8's
+ * confirmation dialogue).
+ *
+ * The destructive one, and the reason the dialogue in front of it is written
+ * as carefully as it is: `db/schema.ts` cascades from `individuals` to every
+ * union the person was a partner in, and there is no revision history under
+ * the tree to restore from afterwards. The Next.js server-actions guide notes
+ * that destructive operations may warrant stronger handling than a read; here
+ * that stronger handling is the confirmation, because `ALLOWED_EMAILS` is the
+ * entire membership model (docs/architecture.md) and there is no narrower
+ * permission to escalate to — everyone who can sign in may edit everyone.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `personId`
+ * @returns a state to render, or the fact that there was nothing to remove
+ */
+export async function removePersonAction(
+  _previous: RemovalState,
+  form: FormData,
+): Promise<RemovalState> {
+  await requireSession();
+
+  const result = await removePerson(rowReference(form, "personId"));
+
+  if (result.status === "not-found") {
+    // Said as a fact about the tree rather than as an error: the ordinary way
+    // to reach it is a panel left open in one tab while the same person was
+    // deleted in another.
+    return failedRemovalState(
+      "That person is no longer in the tree. They may already have been deleted.",
+    );
+  }
+
+  revalidateTree();
+  return removedState;
+}
+
+/**
+ * Unlink one partner from a union, leaving both people in the tree (for
+ * E3-T8's confirmation dialogue).
+ *
+ * The gentle counterpart to the action above, and a separate endpoint rather
+ * than a mode of it, so that the destructive one is never a mistyped field
+ * away from the safe one.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `unionId` and `personId`
+ * @returns a state to render, or the fact that there was nothing to remove
+ */
+export async function detachPartnerAction(
+  _previous: RemovalState,
+  form: FormData,
+): Promise<RemovalState> {
+  await requireSession();
+
+  const result = await detachPartner(
+    rowReference(form, "unionId"),
+    rowReference(form, "personId"),
+  );
+
+  if (result.status === "not-found") {
+    return failedRemovalState(
+      "That relationship is no longer recorded. It may already have been removed.",
+    );
+  }
+
+  revalidateTree();
+  return removedState;
+}
+
+/**
+ * Unlink one child from a union, leaving everybody in the tree (for E3-T8's
+ * confirmation dialogue).
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `unionId` and `childId`
+ * @returns a state to render, or the fact that there was nothing to remove
+ */
+export async function detachChildAction(
+  _previous: RemovalState,
+  form: FormData,
+): Promise<RemovalState> {
+  await requireSession();
+
+  const result = await detachChild(
+    rowReference(form, "unionId"),
+    rowReference(form, "childId"),
+  );
+
+  if (result.status === "not-found") {
+    return failedRemovalState(
+      "That child link is no longer recorded. It may already have been removed.",
+    );
+  }
+
+  revalidateTree();
+  return removedState;
 }

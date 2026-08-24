@@ -45,6 +45,18 @@ export interface PersonPanelProps {
   onSelectPerson: (personId: string) => void;
   onClose: () => void;
   /**
+   * Rendered at the foot of the record, below everything the panel knows how
+   * to say.
+   *
+   * A slot rather than a prop per feature, and it exists because the panel is
+   * deliberately a *read-only* record (see the note above) while the things
+   * that want to sit at the bottom of it are not. E3-T8 puts the remove and
+   * detach affordance here, so that neither the cascade rules nor the
+   * confirmation copy have to be understood by this file — the caller
+   * composes `components/PersonRemoval.tsx` in and this renders it.
+   */
+  footer?: React.ReactNode;
+  /**
    * Start recording a marriage or partnership for this person (E3-T4).
    *
    * Optional, so the panel keeps working anywhere the flow is not offered —
@@ -59,6 +71,7 @@ export function PersonPanel({
   detail,
   onSelectPerson,
   onClose,
+  footer,
   onAddSpouse,
   ref,
 }: PersonPanelProps) {
@@ -187,6 +200,8 @@ export function PersonPanel({
             <p className="text-caption whitespace-pre-line">{detail.notes}</p>
           </section>
         ) : null}
+
+        {footer ? <div className="mt-4">{footer}</div> : null}
       </div>
     </aside>
   );
