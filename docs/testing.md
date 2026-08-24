@@ -218,6 +218,21 @@ that file asserts *which* action each removal reaches and *what* it sends —
 the one part of the wiring that could silently invert without any other test
 noticing.
 
+**A form with more than one button needs the submitter asserted.**
+`components/UnionOrder.test.tsx` (E3-T7) is the case: one form carries an up
+and a down button for every union, and which one was pressed travels in that
+button's own `name`/`value` — a pair the browser sends *only* for the
+submitter. React reproduces that for a form with a function action, but
+nothing in the component says so, and a control that lost it would post the
+same move for every arrow on the panel and look entirely correct doing it.
+
+Pressing the button is enough to check it. `button.click()` inside `act` runs
+jsdom's real submission algorithm, React builds the `FormData` from the form
+and its submitter, and the stub action records what arrived — so the assertion
+is `reorderInputFromFormData(submissions[0])`, the same reader the server
+action uses. Nothing is mocked, and the seam that could silently invert is the
+only thing being tested.
+
 **Prefer no DOM.** Most of what looks like component behaviour is a decision
 that can be moved into a plain module and checked in Node —
 `lib/editor-extensions.ts` holds the editor's toolbar and extension

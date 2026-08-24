@@ -25,10 +25,12 @@ import { EditPerson } from "@/components/EditPersonForm";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
+import { UnionOrder } from "@/components/UnionOrder";
 import type { AddChildFormAction } from "@/lib/child-form-state";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { derivePersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
+import type { ReorderUnionsFormAction } from "@/lib/union-order-state";
 import { layoutFamilyGraph } from "@/lib/tree-layout";
 import { treeOnboarding } from "@/lib/tree-onboarding";
 import { panToReveal, toRect, unobscuredRegion } from "@/lib/tree-viewport";
@@ -109,6 +111,13 @@ export interface FamilyTreeProps {
    * database is words rather than words and a button.
    */
   createIndividualAction?: IndividualFormAction;
+  /**
+   * The union reorder action (E3-T7), for the sequence editor in the detail
+   * panel's footer. Optional for the same reason as every action above it: a
+   * canvas given none is read-only, and the panel simply has no ordering
+   * control.
+   */
+  reorderUnionsAction?: ReorderUnionsFormAction;
 }
 
 export function FamilyTree({
@@ -117,6 +126,7 @@ export function FamilyTree({
   addChildAction,
   updateIndividualAction,
   createIndividualAction,
+  reorderUnionsAction,
 }: FamilyTreeProps) {
   /**
    * An empty database gets an invitation instead of a canvas (E3-T9).
@@ -138,6 +148,7 @@ export function FamilyTree({
         graph={graph}
         addSpouseAction={addSpouseAction}
         addChildAction={addChildAction}
+        reorderUnionsAction={reorderUnionsAction}
         updateIndividualAction={updateIndividualAction}
       />
     </ReactFlowProvider>
@@ -148,6 +159,7 @@ function FamilyTreeCanvas({
   graph,
   addSpouseAction,
   addChildAction,
+  reorderUnionsAction,
   updateIndividualAction,
 }: FamilyTreeProps) {
   const layout = useMemo(() => layoutFamilyGraph(graph), [graph]);
@@ -466,6 +478,19 @@ function FamilyTreeCanvas({
                 <EditPerson
                   person={person}
                   action={updateIndividualAction}
+                />
+              ) : null}
+              {/*
+                E3-T7's sequence editor. Between the edit form and the
+                removals because that is the order the three do damage in:
+                correcting a record, restating an order, and deleting. It
+                renders nothing at all below two unions, which is most people.
+              */}
+              {reorderUnionsAction ? (
+                <UnionOrder
+                  action={reorderUnionsAction}
+                  personId={detail.id}
+                  spouses={detail.spouses}
                 />
               ) : null}
               <PersonRemoval graph={graph} personId={detail.id} />
