@@ -220,8 +220,15 @@ export function ArticleTabs({ pathname }: { pathname: string }) {
           {row.currentView.label}
           {/* The visible word is the view you are on, which is what the row
               has to say first. The rest of the name is announced only, so the
-              control still explains what it discloses. */}
-          <span className="sr-only">and other views</span>
+              control still explains what it discloses — and it keeps the
+              visible text as a prefix of the accessible name, which is what
+              lets a voice-control user say what they can see.
+
+              The leading space is inside the string rather than between the
+              elements: accessible-name computation concatenates these two text
+              nodes with nothing between them, so without it the control is
+              announced as "Readand other views". */}
+          <span className="sr-only">{" and other views"}</span>
           <span aria-hidden="true">▾</span>
         </summary>
 
