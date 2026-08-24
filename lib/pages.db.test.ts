@@ -2,7 +2,7 @@ import { inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
-import { getPageBySlug, listPages } from "@/lib/pages";
+import { findExistingSlugs, getPageBySlug, listPages } from "@/lib/pages";
 
 /**
  * `getPageBySlug` is one `WHERE slug = $1`, so most of it is not worth a test.
@@ -154,5 +154,65 @@ describe("listPages", () => {
     const [entry] = await fixtureRows();
 
     expect(Object.keys(entry).sort()).toEqual(["slug", "title", "updatedAt"]);
+  });
+});
+
+describe("findExistingSlugs", () => {
+  /**
+   * Red-link resolution (E11-T6). The part only Postgres can answer is how
+   * `IN` behaves on values taken out of stored HTML: which of them come back,
+   * that a miss is simply absent rather than an error, and that the list is
+   * parameterised rather than interpolated.
+   *
+   * The *count* of queries is the other half of this function's contract, and
+   * it is asserted where CI can see it — `lib/red-links.test.ts` drives
+   * `resolveEntryLinks` against a recording lookup. There is nothing a real
+   * database adds to that assertion.
+   */
+
+  it("returns the subset that exists", async () => {
+    const wanted = [SLUG, `${SLUG}-nonexistent`, INDEX_FIXTURE[0].slug];
+
+    await expect(findExistingSlugs(wanted)).resolves.toEqual(
+      new Set([SLUG, INDEX_FIXTURE[0].slug]),
+    );
+  });
+
+  it("answers an all-missing request without an error", async () => {
+    // The common case for a young wiki: every link is red.
+    await expect(
+      findExistingSlugs([`${SLUG}-a`, `${SLUG}-b`]),
+    ).resolves.toEqual(new Set());
+  });
+
+  it("answers an empty request without reaching the database", async () => {
+    // `inArray` on an empty list is SQL Drizzle has to special-case, and a
+    // body with no links should not ask at all.
+    await expect(findExistingSlugs([])).resolves.toEqual(new Set());
+  });
+
+  it("collapses a slug asked for more than once", async () => {
+    // An entry linked nine times is one value in the `IN` list, and one
+    // member of the answer.
+    await expect(findExistingSlugs([SLUG, SLUG, SLUG])).resolves.toEqual(
+      new Set([SLUG]),
+    );
+  });
+
+  it("matches slugs exactly, case included", async () => {
+    // Same rule as `getPageBySlug`, and it has to stay the same rule: a link
+    // resolving under a comparison the page route would 404 on would render
+    // blue and lead nowhere.
+    await expect(findExistingSlugs([SLUG.toUpperCase()])).resolves.toEqual(
+      new Set(),
+    );
+  });
+
+  it("parameterises the slugs instead of interpolating them", async () => {
+    // These come out of stored HTML, which is authored content — reachable by
+    // anyone who can sign in, against a database with no RLS.
+    await expect(
+      findExistingSlugs(["' OR 1=1 --", `'); drop table pages; --`]),
+    ).resolves.toEqual(new Set());
   });
 });
