@@ -402,6 +402,17 @@ function FamilyTreeCanvas({
         <TreeStartHint person={onboarding.person} />
       ) : null}
 
+      {/*
+        Losing the selection unmounts everything below, E3-T3's edit form
+        included — and a React unmount is the one exit its unsaved-changes
+        check cannot intervene in, since it is neither a browser navigation
+        nor a dismissal the form was asked about. That is safe rather than
+        overlooked: while the edit dialogue is open its backdrop covers this
+        whole canvas, so nothing here can deselect anybody. The only way the
+        person leaves the graph under it is a delete in *another* tab, which
+        the form already answers for — `updateIndividualAction` reports
+        `not-found`, and the correction is still on screen to copy out of.
+      */}
       {detail === null ? null : addingChild && addChildAction ? (
         <AddChildForm
           action={addChildAction}

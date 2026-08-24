@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EditPerson,
@@ -573,5 +573,115 @@ describe("leaving the page", () => {
     press(host, "Discard them");
 
     expect(unload()).toBe(false);
+  });
+});
+
+describe("Escape, and the panel behind it", () => {
+  /**
+   * `components/PersonPanel.tsx` listens for Escape on `document` and closes
+   * the panel this dialogue is rendered inside. Without the capture-phase
+   * handler in `ModalDialog`, one Escape would answer the edit form *and*
+   * close the record behind it — so this stands in for the panel's listener
+   * and asserts it never fires.
+   *
+   * The identical assertion lives in `components/PersonRemoval.test.tsx`. Both
+   * are worth keeping: they are the two dialogues that rely on the behaviour,
+   * and `ModalDialog` says in its own header that both of them pin it.
+   */
+  const panelListener = vi.fn();
+
+  beforeEach(() => {
+    panelListener.mockClear();
+    document.addEventListener("keydown", panelListener);
+  });
+
+  afterEach(() => {
+    document.removeEventListener("keydown", panelListener);
+  });
+
+  it("stops the panel from closing too", () => {
+    const host = mount(rose);
+    open(host);
+
+    act(() => {
+      host
+        .querySelector("[role='dialog'] button")
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+    });
+
+    expect(dialog(host)).toBeNull();
+    expect(panelListener).not.toHaveBeenCalled();
+  });
+
+  it("keeps the panel out of it even when the warning appears instead", () => {
+    const host = mount(rose);
+    open(host);
+    type(host, "surname", "Doyle");
+
+    act(() => {
+      host
+        .querySelector("[role='dialog'] button")
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+    });
+
+    // The worst version of this bug: the dialogue stays open over the warning
+    // while the record behind it closes anyway.
+    expect(dialog(host)).not.toBeNull();
+    expect(panelListener).not.toHaveBeenCalled();
+  });
+});
+
+describe("while a save is in flight", () => {
+  /**
+   * An action that never answers, so `pending` stays true for the whole test.
+   * The promise is deliberately left hanging — nothing awaits it, and the
+   * component unmounts at teardown.
+   */
+  function neverAnswers(): EditPersonProps["action"] {
+    return () => new Promise<IndividualFormState>(() => {});
+  }
+
+  function labelled(host: HTMLElement, label: string): HTMLButtonElement {
+    const found = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === label,
+    );
+    if (found === undefined) throw new Error(`no button labelled ${label}`);
+    return found;
+  }
+
+  it("disables the warning's buttons, discard included", async () => {
+    const host = mount(rose, neverAnswers());
+    open(host);
+
+    type(host, "surname", "Doyle");
+    press(host, "Cancel");
+    await submit(host);
+
+    /**
+     * "Discard them" is the one exit that calls `onClose` directly rather than
+     * through `requestClose`, so it carries none of the pending guard of its
+     * own. Enabled here it would close the dialogue over a write that is still
+     * going, and the author would never see what came back.
+     */
+    expect(labelled(host, "Discard them").disabled).toBe(true);
+    expect(labelled(host, "Keep editing").disabled).toBe(true);
+    expect(labelled(host, "Saving…").disabled).toBe(true);
+    expect(dialog(host)).not.toBeNull();
+  });
+
+  it("ignores Escape rather than racing the write", async () => {
+    const host = mount(rose, neverAnswers());
+    open(host);
+
+    type(host, "surname", "Doyle");
+    await submit(host);
+    escape();
+
+    expect(dialog(host)).not.toBeNull();
+    expect(host.textContent).not.toContain("have not been saved");
   });
 });
