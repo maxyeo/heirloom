@@ -136,6 +136,25 @@ describe("showing the author they were understood", () => {
     expect(host.textContent).not.toContain("January");
   });
 
+  it("does not turn a month into the 1st of it", () => {
+    // The other half of the same failure as the test above, and the one no
+    // fixture covered while `formatQualifiedDate`'s precision argument was
+    // optional: "March 1890" must not echo back as "1 March 1890".
+    const host = mount({ value: "March 1890" });
+
+    expect(host.textContent).toContain("March 1890");
+    expect(host.textContent).not.toContain("1 March 1890");
+  });
+
+  it("carries a qualifier onto a coarse date in the echo", () => {
+    expect(mount({ value: "before 1920" }).textContent).toContain(
+      "before 1920",
+    );
+    expect(mount({ value: "about March 1890" }).textContent).toContain(
+      "about March 1890",
+    );
+  });
+
   it("always says what shapes are accepted", () => {
     // The entire discoverability of the feature. Without it the box reads as
     // an ordinary date field and nobody finds out that "about 1890" is

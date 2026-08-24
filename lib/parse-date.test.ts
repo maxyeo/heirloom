@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parseDateInput, type ParsedDate } from "@/lib/parse-date";
-import { formatQualifiedDate } from "@/lib/person-format";
+import { formatQualifiedDate } from "@/lib/format-date";
 
 /**
  * What the date field understands (E4-T2, `YEO-39`).

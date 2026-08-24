@@ -5,11 +5,8 @@ import type {
   GraphUnion,
 } from "./family-graph";
 import type { PersonSummary } from "./person-detail";
-import {
-  formatLifespan,
-  formatPersonName,
-  formatQualifiedDate,
-} from "./person-format";
+import { formatLifespan, formatQualifiedDate } from "./format-date";
+import { formatPersonName } from "./person-format";
 
 /**
  * What disappears when something is removed from the tree (E3-T8, `YEO-36`).
@@ -431,7 +428,7 @@ function toSummary(person: GraphPerson): PersonSummary {
   return {
     id: person.id,
     name: formatPersonName(person.givenName, person.surname),
-    lifespan: formatLifespan(person.birthDate, person.deathDate),
+    lifespan: formatLifespan(person),
   };
 }
 

@@ -30,9 +30,10 @@
  * — this calls it rather than re-deciding whether 30 February exists, so a
  * hand-made POST and a typed form get the same answer. And it does not
  * *format*: the plain-language echo the field shows back is
- * `formatQualifiedDate` in `lib/person-format.ts`, which is the display side
- * of the same pair and where E4-T3 (`YEO-40`) will consolidate every date on
- * screen. Parsing and formatting stay separable and each is written once.
+ * `formatQualifiedDate` in `lib/format-date.ts`, which is the display side of
+ * the same pair and, since E4-T3 (`YEO-40`), the one place every date on
+ * screen goes through. Parsing and formatting stay separable and each is
+ * written once.
  *
  * ## What it deliberately refuses
  *

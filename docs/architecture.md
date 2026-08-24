@@ -221,6 +221,38 @@ round trip closes and an edit form can prefill free text without a second
 formatter. An author never picks a qualifier from a dropdown before typing a
 date — see `components/DateField.tsx`.
 
+#### One formatter, and why it is one
+
+`lib/format-date.ts` (E4-T3, `YEO-40`) is the only module that turns those
+columns into words, and every surface that shows a date goes through it: the
+tree node label, the detail panel, the removal dialogue, the date field's echo
+and the edit form's prefill. Formatting a date is easy, which is exactly the
+problem — easy things get rewritten locally, and the local rewrite is where
+somebody reaches for `person.birthDate` alone and publishes the anchor day as
+a birthday.
+
+Two properties the module enforces rather than documents:
+
+- **`precision` is a required parameter.** It briefly had a `day` default, and
+  the cost was a bug that shipped green: call sites that forgot the third
+  argument rendered a year off a headstone as "1 January 1890", in the voice
+  of a recorded fact. Every fixture at the time used day precision, so no test
+  disagreed. Requiring it moves the omission from something a reviewer has to
+  catch to something the compiler will not build.
+- **A missing date renders as nothing.** Not "unknown", not a dash.
+  `formatQualifiedDate` returns `null` and `formatLifespan` returns `""`, so
+  every caller omits the element. Most of a nineteenth-century record is
+  missing; a column of em dashes reads as a defect in the tree rather than as
+  the honest limit of what the source said.
+
+`formatLifespan` lives there too — the years under a name, `1899–1960` or
+`b. about 1890` — and carries the qualifier for the same reason the panel
+does. `b. 1890` and `b. about 1890` are different claims, and the node is the
+most-read surface in the application to be making the wrong one on. It takes
+no precision, and that is not the same omission: the anchor convention puts
+the year in the same four characters at every precision, so a year is the one
+part of a stored date that reading back can never invent.
+
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations
