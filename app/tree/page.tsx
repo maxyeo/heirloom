@@ -2,6 +2,7 @@ import {
   addChildAction,
   addSpouseAction,
   createIndividualAction,
+  reorderUnionsAction,
   setParentsAction,
   updateIndividualAction,
 } from "@/app/tree/actions";
@@ -68,6 +69,12 @@ export default async function TreePage() {
             has the thing it is asking for on it.
           */
           createIndividualAction={createIndividualAction}
+          /*
+            And the union reorder action (E3-T7), which the detail panel's
+            footer needs: `unions.sequence` is the one column the tree has
+            always sorted on and nothing has ever written.
+          */
+          reorderUnionsAction={reorderUnionsAction}
         />
       </div>
     </main>
