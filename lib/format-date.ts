@@ -178,7 +178,16 @@ export function formatLifespan(lifespan: Lifespan): string {
   return `d. ${died}`;
 }
 
-/** One end of a lifespan: the qualifier, then the year, or nothing. */
+/**
+ * One end of a lifespan: the qualifier, then the year, or nothing.
+ *
+ * No malformed-value guard, and unlike `formatQualifiedDate`'s that is not an
+ * omission. That function hands its string to `Date`, so it has to say what
+ * happens when the parse fails; this one only ever takes the first four
+ * characters, which needs no parser and cannot throw. The column is a
+ * Postgres `date`, so what arrives is `YYYY-MM-DD` or null — there is no
+ * third case for a guard to catch.
+ */
 function year(date: string | null, qualifier: DateQualifier): string {
   if (!date) return "";
   return `${QUALIFIER_PREFIX[qualifier]}${date.slice(0, 4)}`;
