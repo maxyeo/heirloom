@@ -18,9 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "@xyflow/react/dist/style.css";
 
+import { AddChildForm } from "@/components/AddChildForm";
 import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
+import type { AddChildFormAction } from "@/lib/child-form-state";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { derivePersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
@@ -83,17 +85,35 @@ export interface FamilyTreeProps {
    * `AddSpouseFormAction`.
    */
   addSpouseAction?: AddSpouseFormAction;
+  /**
+   * The add-child action (E3-T5), passed down for exactly the same reasons as
+   * the one above — and separately from it, so that a canvas may offer either
+   * flow, both, or neither.
+   */
+  addChildAction?: AddChildFormAction;
 }
 
-export function FamilyTree({ graph, addSpouseAction }: FamilyTreeProps) {
+export function FamilyTree({
+  graph,
+  addSpouseAction,
+  addChildAction,
+}: FamilyTreeProps) {
   return (
     <ReactFlowProvider>
-      <FamilyTreeCanvas graph={graph} addSpouseAction={addSpouseAction} />
+      <FamilyTreeCanvas
+        graph={graph}
+        addSpouseAction={addSpouseAction}
+        addChildAction={addChildAction}
+      />
     </ReactFlowProvider>
   );
 }
 
-function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
+function FamilyTreeCanvas({
+  graph,
+  addSpouseAction,
+  addChildAction,
+}: FamilyTreeProps) {
   const layout = useMemo(() => layoutFamilyGraph(graph), [graph]);
 
   /**
@@ -168,6 +188,15 @@ function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
   const [addingSpouseFor, setAddingSpouseFor] = useState<string | null>(null);
   const addingSpouse =
     addingSpouseFor !== null && addingSpouseFor === selectedId;
+
+  /**
+   * The same again for the add-child flow (E3-T5), held as its own id rather
+   * than as a mode of the one above. Two independent pieces of state cannot
+   * both be open — the render below picks one — and keeping them apart means
+   * neither flow can be left half-open by the other closing.
+   */
+  const [addingChildFor, setAddingChildFor] = useState<string | null>(null);
+  const addingChild = addingChildFor !== null && addingChildFor === selectedId;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -295,7 +324,21 @@ function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
         <MiniMap pannable zoomable />
       </ReactFlow>
 
-      {detail === null ? null : addingSpouse && addSpouseAction ? (
+      {detail === null ? null : addingChild && addChildAction ? (
+        <AddChildForm
+          action={addChildAction}
+          person={{ id: detail.id, name: detail.name }}
+          /*
+            The unions this person belongs to, already derived by
+            `derivePersonDetail` — which is where the choice of family comes
+            from and where each option gets the other parent's name.
+          */
+          unions={detail.spouses}
+          people={graph.people}
+          onSaved={() => setAddingChildFor(null)}
+          onCancel={() => setAddingChildFor(null)}
+        />
+      ) : addingSpouse && addSpouseAction ? (
         <AddSpouseForm
           action={addSpouseAction}
           person={{ id: detail.id, name: detail.name }}
@@ -326,6 +369,9 @@ function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
             addSpouseAction
               ? () => setAddingSpouseFor(detail.id)
               : undefined
+          }
+          onAddChild={
+            addChildAction ? () => setAddingChildFor(detail.id) : undefined
           }
         />
       )}

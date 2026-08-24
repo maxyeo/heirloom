@@ -1,4 +1,8 @@
-import { addSpouseAction, createIndividualAction } from "@/app/tree/actions";
+import {
+  addChildAction,
+  addSpouseAction,
+  createIndividualAction,
+} from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
 import { getFamilyGraph } from "@/lib/family-graph";
@@ -35,7 +39,11 @@ export default async function TreePage() {
           one more: the canvas renders the form, so importing the action inside
           `FamilyTree` would take `components/FamilyTree.test.tsx` down with it.
         */}
-        <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />
+        <FamilyTree
+          graph={graph}
+          addSpouseAction={addSpouseAction}
+          addChildAction={addChildAction}
+        />
       </div>
     </main>
   );

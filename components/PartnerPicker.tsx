@@ -32,6 +32,14 @@ import { type PartnerCandidate, searchPartners } from "@/lib/partner-search";
  * server action, no `useActionState`, and therefore no `@/db` anywhere in its
  * import graph (docs/testing.md, "npm test must never need a database").
  *
+ * ## Why it is not only about partners
+ *
+ * E3-T5's add-child flow reuses this whole control to name a child, because
+ * "search the tree, or add them inline" is the same question whoever is being
+ * named — and a second copy would be a second place for the ranking rules in
+ * `lib/partner-search.ts` to drift. The name is historical: nothing below
+ * knows what the person it returns is going to be to anybody.
+ *
  * ## Why the search is not debounced
  *
  * There is nothing to debounce against. The graph is already in the browser
