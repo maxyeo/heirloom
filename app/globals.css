@@ -64,6 +64,25 @@
   --color-rule: #a2a9b1; /* heading rules and panel borders */
   --color-rule-soft: #c8ccd1; /* borders inside a panel */
 
+  /* ---- Diff (E1-T6) -----------------------------------------------------
+   * Blue for what arrived, yellow for what left — Wikipedia's own diff
+   * palette, not the green/red every other tool reaches for. MediaWiki chose
+   * this pair deliberately: red and green are the two that the most common
+   * colour blindness collapses into each other, and a diff whose only signal
+   * is that pair is unreadable to roughly one man in twelve. The pairing is
+   * belt and braces regardless — the compare view labels every changed block
+   * in words and marks it in the gutter, so these fills are the fastest way
+   * to read the page rather than the only way. See
+   * `app/wiki/[slug]/history/compare/page.tsx`.
+   *
+   * Each fill has a matching rule, used as the block's left border: at 4px it
+   * is the one part of a row that survives a monochrome print.
+   */
+  --color-diff-added: #eaf3ff;
+  --color-diff-added-rule: #a3d3ff;
+  --color-diff-removed: #fef6e7;
+  --color-diff-removed-rule: #ffe49c;
+
   --color-link: #3366cc;
   --color-link-visited: #795cb2;
   /* A red link points at an entry nobody has written yet — an invitation
