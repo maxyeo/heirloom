@@ -1,6 +1,6 @@
 import { db, schema } from "@/db";
 import { RESERVED_SLUGS, slugCandidate, slugFromTitle } from "@/lib/entry-slug";
-import { writeRevision } from "@/lib/save-page";
+import { type Transaction, writeRevision } from "@/lib/save-page";
 
 /**
  * Starting an entry (E1-T8, `YEO-22`): a title becomes a `pages` row, its
@@ -72,6 +72,32 @@ const MAX_ATTEMPTS = 30;
 export async function createPage(
   input: CreatePageInput,
 ): Promise<CreatePageResult> {
+  return db.transaction((tx) => createPageIn(tx, input));
+}
+
+/**
+ * The same creation, inside a transaction the caller already has.
+ *
+ * Split out for E2-T2 (`YEO-25`), where starting an entry *for a person* has
+ * to write a third row — `individuals.page_id` — and all three have to land
+ * together. A version of that flow which called `createPage` and then updated
+ * the person would be two transactions, and the window between them is an
+ * entry that exists while nothing points at it: the panel that asked for it
+ * still offers to write one, and the author gets a second entry about the same
+ * person rather than a retry of the first.
+ *
+ * `createPage` above is now this function plus a transaction, so the ordinary
+ * create-page flow (E1-T8) is unchanged and there is exactly one description
+ * of how an entry comes into existence.
+ *
+ * @param tx the caller's transaction; everything below joins it
+ * @param input the title, plus the email to attribute the entry to
+ * @returns the outcome, including the slug to send the author to
+ */
+export async function createPageIn(
+  tx: Transaction,
+  input: CreatePageInput,
+): Promise<CreatePageResult> {
   // Trimmed and rejected on the same rule `savePage` uses, so "  " is not a
   // title in one half of the wiki and a title in the other.
   const title = input.title.trim();
@@ -79,59 +105,57 @@ export async function createPage(
 
   const base = slugFromTitle(title);
 
-  return db.transaction(async (tx): Promise<CreatePageResult> => {
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const slug = slugCandidate(base, attempt);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const slug = slugCandidate(base, attempt);
 
-      // A static route already answers here, so the address is not this
-      // entry's to take. See `RESERVED_SLUGS`.
-      if (RESERVED_SLUGS.has(slug)) continue;
+    // A static route already answers here, so the address is not this
+    // entry's to take. See `RESERVED_SLUGS`.
+    if (RESERVED_SLUGS.has(slug)) continue;
 
-      /**
-       * The unique index on `pages.slug` is what decides whether an address
-       * is free, rather than a `select` beforehand. Checking first and then
-       * inserting leaves a gap in which another creation can take the same
-       * slug, and no amount of care in TypeScript closes it — two family
-       * members starting "Rose Hall" at the same moment is exactly the race
-       * `lib/save-page.db.test.ts` takes seriously for edits.
-       *
-       * `on conflict do nothing` rather than catching a unique violation,
-       * because a raised error would abort the surrounding transaction and
-       * force the whole attempt — including the revision write — to start
-       * over from a new connection. Returning no rows is an ordinary result
-       * that leaves the transaction healthy, so the loop simply asks for the
-       * next address.
-       */
-      const [page] = await tx
-        .insert(schema.pages)
-        .values({ slug, title, bodyHtml: "", updatedBy: input.createdBy })
-        .onConflictDoNothing({ target: schema.pages.slug })
-        .returning({ id: schema.pages.id });
+    /**
+     * The unique index on `pages.slug` is what decides whether an address
+     * is free, rather than a `select` beforehand. Checking first and then
+     * inserting leaves a gap in which another creation can take the same
+     * slug, and no amount of care in TypeScript closes it — two family
+     * members starting "Rose Hall" at the same moment is exactly the race
+     * `lib/save-page.db.test.ts` takes seriously for edits.
+     *
+     * `on conflict do nothing` rather than catching a unique violation,
+     * because a raised error would abort the surrounding transaction and
+     * force the whole attempt — including the revision write — to start
+     * over from a new connection. Returning no rows is an ordinary result
+     * that leaves the transaction healthy, so the loop simply asks for the
+     * next address.
+     */
+    const [page] = await tx
+      .insert(schema.pages)
+      .values({ slug, title, bodyHtml: "", updatedBy: input.createdBy })
+      .onConflictDoNothing({ target: schema.pages.slug })
+      .returning({ id: schema.pages.id });
 
-      if (!page) continue;
+    if (!page) continue;
 
-      /**
-       * History starts here, in the same transaction as the row it describes.
-       * Both `revisions.created_at` and `pages.updated_at` default to `now()`,
-       * which Postgres evaluates once per transaction — so the page and its
-       * first revision carry the same timestamp, the same invariant every
-       * later save maintains.
-       */
-      const revisionId = await writeRevision(tx, {
-        pageId: page.id,
-        title,
-        bodyHtml: "",
-        editedBy: input.createdBy,
-      });
+    /**
+     * History starts here, in the same transaction as the row it describes.
+     * Both `revisions.created_at` and `pages.updated_at` default to `now()`,
+     * which Postgres evaluates once per transaction — so the page and its
+     * first revision carry the same timestamp, the same invariant every
+     * later save maintains.
+     */
+    const revisionId = await writeRevision(tx, {
+      pageId: page.id,
+      title,
+      bodyHtml: "",
+      editedBy: input.createdBy,
+    });
 
-      return { status: "created", pageId: page.id, slug, revisionId };
-    }
+    return { status: "created", pageId: page.id, slug, revisionId };
+  }
 
-    // Unreachable short of the random suffixes colliding ten times running,
-    // which is not a state a retry improves. Throwing rolls the transaction
-    // back and surfaces as a 500 rather than as a half-made entry.
-    throw new Error(
-      `Could not find a free address for "${title}" after ${MAX_ATTEMPTS} attempts.`,
-    );
-  });
+  // Unreachable short of the random suffixes colliding ten times running,
+  // which is not a state a retry improves. Throwing rolls the transaction
+  // back and surfaces as a 500 rather than as a half-made entry.
+  throw new Error(
+    `Could not find a free address for "${title}" after ${MAX_ATTEMPTS} attempts.`,
+  );
 }

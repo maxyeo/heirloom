@@ -1,7 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
+import {
+  changedEntryLinkState,
+  type EntryLinkState,
+  failedEntryLinkState,
+} from "@/lib/entry-link-state";
 import {
   type ChildFormState,
   childFailedState,
@@ -16,6 +22,7 @@ import {
   savedFormState,
 } from "@/lib/individual-form-state";
 import { individualInputFromFormData } from "@/lib/individual-input";
+import { createEntryForPerson, setPersonEntry } from "@/lib/link-person-entry";
 import {
   type ParentsFormState,
   parentsFailedState,
@@ -38,7 +45,7 @@ import { addChild } from "@/lib/save-child";
 import { setParents } from "@/lib/set-parents";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
-import { requireSession } from "@/lib/session";
+import { requireSession, UnauthorizedError } from "@/lib/session";
 import {
   type SpouseFormState,
   spouseFailedState,
@@ -589,4 +596,186 @@ export async function reorderUnionsAction(
       revalidateTree();
       return movedUnionOrderState;
   }
+}
+
+/**
+ * Start an entry about a person, from their panel (E2-T2, `YEO-25`).
+ *
+ * The title is not a field. It is read from the `individuals` row inside
+ * `createEntryForPerson`, which is what makes this "write about *this
+ * person*" rather than a create-page form with a name typed into it — a
+ * direct POST can name a person, and cannot name what the entry about them is
+ * called. Creation itself goes through E1-T8's code (`createPageIn`), so the
+ * entry's first revision is written by the same function that writes every
+ * other one and history starts correctly.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `personId`
+ * @returns a state to render, or never, when the redirect fires
+ */
+export async function createEntryForPersonAction(
+  _previous: EntryLinkState,
+  form: FormData,
+): Promise<EntryLinkState> {
+  const session = await requireSession();
+
+  // As in `app/wiki/actions.ts`: `requireSession` has already thrown if there
+  // is no email, but its return type is next-auth's `Session`, whose
+  // `user.email` is optional, and the compiler cannot see that narrowing.
+  const createdBy = session.user?.email;
+  if (!createdBy) throw new UnauthorizedError();
+
+  const result = await createEntryForPerson({
+    personId: rowReference(form, "personId"),
+    createdBy,
+  });
+
+  if (result.status === "person-not-found") {
+    // Said as a fact about the tree rather than as an error, for the reason
+    // every action above gives: the ordinary way to reach it is a panel left
+    // open in one tab while E3-T8 deleted the person in another.
+    return failedEntryLinkState(
+      "That person is no longer in the tree. They may have been deleted.",
+    );
+  }
+
+  if (result.status === "no-name") {
+    /**
+     * Unreachable through this application — `given_name` is `not null` and
+     * `validateIndividual` refuses a blank one — so this is the row that a
+     * hand-written `UPDATE` left with nothing to title an entry after.
+     */
+    return failedEntryLinkState(
+      "That person has no name recorded, so there is nothing to title an entry with.",
+    );
+  }
+
+  if (result.status === "already-linked") {
+    /**
+     * The panel was open in another tab, or the button was pressed twice.
+     * What the author asked for is an entry about this person and there is
+     * one, so they go to it rather than being told about a race they did not
+     * cause. The tree is revalidated because the panel they came from is
+     * showing the wrong half of this.
+     */
+    revalidateTree();
+    redirect(`/wiki/${encodeURIComponent(result.slug)}`);
+  }
+
+  /**
+   * Both routes this moved, revalidated before the `redirect` below, because
+   * `redirect` throws. The tree, whose panel now has an entry to link to, and
+   * the index (E1-T9), which has a new row on it. Bare paths rather than
+   * `"layout"`, matching `app/wiki/actions.ts`.
+   */
+  revalidateTree();
+  revalidatePath("/wiki");
+
+  /**
+   * Into the editor, which is where "write about this person" actually
+   * finishes: the entry that exists now is titled and empty. The same
+   * destination `createPageAction` sends an author to, and the slug is encoded
+   * for the same reason — a non-Latin name produces a non-Latin slug, and the
+   * `Location` header of the no-JavaScript response has to be a valid URL.
+   */
+  redirect(`/wiki/${encodeURIComponent(result.slug)}/edit`);
+}
+
+/**
+ * Point a person at an entry that already exists (E2-T2).
+ *
+ * Both fields are references — which person, which entry — which is the split
+ * the Next.js server-actions guide asks for, and here it is the whole payload.
+ * The rules that make it safe live in `lib/link-person-entry.ts` rather than
+ * here, because this is one of two doors onto the same column.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `personId` and `pageId`
+ * @returns a state to render, or what stopped it
+ */
+export async function linkPersonEntryAction(
+  _previous: EntryLinkState,
+  form: FormData,
+): Promise<EntryLinkState> {
+  await requireSession();
+
+  const result = await setPersonEntry({
+    personId: rowReference(form, "personId"),
+    pageId: rowReference(form, "pageId"),
+  });
+
+  switch (result.status) {
+    case "person-not-found":
+      return failedEntryLinkState(
+        "That person is no longer in the tree. They may have been deleted.",
+      );
+
+    case "entry-not-found":
+      return failedEntryLinkState(
+        "That entry no longer exists. It may have been deleted.",
+      );
+
+    case "entry-taken":
+      /**
+       * One entry, one person — see `lib/link-person-entry.ts`. Named, because
+       * the useful thing to say is whose entry it already is: the author has
+       * almost certainly picked the wrong row out of a list of similar titles.
+       */
+      return failedEntryLinkState(
+        `That entry is already about ${result.personName}. Unlink it there first, or write a new one.`,
+      );
+
+    case "unchanged":
+      // Not a failure, and deliberately not revalidated: nothing moved, so
+      // discarding a good cache entry would buy a refetch of the same diagram.
+      return changedEntryLinkState;
+
+    case "unlinked":
+    // Unreachable: this action never sends a null. Folded in with `linked`
+    // so the compiler can see the switch is total.
+    case "linked":
+      revalidateTree();
+      return changedEntryLinkState;
+  }
+}
+
+/**
+ * Cut a person loose from their entry, without touching the entry (E2-T2).
+ *
+ * A separate endpoint rather than a mode of the action above, so that the one
+ * which clears the column is never a missing field away from the one which
+ * sets it — the same reason `detachPartnerAction` is not a flag on
+ * `removePersonAction`.
+ *
+ * Nothing is deleted: `individuals.page_id` is `on delete set null` precisely
+ * because an entry is expected to outlive the link to it. The entry keeps its
+ * address, its content and its whole history, and `linkPersonEntryAction` can
+ * put it back.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `personId`
+ * @returns a state to render, or what stopped it
+ */
+export async function unlinkPersonEntryAction(
+  _previous: EntryLinkState,
+  form: FormData,
+): Promise<EntryLinkState> {
+  await requireSession();
+
+  const result = await setPersonEntry({
+    personId: rowReference(form, "personId"),
+    pageId: null,
+  });
+
+  if (result.status === "person-not-found") {
+    return failedEntryLinkState(
+      "That person is no longer in the tree. They may have been deleted.",
+    );
+  }
+
+  // `unchanged` — the person had no entry to begin with — is not revalidated,
+  // for the reason the actions above give. Everything else moved the column.
+  if (result.status !== "unchanged") revalidateTree();
+
+  return changedEntryLinkState;
 }
