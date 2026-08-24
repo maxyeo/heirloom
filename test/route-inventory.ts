@@ -3,6 +3,7 @@ import { join, posix, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { tryToParsePath } from "next/dist/lib/try-to-parse-path";
+import ts from "typescript";
 
 /**
  * The App Router, read off the filesystem (E10-T2, `YEO-66`).
@@ -179,28 +180,60 @@ export function pathnameFor(
 }
 
 /**
- * Whether a file's *module* is a server-action module — `"use server"` as the
- * first thing in the file, which makes every export a POST endpoint.
+ * Parse a source file the way the compiler does.
  *
- * Leading comments and blank lines are skipped, because a directive is still
- * a module directive with a licence header above it.
+ * Everything below reads the syntax tree rather than the source text, and the
+ * reason is not tidiness. This repository documents itself in long docblocks,
+ * several of which discuss `requireSession()` by name — `app/wiki/[slug]/
+ * history/[revisionId]/restore/page.tsx` explains where its guard lives — and
+ * a text search cannot tell that sentence from the call. It also cannot tell
+ * a call from a commented-out one, which is the false green that matters:
+ * `// await requireSession();` is exactly what a half-finished edit leaves
+ * behind, and it would have satisfied a regex.
+ *
+ * `typescript` is already a devDependency, so the real scanner is free.
  */
-function hasModuleDirective(source: string): boolean {
-  const withoutLeadingComments = source.replace(
-    /^(?:\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/))*/,
-    "",
+function parse(file: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    read(file),
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
-  return /^\s*["']use server["']/.test(withoutLeadingComments);
+}
+
+/** Depth-first walk, stopping as soon as `visit` is satisfied. */
+function some(node: ts.Node, visit: (node: ts.Node) => boolean): boolean {
+  if (visit(node)) return true;
+  return ts.forEachChild(node, (child) => some(child, visit)) ?? false;
+}
+
+/** `"use server"` — as a directive, which is a string on its own. */
+function isUseServerDirective(node: ts.Node): boolean {
+  return (
+    ts.isExpressionStatement(node) &&
+    ts.isStringLiteral(node.expression) &&
+    node.expression.text === "use server"
+  );
 }
 
 /**
- * A directive is a statement standing on its own line.
- *
- * Matching the bare characters `use server` anywhere in the file instead
- * would flag every docblock that discusses server actions — of which this
- * repository has several, including the test that calls this function.
+ * Whether a file's *module* is a server-action module — `"use server"` in the
+ * directive prologue, which makes every export a POST endpoint.
  */
-const DIRECTIVE_LINE = /^[ \t]*["']use server["'];?[ \t]*$/m;
+function hasModuleDirective(source: ts.SourceFile): boolean {
+  // The prologue is the run of bare string statements a module opens with; a
+  // directive after the first real statement is not a directive at all.
+  for (const statement of source.statements) {
+    if (isUseServerDirective(statement)) return true;
+    const isPrologue =
+      ts.isExpressionStatement(statement) &&
+      ts.isStringLiteral(statement.expression);
+    if (!isPrologue) return false;
+  }
+  return false;
+}
 
 /**
  * Every module-level `"use server"` file under `app/`, repo-relative.
@@ -210,13 +243,13 @@ const DIRECTIVE_LINE = /^[ \t]*["']use server["'];?[ \t]*$/m;
  */
 export function serverActionModules(): string[] {
   return appSourceFiles()
-    .filter((file) => hasModuleDirective(read(file)))
+    .filter((file) => hasModuleDirective(parse(file)))
     .sort();
 }
 
 /**
- * Files that use `"use server"` somewhere *other* than the top of the module
- * — an action declared inside a component or a closure.
+ * Files that use `"use server"` somewhere *other* than the module prologue —
+ * an action declared inside a component or a closure.
  *
  * An inline action is a real POST endpoint with no importable name, so
  * `app/auth-boundary.test.ts` cannot call it and prove it rejects an
@@ -226,10 +259,69 @@ export function serverActionModules(): string[] {
 export function inlineServerActionFiles(): string[] {
   return appSourceFiles()
     .filter((file) => {
-      const source = read(file);
-      return DIRECTIVE_LINE.test(source) && !hasModuleDirective(source);
+      const source = parse(file);
+      if (hasModuleDirective(source)) return false;
+      return some(source, (node) => {
+        // A directive inside a function body, rather than at the top of the
+        // file: `async () => { "use server"; ... }`.
+        if (!ts.isBlock(node)) return false;
+        return node.statements.some(isUseServerDirective);
+      });
     })
     .sort();
+}
+
+/** The two shapes of the guard. Neither is optional; one of them is required. */
+const BOUNDARY_CALLS = new Set(["requireSession", "requireSessionOr401"]);
+
+/** Where the guard has to come from, so a local decoy cannot stand in for it. */
+const BOUNDARY_MODULE = "@/lib/session";
+
+export type BoundaryUsage = {
+  /** Whether the file imports the guard from `@/lib/session`. */
+  imported: boolean;
+  /** The guards actually *called*, in source order. Comments do not count. */
+  called: string[];
+};
+
+/**
+ * How a route file uses the auth boundary.
+ *
+ * Both halves matter. A call with no import is an unresolved name; an import
+ * with no call is the shape a half-finished edit leaves behind.
+ */
+export function boundaryUsage(file: string): BoundaryUsage {
+  const source = parse(file);
+  const called: string[] = [];
+  let imported = false;
+
+  const visit = (node: ts.Node): boolean => {
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === BOUNDARY_MODULE
+    ) {
+      const named = node.importClause?.namedBindings;
+      if (named && ts.isNamedImports(named)) {
+        for (const element of named.elements) {
+          if (BOUNDARY_CALLS.has(element.name.text)) imported = true;
+        }
+      }
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      BOUNDARY_CALLS.has(node.expression.text)
+    ) {
+      called.push(node.expression.text);
+    }
+
+    return false;
+  };
+
+  some(source, visit);
+  return { imported, called };
 }
 
 /**

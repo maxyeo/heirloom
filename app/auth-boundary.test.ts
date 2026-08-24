@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { UnauthorizedError } from "@/lib/session";
 import {
+  boundaryUsage,
   inlineServerActionFiles,
   pathnameFor,
   posixPath,
   proxyMatchers,
   proxyProtects,
-  read,
   routeFiles,
   serverActionModules,
 } from "@/test/route-inventory";
@@ -36,8 +36,11 @@ import {
  *
  * 1. Every route file calls the boundary. Pages are `async` Server
  *    Components, which React and Vitest cannot render, so this one is read
- *    from the source text — the same tripwire idiom as
- *    `lib/sanitize-html.call-sites.test.ts` and `app/globals.test.ts`.
+ *    statically — but from the *syntax tree*, not the source text. This
+ *    repository explains itself in long docblocks, several of which name
+ *    `requireSession()` in prose, and `// await requireSession();` is exactly
+ *    what a half-finished edit leaves behind. A regex counts both as a guard.
+ *    The compiler's own scanner counts neither.
  * 2. Every server action really does reject an anonymous caller. These *can*
  *    be driven, so they are: each one is imported and called with no session
  *    in place, and has to throw `UnauthorizedError`.
@@ -144,21 +147,26 @@ describe("every route demands a session", () => {
   it.each(guarded.map((route) => [route.route, route.file]))(
     "%s calls the boundary",
     (_route, file) => {
-      const source = read(file);
+      const { imported, called } = boundaryUsage(file);
 
       /**
        * Both flavours count. `requireSession` throws, which is what a page
        * wants; `requireSessionOr401` returns a 401 `Response`, which is what
        * a route handler wants. What does not count is neither.
        *
-       * This reads source text, so it proves the guard is *present*, not that
+       * The import is asserted as well as the call, and the pair is the
+       * point: a call with no import is an unresolved name, and an import
+       * with no call is the shape a guard looks like after somebody deleted
+       * the line but not the line above it.
+       *
+       * This is still static, so it proves the guard is *present*, not that
        * it runs before everything else. That is the realistic failure — a new
        * page written by copying one that queries the database and dropping
        * the line that does not seem to do anything — and the actions below
        * are driven for real, which covers the other half.
        */
-      expect(source).toContain('from "@/lib/session"');
-      expect(source).toMatch(/\brequireSession(Or401)?\s*\(/);
+      expect(imported).toBe(true);
+      expect(called.length).toBeGreaterThan(0);
     },
   );
 
@@ -166,7 +174,7 @@ describe("every route demands a session", () => {
     // The inverse, so an over-zealous guard on /signin is caught too: it
     // would lock everyone out of the only door in.
     for (const route of routes.filter((r) => PUBLIC_ROUTES.has(r.route))) {
-      expect(read(route.file)).not.toMatch(/\brequireSession(Or401)?\s*\(/);
+      expect(boundaryUsage(route.file).called).toEqual([]);
     }
   });
 });
@@ -298,6 +306,6 @@ describe("the proxy matcher does not exempt a private route", () => {
 
     expect(proxyProtects(pathnameFor(entry!.route, "hostile.svg"))).toBe(false);
     // And the page catches what the proxy let past.
-    expect(read(entry!.file)).toMatch(/\brequireSession\s*\(/);
+    expect(boundaryUsage(entry!.file).called).toContain("requireSession");
   });
 });

@@ -280,10 +280,24 @@ used to _widen_ what is public, which is an edit that shows up in a diff.
 
 **What it checks.**
 
-1. Every route file calls `requireSession()` or `requireSessionOr401()`. Pages
-   are `async` Server Components, which cannot be rendered under Vitest, so
-   this half reads source text — the tripwire idiom of
-   `lib/sanitize-html.call-sites.test.ts` and `app/globals.test.ts`.
+1. Every route file calls `requireSession()` or `requireSessionOr401()`, and
+   imports it from `@/lib/session`. Pages are `async` Server Components, which
+   cannot be rendered under Vitest, so this half is checked statically — but
+   from the **syntax tree**, not the source text.
+
+   That distinction is the difference between a guard and a tripwire. This
+   repository explains itself in long docblocks, several of which name
+   `requireSession()` in prose, and `// await requireSession();` is exactly
+   what a half-finished edit leaves behind — a regex counts both as a guard.
+   `typescript` is already a devDependency, so `test/route-inventory.ts` uses
+   the compiler's own scanner and counts neither. Asserting the import as well
+   as the call is the other half: a local function of the same name is not the
+   boundary.
+
+   This is the one place the auth boundary goes further than the tripwire
+   idiom of `lib/sanitize-html.call-sites.test.ts` and `app/globals.test.ts`,
+   and the reason is what is underneath it — nothing.
+
 2. Every server action is imported and **called** with no session in place,
    and has to throw `UnauthorizedError`. These can be driven, so they are.
 3. No action hides from (2) by being declared inline, where it would have no
@@ -337,11 +351,23 @@ The enumeration is what catches it: a route named that way fails "runs on
 stops it in production is the page's own `requireSession()`, which is the
 defence in depth architecture.md describes, demonstrated rather than asserted.
 
-**If you change it, break it first.** The suite was validated by mutation: a
-new unguarded page, a page named `/signin-help`, an action with its
-`requireSession()` removed, and a new inline action each turn it red, each
-naming the specific route or action at fault. A boundary test that cannot fail
-is worse than none, because it is also reassuring.
+**If you change it, break it first.** The suite was validated by mutation
+rather than by inspection. Each of these turns it red, naming the specific
+route or action at fault:
+
+| Mutation                                      | Caught by                              |
+| --------------------------------------------- | -------------------------------------- |
+| A new unguarded page                          | `every route demands a session`        |
+| A new unguarded `route.ts` handler            | `every route demands a session`        |
+| A guard that is commented out                 | `every route demands a session`        |
+| A guard named only in a docblock              | `every route demands a session`        |
+| A local function shadowing the guard's name   | `every route demands a session`        |
+| A page named `/signin-help`                   | `the proxy matcher …`                  |
+| An action with its `requireSession()` removed | `every server action rejects …`        |
+| A new inline `"use server"` action            | `no action hides from the check above` |
+
+The middle three are why this reads the syntax tree. A boundary test that
+cannot fail is worse than none, because it is also reassuring.
 
 ## Why `test:db` is not in CI
 
