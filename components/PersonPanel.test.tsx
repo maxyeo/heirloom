@@ -410,3 +410,61 @@ describe("starting the add-child flow", () => {
     expect(buttonLabelled(host, "Add a child")).toBeTruthy();
   });
 });
+
+/**
+ * The panel's third route out into an editing flow (E3-T6, `YEO-34`), and the
+ * one that reads differently depending on what is already recorded: naming a
+ * family for the first time and correcting the one somebody is in are the same
+ * flow, but "Set parents" beside two names already on screen would read as
+ * though it replaced them.
+ */
+describe("starting the set-parents flow", () => {
+  it("offers nothing when no callback was given", () => {
+    const host = render(
+      <PersonPanel detail={detail()} onSelectPerson={noop} onClose={noop} />,
+    );
+
+    expect(
+      [...host.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("Set parents"),
+      ),
+    ).toBe(false);
+  });
+
+  it("calls back when the button is pressed", () => {
+    const onSetParents = vi.fn();
+    const host = render(
+      <PersonPanel
+        detail={detail()}
+        onSelectPerson={noop}
+        onClose={noop}
+        onSetParents={onSetParents}
+      />,
+    );
+
+    act(() => buttonLabelled(host, "Set parents").click());
+
+    expect(onSetParents).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks to change the family when parents are already recorded", () => {
+    const host = render(
+      <PersonPanel
+        detail={detail({
+          parents: [
+            {
+              person: summary("thomas", "Thomas Hale", "1898–1947"),
+              relation: "biological",
+              unionId: "u0",
+            },
+          ],
+        })}
+        onSelectPerson={noop}
+        onClose={noop}
+        onSetParents={noop}
+      />,
+    );
+
+    expect(buttonLabelled(host, "Change which family")).toBeTruthy();
+  });
+});

@@ -3,6 +3,7 @@ import {
   addSpouseAction,
   createIndividualAction,
   reorderUnionsAction,
+  setParentsAction,
   updateIndividualAction,
 } from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
@@ -56,6 +57,11 @@ export default async function TreePage() {
           addSpouseAction={addSpouseAction}
           addChildAction={addChildAction}
           updateIndividualAction={updateIndividualAction}
+          /*
+            And the set-parents action (E3-T6), for the flow that connects
+            somebody who was added on their own to the family they belong to.
+          */
+          setParentsAction={setParentsAction}
           /*
             And the add-person action once more (E3-T9): on an empty database
             the canvas is replaced by an invitation that opens the same panel

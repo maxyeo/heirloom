@@ -17,6 +17,13 @@ import {
 } from "@/lib/individual-form-state";
 import { individualInputFromFormData } from "@/lib/individual-input";
 import {
+  type ParentsFormState,
+  parentsFailedState,
+  parentsInvalidState,
+  parentsSavedState,
+} from "@/lib/parents-form-state";
+import { setParentsInputFromFormData } from "@/lib/parents-input";
+import {
   detachChild,
   detachPartner,
   removePerson,
@@ -28,6 +35,7 @@ import {
 } from "@/lib/removal-state";
 import { reorderUnions } from "@/lib/reorder-unions";
 import { addChild } from "@/lib/save-child";
+import { setParents } from "@/lib/set-parents";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import { requireSession } from "@/lib/session";
@@ -294,6 +302,18 @@ export async function addChildAction(
         "That person is already recorded as a child of this family.",
       );
 
+    case "child-is-ancestor":
+      /**
+       * E3-T6's cycle guard, reached from this door too (`YEO-34`). Refused
+       * in `lib/save-child.ts` rather than here, because the add-child form,
+       * the set-parents form and E6-T2's import all write the same row and a
+       * rule that lives on one door is a rule somebody forgets to fit to the
+       * next.
+       */
+      return childFailedState(
+        "That person is an ancestor of this family's parents, so they cannot also be its child.",
+      );
+
     case "added":
       /**
        * A child changes the canvas — a new edge, and possibly a whole new
@@ -424,6 +444,95 @@ export async function detachChildAction(
 
   revalidateTree();
   return removedState;
+}
+
+/**
+ * Say who somebody's parents are (for E3-T6's set-parents form).
+ *
+ * The flow for "I added them standalone and now want to connect them", and the
+ * one action here that can write three rows: it may create the family from two
+ * people who were never recorded as a couple, and it may move the person out of
+ * the family they were wrongly recorded in — all in one transaction, because a
+ * move whose halves could land separately is a person left with no parents at
+ * all. None of that lives here; see `lib/set-parents.ts`.
+ *
+ * The same shape as the actions above and for the same reasons: it takes the
+ * previous state and the form's own `FormData`, so the form works as a plain
+ * POST before any JavaScript has loaded, and it returns a state rather than
+ * redirecting, so the canvas decides where the author ends up.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields, including the hidden `childId`
+ * @returns a state to render: the family they are now in, or what to fix
+ */
+export async function setParentsAction(
+  _previous: ParentsFormState,
+  form: FormData,
+): Promise<ParentsFormState> {
+  await requireSession();
+
+  const result = await setParents(setParentsInputFromFormData(form));
+
+  switch (result.status) {
+    case "invalid":
+      return parentsInvalidState(result.issues);
+
+    case "child-not-found":
+      /**
+       * Said as a fact about the tree rather than as an error, because the
+       * ordinary way to reach every case below is a panel left open in one tab
+       * while E3-T8 removed somebody — or a whole family — in another.
+       */
+      return parentsFailedState(
+        "That person is no longer in the tree. They may have been deleted.",
+      );
+
+    case "union-not-found":
+      return parentsFailedState(
+        "That family is no longer recorded. It may have been removed.",
+      );
+
+    case "parent-not-found":
+      return parentsFailedState(
+        "One of the people you named is no longer in the tree. Search again.",
+      );
+
+    case "not-recorded-there":
+      return parentsFailedState(
+        "They are no longer recorded in the family you asked to move them out of. Nothing was changed.",
+      );
+
+    case "child-is-partner":
+      return parentsFailedState(
+        "That family already records them as one of its parents, so they cannot also be its child.",
+      );
+
+    case "already-recorded":
+      return parentsFailedState(
+        "They are already recorded as a child of that family.",
+      );
+
+    case "child-is-ancestor":
+      /**
+       * The cycle guard, and the only refusal here whose consequence would not
+       * be a wrong record but an unrenderable page — `lib/tree-layout.ts` walks
+       * this graph as though it were acyclic. Worded as a fact about the family
+       * rather than as a rule about graphs, because what the author has done is
+       * pick the wrong family from a list.
+       */
+      return parentsFailedState(
+        "That family descends from this person, so recording them as its child would make them their own ancestor.",
+      );
+
+    case "set":
+      /**
+       * Parents change the canvas — a new edge at least, and a whole new union
+       * marker when the family was created here — so there is always something
+       * to revalidate.
+       */
+      revalidateTree();
+      return parentsSavedState(result.unionId);
+  }
 }
 
 /**

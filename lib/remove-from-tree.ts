@@ -13,6 +13,7 @@ import {
   previewPersonRemoval,
 } from "@/lib/removal-preview";
 import { isRowId } from "@/lib/row-id";
+import type { Transaction } from "@/lib/save-page";
 
 /**
  * The write half of removing things from the tree (E3-T8, `YEO-36`): three
@@ -286,8 +287,16 @@ export async function detachChild(
  * No `returning`, and nothing checks the result: "the union was not empty
  * after all, so it stays" is a success, not a failure. The operation the
  * author actually asked for has already happened.
+ *
+ * Exported for E3-T6's set-parents flow (`YEO-34`), which moves a child from
+ * one family to another and can vacate the first one in exactly the way
+ * `detachChild` can. It takes the caller's transaction rather than opening its
+ * own, so a move cleans up inside the same write that made the mess.
+ *
+ * @param tx the caller's transaction
+ * @param unionId the union to remove, if it is empty when the statement runs
  */
-async function deleteEmptyUnion(
+export async function deleteEmptyUnion(
   tx: Transaction,
   unionId: string,
 ): Promise<void> {
@@ -335,13 +344,3 @@ async function withRemoval<Preview>(
     return { status: "removed" as const, preview };
   });
 }
-
-/**
- * The handle Drizzle passes into a `db.transaction` callback.
- *
- * Derived from `db` rather than imported, because naming it directly means
- * naming Drizzle's postgres-js generics and the schema type together — which
- * is a spelling that has to be corrected every time either moves, to describe
- * something the compiler already knows.
- */
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];

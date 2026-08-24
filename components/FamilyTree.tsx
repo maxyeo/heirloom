@@ -24,10 +24,12 @@ import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { EditPerson } from "@/components/EditPersonForm";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
+import { SetParentsForm } from "@/components/SetParentsForm";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
 import { UnionOrder } from "@/components/UnionOrder";
 import type { AddChildFormAction } from "@/lib/child-form-state";
 import type { FamilyGraph } from "@/lib/family-graph";
+import type { SetParentsFormAction } from "@/lib/parents-form-state";
 import { derivePersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
 import type { ReorderUnionsFormAction } from "@/lib/union-order-state";
@@ -98,6 +100,12 @@ export interface FamilyTreeProps {
    */
   addChildAction?: AddChildFormAction;
   /**
+   * The set-parents action (E3-T6), passed down for exactly the same reasons
+   * as the two above — and separately from them, so that a canvas may offer
+   * any of the flows, all of them, or none.
+   */
+  setParentsAction?: SetParentsFormAction;
+  /**
    * The edit-person action (E3-T3), passed down for exactly the reasons
    * `addSpouseAction` is — and optional for the same one: without it the
    * panel is the read-only record it always was, which is what keeps this
@@ -124,6 +132,7 @@ export function FamilyTree({
   graph,
   addSpouseAction,
   addChildAction,
+  setParentsAction,
   updateIndividualAction,
   createIndividualAction,
   reorderUnionsAction,
@@ -148,6 +157,7 @@ export function FamilyTree({
         graph={graph}
         addSpouseAction={addSpouseAction}
         addChildAction={addChildAction}
+        setParentsAction={setParentsAction}
         reorderUnionsAction={reorderUnionsAction}
         updateIndividualAction={updateIndividualAction}
       />
@@ -159,6 +169,7 @@ function FamilyTreeCanvas({
   graph,
   addSpouseAction,
   addChildAction,
+  setParentsAction,
   reorderUnionsAction,
   updateIndividualAction,
 }: FamilyTreeProps) {
@@ -268,6 +279,18 @@ function FamilyTreeCanvas({
    */
   const [addingChildFor, setAddingChildFor] = useState<string | null>(null);
   const addingChild = addingChildFor !== null && addingChildFor === selectedId;
+
+  /**
+   * And once more for the set-parents flow (E3-T6). Three independent ids
+   * rather than one mode, for the reason above: the render below picks exactly
+   * one, and keeping them apart means no flow can be left half-open by
+   * another closing.
+   */
+  const [settingParentsFor, setSettingParentsFor] = useState<string | null>(
+    null,
+  );
+  const settingParents =
+    settingParentsFor !== null && settingParentsFor === selectedId;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -425,7 +448,20 @@ function FamilyTreeCanvas({
         the form already answers for — `updateIndividualAction` reports
         `not-found`, and the correction is still on screen to copy out of.
       */}
-      {detail === null ? null : addingChild && addChildAction ? (
+      {detail === null ? null : settingParents && setParentsAction ? (
+        <SetParentsForm
+          action={setParentsAction}
+          person={{ id: detail.id, name: detail.name }}
+          /*
+            The whole graph, not this person's derived detail: every family on
+            the canvas is a possible answer, and the cycle filter is a walk
+            over the graph rather than a fact about one record.
+          */
+          graph={graph}
+          onSaved={() => setSettingParentsFor(null)}
+          onCancel={() => setSettingParentsFor(null)}
+        />
+      ) : addingChild && addChildAction ? (
         <AddChildForm
           action={addChildAction}
           person={{ id: detail.id, name: detail.name }}
@@ -503,6 +539,11 @@ function FamilyTreeCanvas({
           }
           onAddChild={
             addChildAction ? () => setAddingChildFor(detail.id) : undefined
+          }
+          onSetParents={
+            setParentsAction
+              ? () => setSettingParentsFor(detail.id)
+              : undefined
           }
         />
       )}

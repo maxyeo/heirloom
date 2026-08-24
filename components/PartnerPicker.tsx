@@ -58,7 +58,17 @@ export interface PartnerPickerProps {
   /** Undo the choice and go back to searching. */
   onClear: () => void;
   /** "They are not in the tree yet" — carrying whatever was typed. */
-  onCreateNew: (query: string) => void;
+  /**
+   * "They are not in the tree yet" — carrying whatever was typed.
+   *
+   * Optional since E3-T6 (`YEO-34`). The set-parents flow picks *existing*
+   * people to be the parents of a family it is about to create, and creating a
+   * whole new person inside it would be a third door onto `individuals`
+   * alongside E3-T2's form and the inline halves of add-spouse and add-child.
+   * A picker given no handler shows no such button, rather than showing one
+   * that does nothing.
+   */
+  onCreateNew?: (query: string) => void;
   /** So the caller's `<label>` can point at the search box. */
   inputId?: string;
   /** The id of a message to announce with the field, when there is one. */
@@ -157,16 +167,21 @@ export function PartnerPicker({
         a different Thomas Hale in it is not evidence that this Thomas Hale is
         already recorded, and in a family tree that is the likeliest way to
         attach a marriage to the wrong person.
+
+        Unless the caller has no way to create one, which is the set-parents
+        flow: see `onCreateNew`.
       */}
-      <button
-        type="button"
-        onClick={() => onCreateNew(query)}
-        className="mt-2 text-note text-link hover:underline"
-      >
-        {query.trim()
-          ? `Not here — add “${query.trim()}” as a new person`
-          : "Not here — add them as a new person"}
-      </button>
+      {onCreateNew ? (
+        <button
+          type="button"
+          onClick={() => onCreateNew(query)}
+          className="mt-2 text-note text-link hover:underline"
+        >
+          {query.trim()
+            ? `Not here — add “${query.trim()}” as a new person`
+            : "Not here — add them as a new person"}
+        </button>
+      ) : null}
     </div>
   );
 }
