@@ -81,4 +81,41 @@ describe("formatQualifiedDate", () => {
     // reader nothing about what the row actually holds.
     expect(formatQualifiedDate("not-a-date", "exact")).toBe("not-a-date");
   });
+
+  describe("precision", () => {
+    it("shows only as much of the date as was recorded", () => {
+      // The whole point of the `date_precision` column (E4-T2, `YEO-39`). A
+      // year read off a headstone is stored on 1 January because a `date`
+      // column has to hold a day, and printing that day back would be
+      // inventing a fact and then attributing it to the author.
+      expect(formatQualifiedDate("1912-01-01", "exact", "year")).toBe("1912");
+      expect(formatQualifiedDate("1912-03-01", "exact", "month")).toBe(
+        "March 1912",
+      );
+      expect(formatQualifiedDate("1912-03-12", "exact", "day")).toBe(
+        "12 March 1912",
+      );
+    });
+
+    it("keeps the qualifier in front of a coarse date", () => {
+      expect(formatQualifiedDate("1890-01-01", "about", "year")).toBe(
+        "about 1890",
+      );
+      expect(formatQualifiedDate("1920-01-01", "before", "year")).toBe(
+        "before 1920",
+      );
+      expect(formatQualifiedDate("1890-03-01", "after", "month")).toBe(
+        "after March 1890",
+      );
+    });
+
+    it("defaults to the whole day, which is the column default", () => {
+      // Every caller written before E4-T2 passes two arguments, and every row
+      // written before the column existed came from an `<input type="date">`.
+      // Both mean the same thing, and it is this.
+      expect(formatQualifiedDate("1912-03-12", "exact")).toBe(
+        formatQualifiedDate("1912-03-12", "exact", "day"),
+      );
+    });
+  });
 });

@@ -1,5 +1,7 @@
 import {
+  DATE_PRECISIONS,
   DATE_QUALIFIERS,
+  type DatePrecision,
   type DateQualifier,
   isImpossibleOrder,
   MAX_NOTES_LENGTH,
@@ -111,12 +113,18 @@ export type UnionFields = {
   /** An `individuals.id`, or null when this partner is unrecorded. */
   partnerBId: string | null;
   type: UnionType;
-  /** ISO `YYYY-MM-DD`, or null when unknown. */
+  /**
+   * ISO `YYYY-MM-DD`, or null when unknown. An *anchor* rather than a day
+   * whenever `startDatePrecision` is coarser than `day` — see
+   * `DATE_PRECISIONS` in `lib/field-input.ts`.
+   */
   startDate: string | null;
   startDateQualifier: DateQualifier;
-  /** ISO `YYYY-MM-DD`, or null when unknown. */
+  startDatePrecision: DatePrecision;
+  /** ISO `YYYY-MM-DD`, or null when unknown. An anchor, as `startDate` is. */
   endDate: string | null;
   endDateQualifier: DateQualifier;
+  endDatePrecision: DatePrecision;
   endReason: UnionEndReason;
   /** Explicit display order, or null to be placed after the existing unions. */
   sequence: number | null;
@@ -282,7 +290,7 @@ export function validateUnion(input: UnionInput): UnionValidation {
   if (startDate === undefined) {
     add(
       "startDate",
-      "The start date needs to be a real date, like 1912-06-04.",
+      "That start date could not be read. Try a year like 1912, or a full date like 4 June 1912.",
     );
   }
 
@@ -295,9 +303,24 @@ export function validateUnion(input: UnionInput): UnionValidation {
     add("startDateQualifier", "That is not one of the options for a date.");
   }
 
+  const startDatePrecision = readEnum(
+    input.startDatePrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (startDatePrecision === undefined) {
+    add(
+      "startDatePrecision",
+      "That is not one of the options for how much of a date is known.",
+    );
+  }
+
   const endDate = readDate(input.endDate);
   if (endDate === undefined) {
-    add("endDate", "The end date needs to be a real date, like 1938-02-19.");
+    add(
+      "endDate",
+      "That end date could not be read. Try a year like 1938, or a full date like 19 February 1938.",
+    );
   }
 
   const endDateQualifier = readEnum(
@@ -307,6 +330,18 @@ export function validateUnion(input: UnionInput): UnionValidation {
   );
   if (endDateQualifier === undefined) {
     add("endDateQualifier", "That is not one of the options for a date.");
+  }
+
+  const endDatePrecision = readEnum(
+    input.endDatePrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (endDatePrecision === undefined) {
+    add(
+      "endDatePrecision",
+      "That is not one of the options for how much of a date is known.",
+    );
   }
 
   const endReason = readEnum(input.endReason, UNION_END_REASONS, "ongoing");
@@ -348,9 +383,19 @@ export function validateUnion(input: UnionInput): UnionValidation {
     endDate &&
     startDateQualifier !== undefined &&
     endDateQualifier !== undefined &&
+    startDatePrecision !== undefined &&
+    endDatePrecision !== undefined &&
     isImpossibleOrder(
-      { date: startDate, qualifier: startDateQualifier },
-      { date: endDate, qualifier: endDateQualifier },
+      {
+        date: startDate,
+        qualifier: startDateQualifier,
+        precision: startDatePrecision,
+      },
+      {
+        date: endDate,
+        qualifier: endDateQualifier,
+        precision: endDatePrecision,
+      },
     )
   ) {
     add(
@@ -412,8 +457,11 @@ export function validateUnion(input: UnionInput): UnionValidation {
        * survives into a GEDCOM export as a stray `ABT`.
        */
       startDateQualifier: startDate ? (startDateQualifier ?? "exact") : "exact",
+      /** Normalised away with no date beside it, for the reason above. */
+      startDatePrecision: startDate ? (startDatePrecision ?? "day") : "day",
       endDate: endDate ?? null,
       endDateQualifier: endDate ? (endDateQualifier ?? "exact") : "exact",
+      endDatePrecision: endDate ? (endDatePrecision ?? "day") : "day",
       endReason: endReason ?? "ongoing",
       sequence: sequence ?? null,
       notes: notes ?? null,
@@ -459,8 +507,10 @@ export function unionInputFromFormData(form: FormData): UnionInput {
     type: form.get("type"),
     startDate: form.get("startDate"),
     startDateQualifier: form.get("startDateQualifier"),
+    startDatePrecision: form.get("startDatePrecision"),
     endDate: form.get("endDate"),
     endDateQualifier: form.get("endDateQualifier"),
+    endDatePrecision: form.get("endDatePrecision"),
     endReason: form.get("endReason"),
     sequence: form.get("sequence"),
     notes: form.get("notes"),

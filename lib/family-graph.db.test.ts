@@ -84,6 +84,7 @@ beforeAll(async () => {
       sequence: 4,
       startDate: "1948-07-03",
       startDateQualifier: "about",
+      startDatePrecision: "day",
     },
   ]);
 });
@@ -122,7 +123,9 @@ describe("getFamilyGraph", () => {
 
     expect(walter).toMatchObject({
       birthDateQualifier: "exact",
+      birthDatePrecision: "day",
       deathDateQualifier: "exact",
+      deathDatePrecision: "day",
     });
     expect(union).toMatchObject({ startDateQualifier: "exact" });
   });
@@ -134,6 +137,7 @@ describe("getFamilyGraph", () => {
     expect(union).toMatchObject({
       startDate: "1948-07-03",
       startDateQualifier: "about",
+      startDatePrecision: "day",
     });
   });
 

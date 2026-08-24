@@ -2,16 +2,17 @@
 
 import { useActionState, useCallback, useEffect, useId, useState } from "react";
 
+import { DateField } from "@/components/DateField";
 import { FormSelect } from "@/components/FormSelect";
 import {
   emptyIndividualFormValues,
   IndividualFieldset,
+  type IndividualFormField,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import { PartnerPicker } from "@/components/PartnerPicker";
 import type { GraphPerson } from "@/lib/family-graph";
-import { DATE_QUALIFIERS, MAX_NOTES_LENGTH } from "@/lib/field-input";
-import type { IndividualField } from "@/lib/individual-input";
+import { MAX_NOTES_LENGTH } from "@/lib/field-input";
 import { type PartnerCandidate, splitTypedName } from "@/lib/partner-search";
 import {
   type AddSpouseFormAction,
@@ -96,16 +97,16 @@ export type UnionFormValues = Record<UnionFormField, string>;
  * was told — never typed — and `sequence` is chosen by `lib/save-union.ts`
  * from the unions that already exist, which is what places a remarriage after
  * the marriage it followed without touching it.
+ *
+ * So are the two dates' qualifier and precision columns, since E4-T2
+ * (`YEO-39`): they are read out of what the author typed into the date box
+ * rather than picked, and `DateField` posts them as hidden inputs. Holding
+ * them here as well would be a second copy free to disagree with the text on
+ * screen. Same reasoning, and same shape, as `IndividualFormField`.
  */
 type UnionFormField = Extract<
   UnionField,
-  | "type"
-  | "startDate"
-  | "startDateQualifier"
-  | "endDate"
-  | "endDateQualifier"
-  | "endReason"
-  | "notes"
+  "type" | "startDate" | "endDate" | "endReason" | "notes"
 >;
 
 /**
@@ -118,9 +119,7 @@ type UnionFormField = Extract<
 export const emptyUnionFormValues: UnionFormValues = Object.freeze({
   type: "marriage",
   startDate: "",
-  startDateQualifier: "exact",
   endDate: "",
-  endDateQualifier: "exact",
   endReason: "ongoing",
   notes: "",
 });
@@ -144,13 +143,6 @@ const END_REASON_LABELS: Record<(typeof UNION_END_REASONS)[number], string> = {
  * before its date and the two read as one phrase. The same wording
  * `IndividualFieldset` uses, so a union's dates and a person's read alike.
  */
-const QUALIFIER_LABELS: Record<(typeof DATE_QUALIFIERS)[number], string> = {
-  exact: "on",
-  about: "about",
-  before: "before",
-  after: "after",
-};
-
 const CONTROL_CLASS =
   "mt-1 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -187,7 +179,7 @@ export function AddSpouseForm({
   const [union, setUnion] = useState<UnionFormValues>(emptyUnionFormValues);
 
   const setPartnerField = useCallback(
-    (field: IndividualField, value: string) => {
+    (field: IndividualFormField, value: string) => {
       setPartner((current) => ({ ...current, [field]: value }));
     },
     [],
@@ -196,6 +188,19 @@ export function AddSpouseForm({
   const setUnionField = useCallback((field: UnionFormField, value: string) => {
     setUnion((current) => ({ ...current, [field]: value }));
   }, []);
+
+  /**
+   * Every message a union date can come back with, in one place.
+   *
+   * `DateField` derives the qualifier and the precision, so only a hand-made
+   * POST can get either refused — but a message with no field on screen to
+   * hang under is a message nobody ever sees. The same fold as
+   * `IndividualFieldset`'s `dateError`, and for the same reason.
+   */
+  const unionDateError = (field: "startDate" | "endDate") =>
+    state.unionErrors[field] ??
+    state.unionErrors[`${field}Qualifier`] ??
+    state.unionErrors[`${field}Precision`];
 
   /**
    * The union exists, so this form has nothing left to show. Watching the
@@ -292,27 +297,29 @@ export function AddSpouseForm({
         </UnionField>
         <FieldError message={state.unionErrors.type} />
 
-        <DateRow
-          legend="Started"
-          dateField="startDate"
-          qualifierField="startDateQualifier"
-          qualifierLabel="How exact the start date is"
-          values={union}
-          onChange={setUnionField}
-          errors={state.unionErrors}
-          disabled={pending}
-        />
+        <div className="mt-3">
+          <DateField
+            legend="Started"
+            name="startDate"
+            value={union.startDate}
+            onChange={(value) => setUnionField("startDate", value)}
+            error={unionDateError("startDate")}
+            disabled={pending}
+            className={CONTROL_CLASS}
+          />
+        </div>
 
-        <DateRow
-          legend="Ended"
-          dateField="endDate"
-          qualifierField="endDateQualifier"
-          qualifierLabel="How exact the end date is"
-          values={union}
-          onChange={setUnionField}
-          errors={state.unionErrors}
-          disabled={pending}
-        />
+        <div className="mt-3">
+          <DateField
+            legend="Ended"
+            name="endDate"
+            value={union.endDate}
+            onChange={(value) => setUnionField("endDate", value)}
+            error={unionDateError("endDate")}
+            disabled={pending}
+            className={CONTROL_CLASS}
+          />
+        </div>
 
         <UnionField label="How it ended" name="endReason">
           {(id) => (
@@ -407,7 +414,7 @@ function Partner({
   excludeIds: readonly string[];
   selected: PartnerCandidate | null;
   values: IndividualFormValues;
-  onChangeField: (field: IndividualField, value: string) => void;
+  onChangeField: (field: IndividualFormField, value: string) => void;
   partnerErrors: SpouseFormState["partnerErrors"];
   pickerError: string | undefined;
   disabled: boolean;
@@ -525,79 +532,6 @@ function UnionField({
         {label}
       </label>
       {children(id)}
-    </div>
-  );
-}
-
-/**
- * A date and how much to trust it, as one row — the union's equivalent of
- * `IndividualFieldset`'s `DateRow`, and deliberately the same shape.
- *
- * The two are only ever meaningful as a pair (`db/schema.ts`), so they are one
- * control here rather than two rows an author can fill in half of. The
- * qualifier's label is visually hidden because the pair reads as one phrase on
- * screen ("Started · about · 1912-06-04"); a screen reader still gets it,
- * since an unlabelled `select` is a control nobody can identify out of
- * context.
- */
-function DateRow({
-  legend,
-  dateField,
-  qualifierField,
-  qualifierLabel,
-  values,
-  onChange,
-  errors,
-  disabled,
-}: {
-  legend: string;
-  dateField: "startDate" | "endDate";
-  qualifierField: "startDateQualifier" | "endDateQualifier";
-  qualifierLabel: string;
-  values: UnionFormValues;
-  onChange: (field: UnionFormField, value: string) => void;
-  errors: SpouseFormState["unionErrors"];
-  disabled: boolean;
-}) {
-  const id = useId();
-  const qualifierId = `${id}-qualifier`;
-
-  return (
-    <div className="mt-3">
-      <label htmlFor={id} className="block text-caption text-ink-muted">
-        {legend}
-      </label>
-      <div className="mt-1 flex gap-2">
-        <label htmlFor={qualifierId} className="sr-only">
-          {qualifierLabel}
-        </label>
-        <FormSelect
-          id={qualifierId}
-          name={qualifierField}
-          disabled={disabled}
-          value={values[qualifierField]}
-          onChange={(event) => onChange(qualifierField, event.target.value)}
-          className="rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {DATE_QUALIFIERS.map((qualifier) => (
-            <option key={qualifier} value={qualifier}>
-              {QUALIFIER_LABELS[qualifier]}
-            </option>
-          ))}
-        </FormSelect>
-        <input
-          id={id}
-          name={dateField}
-          type="date"
-          disabled={disabled}
-          value={values[dateField]}
-          onChange={(event) => onChange(dateField, event.target.value)}
-          aria-invalid={errors[dateField] !== undefined}
-          className="min-w-0 flex-1 rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-        />
-      </div>
-      <FieldError message={errors[qualifierField]} />
-      <FieldError message={errors[dateField]} />
     </div>
   );
 }

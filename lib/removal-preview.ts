@@ -261,8 +261,16 @@ export function previewPersonRemoval(
     .map((union) => ({
       unionId: union.id,
       type: union.type,
-      start: formatQualifiedDate(union.startDate, union.startDateQualifier),
-      end: formatQualifiedDate(union.endDate, union.endDateQualifier),
+      start: formatQualifiedDate(
+        union.startDate,
+        union.startDateQualifier,
+        union.startDatePrecision,
+      ),
+      end: formatQualifiedDate(
+        union.endDate,
+        union.endDateQualifier,
+        union.endDatePrecision,
+      ),
       partner: index.summarise(otherPartnerId(union, personId)),
       children: index
         .childrenOf(union.id)
@@ -349,8 +357,16 @@ export function previewPartnerDetachment(
     kind: "partner",
     unionId,
     type: union.type,
-    start: formatQualifiedDate(union.startDate, union.startDateQualifier),
-    end: formatQualifiedDate(union.endDate, union.endDateQualifier),
+    start: formatQualifiedDate(
+      union.startDate,
+      union.startDateQualifier,
+      union.startDatePrecision,
+    ),
+    end: formatQualifiedDate(
+      union.endDate,
+      union.endDateQualifier,
+      union.endDatePrecision,
+    ),
     person: toSummary(person),
     partner: index.summarise(otherPartnerId(union, personId)),
     children,

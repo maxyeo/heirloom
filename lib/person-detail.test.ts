@@ -38,6 +38,7 @@ function seedGraph(): FamilyGraph {
         sex: "male",
         birthDate: "1898-11-20",
         birthDateQualifier: "about",
+        birthDatePrecision: "day",
         deathDate: "1947-06-11",
         notes: "Emigrated in 1921.",
       }),
@@ -102,9 +103,11 @@ function person(
     sex: "female",
     birthDate: null,
     birthDateQualifier: "exact",
+    birthDatePrecision: "day",
     birthPlace: null,
     deathDate: null,
     deathDateQualifier: "exact",
+    deathDatePrecision: "day",
     deathPlace: null,
     notes: null,
     pageId: null,
@@ -123,8 +126,10 @@ function union(
     sequence: 1,
     startDate: null,
     startDateQualifier: "exact",
+    startDatePrecision: "day",
     endDate: null,
     endDateQualifier: "exact",
+    endDatePrecision: "day",
     ...overrides,
   } satisfies FamilyGraph["unions"][number];
 }
@@ -168,6 +173,51 @@ describe("the person's own record", () => {
     expect(detailFor("walter").death).toBeNull();
   });
 
+  it("renders a year-precision date as the bare year, not 1 January", () => {
+    // YEO-39 added `date_precision`; this is the regression it exists to
+    // catch — a coarse date silently formatted as if it were exact.
+    const graph: FamilyGraph = {
+      people: [
+        person({
+          id: "ivy",
+          givenName: "Ivy",
+          birthDate: "1890-01-01",
+          birthDatePrecision: "year",
+          deathDate: "1950-01-01",
+          deathDatePrecision: "year",
+        }),
+      ],
+      unions: [],
+      childLinks: [],
+    };
+
+    const detail = derivePersonDetail(graph, "ivy");
+
+    expect(detail?.birth).toEqual({ date: "1890", place: null });
+    expect(detail?.birth?.date).not.toBe("1 January 1890");
+    expect(detail?.death).toEqual({ date: "1950", place: null });
+  });
+
+  it("renders a month-precision date as month and year, not a fabricated day", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person({
+          id: "ivy",
+          givenName: "Ivy",
+          birthDate: "1890-03-01",
+          birthDatePrecision: "month",
+        }),
+      ],
+      unions: [],
+      childLinks: [],
+    };
+
+    const detail = derivePersonDetail(graph, "ivy");
+
+    expect(detail?.birth?.date).toBe("March 1890");
+    expect(detail?.birth?.date).not.toBe("1 March 1890");
+  });
+
   it("returns null for somebody the graph does not hold", () => {
     // Not defensive: E2-T4 opens this panel from `?person=<id>`, where the id
     // is whatever was pasted into the address bar.
@@ -196,6 +246,32 @@ describe("spouses", () => {
     expect(marriage.end).toBe("2 August 1931");
     expect(marriage.endReason).toBe("death");
     expect(marriage.type).toBe("marriage");
+  });
+
+  it("carries a union's own start/end precision, not the day it anchors to", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person({ id: "a", givenName: "A" }),
+        person({ id: "b", givenName: "B" }),
+      ],
+      unions: [
+        union({
+          id: "u1",
+          partnerAId: "a",
+          partnerBId: "b",
+          startDate: "1890-01-01",
+          startDatePrecision: "year",
+          endDate: "1900-03-01",
+          endDatePrecision: "month",
+        }),
+      ],
+      childLinks: [],
+    };
+
+    const [marriage] = derivePersonDetail(graph, "a")!.spouses;
+
+    expect(marriage.start).toBe("1890");
+    expect(marriage.end).toBe("March 1900");
   });
 
   it("keeps a union whose other partner was never recorded", () => {

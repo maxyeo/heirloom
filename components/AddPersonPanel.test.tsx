@@ -89,6 +89,53 @@ function type(host: HTMLElement, name: string, value: string): void {
   });
 }
 
+/**
+ * The visible box for one date, found by the word above it.
+ *
+ * Since E4-T2 (`YEO-39`) a date is a free-text control with no `name` — what
+ * posts is three hidden inputs it derives — so the label is the only route to
+ * it. See `components/DateField.tsx`.
+ */
+function dateBox(host: HTMLElement, legend: string): HTMLInputElement {
+  const label = [...host.querySelectorAll("label")].find(
+    (candidate) => candidate.textContent?.trim() === legend,
+  );
+  if (!label) throw new Error(`no label reading ${legend}`);
+
+  const input = host.querySelector<HTMLInputElement>(`#${label.htmlFor}`);
+  if (input === null) throw new Error(`${legend} labels nothing`);
+  return input;
+}
+
+/** Type into a control found by something other than its `name`. */
+function typeInto(element: HTMLElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(element) as object,
+    "value",
+  )?.set;
+  setter?.call(element, value);
+  act(() => {
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/**
+ * The alert a control points at through `aria-describedby`.
+ *
+ * The attribute holds a *list* of ids — a date field describes itself with its
+ * hint and its plain-language echo as well as with any error — so this picks
+ * out the one that is actually a message, rather than assuming the attribute
+ * names exactly one element.
+ */
+function describedAlert(element: HTMLElement): HTMLElement | undefined {
+  return (element.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .map((id) => document.getElementById(id))
+    .find(
+      (node): node is HTMLElement => node?.getAttribute("role") === "alert",
+    );
+}
+
 /** Submit, and let the action's promise settle before anything is asserted. */
 async function submit(host: HTMLElement): Promise<void> {
   const form = host.querySelector("form");
@@ -155,7 +202,7 @@ describe("submitting", () => {
 
     type(host, "givenName", "Rose");
     type(host, "surname", "Hale");
-    type(host, "birthDate", "1890-04-12");
+    typeInto(dateBox(host, "Born"), "1890-04-12");
     type(host, "birthPlace", "Cork");
     type(host, "notes", "From the 1911 census.");
 
@@ -202,24 +249,21 @@ describe("submitting", () => {
     open(host);
 
     type(host, "givenName", "Rose");
-    type(host, "birthDate", "1890-04-12");
-    type(host, "deathDate", "1880-01-01");
+    typeInto(dateBox(host, "Born"), "1890-04-12");
+    typeInto(dateBox(host, "Died"), "1880-01-01");
 
     await submit(host);
 
     // React resets a form on every action submission. Nothing the author
     // typed may disappear because of it.
     expect((control(host, "givenName") as HTMLInputElement).value).toBe("Rose");
-    expect((control(host, "birthDate") as HTMLInputElement).value).toBe(
-      "1890-04-12",
-    );
+    expect(dateBox(host, "Born").value).toBe("1890-04-12");
 
-    const deathDate = control(host, "deathDate");
+    const deathDate = dateBox(host, "Died");
     expect(deathDate.getAttribute("aria-invalid")).toBe("true");
-    const message = document.getElementById(
-      deathDate.getAttribute("aria-describedby") ?? "",
+    expect(describedAlert(deathDate)?.textContent).toContain(
+      "before the birth date",
     );
-    expect(message?.textContent).toContain("before the birth date");
   });
 
   it("clears the fields after a save, ready for the next person", async () => {

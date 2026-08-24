@@ -39,9 +39,11 @@ function person(overrides: Partial<GraphPerson> & { id: string }): GraphPerson {
     sex: "unknown",
     birthDate: null,
     birthDateQualifier: "exact",
+    birthDatePrecision: "day",
     birthPlace: null,
     deathDate: null,
     deathDateQualifier: "exact",
+    deathDatePrecision: "day",
     deathPlace: null,
     notes: null,
     pageId: null,
@@ -146,6 +148,26 @@ function selectOption(host: HTMLElement, name: string, value: string): void {
     )?.set?.call(control, value);
     control.dispatchEvent(new Event("change", { bubbles: true }));
   });
+}
+
+/**
+ * The visible box for one date, found by the word above it.
+ *
+ * Since E4-T2 (`YEO-39`) a date is a free-text control with no `name` — what
+ * posts is three hidden inputs it derives — so the label is the only route to
+ * it. See `components/DateField.tsx`.
+ */
+function dateBox(host: HTMLElement, legend: string): HTMLInputElement {
+  const label = [...host.querySelectorAll("label")].find(
+    (candidate) => candidate.textContent?.trim() === legend,
+  );
+  if (!label) throw new Error(`no label reading ${legend}`);
+
+  const input = host.querySelector(`#${label.htmlFor}`);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`${legend} labels nothing`);
+  }
+  return input;
 }
 
 function namedInput(host: HTMLElement, name: string): HTMLInputElement {
@@ -335,16 +357,17 @@ describe("what the form does with the answer", () => {
 
     type(searchBox(host), "Ada Byron");
     click(buttonLabelled(host, "add “Ada Byron” as a new person"));
-    type(namedInput(host, "startDate"), "1912-06-04");
-    selectOption(host, "startDateQualifier", "about");
+    type(dateBox(host, "Started"), "about 1912");
     selectOption(host, "type", "partnership");
     selectOption(host, "partner.sex", "female");
     await submit(host);
 
     expect(host.textContent).toContain("Say how it ended");
 
-    // Text: kept because the inputs are controlled.
-    expect(namedControl(host, "startDate").value).toBe("1912-06-04");
+    // Text: kept because the inputs are controlled — the author's own
+    // phrasing of the date included, not just what it parsed to.
+    expect(dateBox(host, "Started").value).toBe("about 1912");
+    expect(namedControl(host, "startDateQualifier").value).toBe("about");
     expect(namedControl(host, "partner.givenName").value).toBe("Ada");
     expect(namedControl(host, "partner.surname").value).toBe("Byron");
 

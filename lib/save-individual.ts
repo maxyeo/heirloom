@@ -83,9 +83,11 @@ const FIELD_NAMES = Object.keys({
   sex: true,
   birthDate: true,
   birthDateQualifier: true,
+  birthDatePrecision: true,
   birthPlace: true,
   deathDate: true,
   deathDateQualifier: true,
+  deathDatePrecision: true,
   deathPlace: true,
   notes: true,
 } satisfies Record<keyof IndividualFields, true>) as (keyof IndividualFields)[];
@@ -156,9 +158,11 @@ export async function updateIndividual(
       sex: schema.individuals.sex,
       birthDate: schema.individuals.birthDate,
       birthDateQualifier: schema.individuals.birthDateQualifier,
+      birthDatePrecision: schema.individuals.birthDatePrecision,
       birthPlace: schema.individuals.birthPlace,
       deathDate: schema.individuals.deathDate,
       deathDateQualifier: schema.individuals.deathDateQualifier,
+      deathDatePrecision: schema.individuals.deathDatePrecision,
       deathPlace: schema.individuals.deathPlace,
       notes: schema.individuals.notes,
     })
