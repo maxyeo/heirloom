@@ -7,7 +7,7 @@ import {
   validateAddChild,
 } from "@/lib/child-input";
 import type { ValidationIssue } from "@/lib/individual-input";
-import type { Transaction } from "@/lib/save-page";
+import { individualExists } from "@/lib/save-individual";
 
 /**
  * The write half of the add-child flow (E3-T5, `YEO-33`): raw input becomes a
@@ -81,15 +81,6 @@ export type AddChildResult =
   /** That person is already recorded as a child of that union. */
   | { status: "already-recorded" };
 
-/** Whether a person is on the tree, inside the caller's transaction. */
-async function personExists(tx: Transaction, id: string): Promise<boolean> {
-  const [found] = await tx
-    .select({ id: schema.individuals.id })
-    .from(schema.individuals)
-    .where(eq(schema.individuals.id, id));
-  return found !== undefined;
-}
-
 /**
  * Record a birth — or an adoption, or a fostering — into a union.
  *
@@ -146,7 +137,7 @@ export async function addChild(input: AddChildInput): Promise<AddChildResult> {
        * violation would surface as a thrown error and an error boundary, where
        * this is a sentence the form can render beside the picker.
        */
-      if (childId === null || !(await personExists(tx, childId))) {
+      if (childId === null || !(await individualExists(tx, childId))) {
         return { status: "child-not-found" };
       }
 
