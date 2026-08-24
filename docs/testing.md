@@ -444,7 +444,14 @@ together and `PersonDetail.parents` has no parent in it to report. That case is
 also why `siblingKind` is union-first rather than a count of shared parents:
 Thomas's own union records his mother and leaves his father unknown, and
 "shares one parent" would demote a sibling of his to a half-sibling on the
-strength of a blank column.
+strength of a blank column. Union-first alone is not quite enough either,
+because `lib/save-union.ts` deliberately allows a couple to hold two unions —
+divorced and remarried each other — so a shared _pair_ of fully recorded
+parents answers "full" as well. That second rule is restricted to the case
+where both partners are recorded on both sides, which is the blank column
+again from the other end: Agnes in two half-known unions has two children who
+share every parent anybody wrote down, and "full" would be inventing that the
+unknown partner was the same man.
 
 **The one exception, pinned rather than swept past.** Three `child_relation`
 values say how a child _arrived_ — born, adopted, fostered — and none of them
@@ -469,17 +476,20 @@ that adds it.
 **If you change it, break it first.** Validated by mutation, like the auth
 boundary:
 
-| Mutation                                            | Caught by                                |
-| --------------------------------------------------- | ---------------------------------------- |
-| `derivePersonDetail` drops a union's second partner | 16 tests, across all four criteria       |
-| `descendantsOrSelf` stops including self            | `names the line each end does belong to` |
-| A child link loses its `otherParent`                | `is legible in the panel …`              |
-| `individuals` gains a `mother_id`                   | `the schema stores no relationship`      |
-| `siblingKind` stops checking for a shared parent    | 5 tests, incl. the pairwise matrix       |
+| Mutation                                         | Caught by                                |
+| ------------------------------------------------ | ---------------------------------------- |
+| `derivePersonDetail` lists only `partner_a_id`   | 16 tests, across all four criteria       |
+| `descendantsOrSelf` stops including self         | `names the line each end does belong to` |
+| A child link loses its `otherParent`             | `is legible in the panel …`              |
+| `individuals` gains a `mother_id`                | `the schema stores no relationship`      |
+| `siblingKind` stops checking for a shared parent | 5 tests, incl. the pairwise matrix       |
 
-The first row is the one worth noticing: half of the fixture's unions record
-one partner or none, so a walk that quietly reads only `partner_a_id` still
-produces a plausible family. The pairwise matrix is what says otherwise.
+The first row is the one worth noticing. Every union in the fixture records a
+partner A, so a walk that reads only that column still finds a parent for
+every child and still fills every panel — the family it produces looks
+entirely plausible and is wrong about every relationship in it. That is the
+failure the pairwise matrix exists to catch, and the one a spot check of a
+few named pairs would sail past.
 
 ## Fixtures carry the awkward value
 

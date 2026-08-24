@@ -73,6 +73,50 @@ describe("siblingKind", () => {
     expect(siblingKind(graph, "kim", "lee")).toBe("full");
   });
 
+  /**
+   * The couple who married each other twice, which `lib/save-union.ts`
+   * deliberately allows: "couples who divorced and remarried each other are a
+   * real and unremarkable genealogical case". One child from each union has
+   * the same two parents and is nobody's half-sibling, so union-first cannot
+   * be the only rule.
+   */
+  it("calls children of a couple's two unions full siblings", () => {
+    const graph = family({
+      unions: [
+        ["u1", "ann", "bob"],
+        ["u2", "ann", "bob"],
+      ],
+      children: [
+        ["u1", "kim"],
+        ["u2", "lee"],
+      ],
+    });
+
+    expect(siblingKind(graph, "kim", "lee")).toBe("full");
+  });
+
+  /**
+   * The same shape with the other partner unknown both times, which is the
+   * one that must *not* answer "full". Agnes's two children share every
+   * parent anybody wrote down; whether the man was the same man is exactly
+   * what nobody recorded, and answering "full" would invent it.
+   */
+  it("keeps them half-siblings when the shared parent is the only one recorded", () => {
+    const graph = family({
+      unions: [
+        ["u1", "ann", null],
+        ["u2", "ann", null],
+      ],
+      children: [
+        ["u1", "kim"],
+        ["u2", "lee"],
+      ],
+    });
+
+    expect(parentsOf(graph, "kim")).toEqual(new Set(["ann"]));
+    expect(siblingKind(graph, "kim", "lee")).toBe("half");
+  });
+
   it("calls children of two unions sharing a partner half-siblings", () => {
     const graph = family({
       unions: [

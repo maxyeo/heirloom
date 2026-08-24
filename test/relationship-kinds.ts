@@ -134,6 +134,23 @@ export type SiblingKind = "full" | "half" | "step" | "none";
  * and leaves his father unknown; a sibling of his would share the one parent
  * that is written down, and "shares one parent" would call them a
  * half-sibling on the strength of a blank column.
+ *
+ * ## The couple who married twice
+ *
+ * Union-first alone is not quite enough, because the same couple can hold
+ * more than one union. `lib/save-union.ts` says so outright and declines to
+ * check for duplicates over it: "couples who divorced and remarried each
+ * other are a real and unremarkable genealogical case, and refusing the
+ * second would make it unrecordable." A child from each of those two unions
+ * has the same two parents and is nobody's half-sibling, so the shared-parent
+ * branch has to be able to answer "full" as well.
+ *
+ * It may only do so when **both** partners are recorded on both sides. That
+ * restriction is the blank-column case again, seen from the other end: if
+ * Agnes appears in two unions whose other partner is unknown each time, her
+ * two children share every parent anybody wrote down, and calling them full
+ * siblings would be inventing the fact that the unknown partner was the same
+ * man. "Half" is the honest answer there, and it is what falls out.
  */
 export function siblingKind(
   graph: FamilyGraph,
@@ -149,8 +166,12 @@ export function siblingKind(
 
   const parents = parentsOf(graph, a);
   const otherParents = parentsOf(graph, b);
-  for (const parentId of otherParents) {
-    if (parents.has(parentId)) return "half";
+  const shared = [...otherParents].filter((id) => parents.has(id));
+  if (shared.length > 0) {
+    // Every parent of each, and two of them on both sides — the couple who
+    // married twice. Anything less is a shared parent and a different one.
+    const bothFullyRecorded = parents.size === 2 && otherParents.size === 2;
+    return shared.length === 2 && bothFullyRecorded ? "full" : "half";
   }
 
   for (const union of graph.unions) {
