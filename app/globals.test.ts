@@ -85,6 +85,25 @@ describe("links", () => {
   });
 });
 
+describe("the section [edit] link", () => {
+  /**
+   * E11-T4's whole visual claim is "Wikipedia's small bracketed style", and
+   * every part of it is a token this file already declares — `--text-note`
+   * exists for `[edit]` links by name (docs/design-tokens.md). A literal
+   * `0.75rem` here would look identical and mean the size had escaped the
+   * scale.
+   */
+  it("is small sans furniture floated to the end of the heading line", () => {
+    const rule = css.match(/\.wiki-editsection\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(rule).toContain("float: right;");
+    expect(rule).toContain("font-size: var(--text-note);");
+    expect(rule).toContain("font-family: var(--font-sans);");
+    // No colour of its own: the anchor inside is a link like any other.
+    expect(rule).not.toContain("color:");
+  });
+});
+
 describe("call sites", () => {
   const sourceDirs = ["app", "components", "lib"];
   const sourceExtensions = [".ts", ".tsx", ".css"];

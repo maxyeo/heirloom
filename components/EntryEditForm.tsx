@@ -18,9 +18,12 @@ import { savePageAction } from "@/app/wiki/actions";
  * was called by nothing. Both halves existed and nothing joined them.
  *
  * So this is deliberately the smallest join that makes the criterion true,
- * and it stops there. No tabs, no `[edit]` section anchors, no history or
- * diff links: those are E11-T7, E11-T4 and E1-T5/T6, and guessing at their
- * chrome here would only mean deleting it when they arrive.
+ * and it stops there. No tabs, no history or diff links: those are E11-T7 and
+ * E1-T5/T6, and guessing at their chrome here would only mean deleting it
+ * when they arrive. The one thing that has since arrived is
+ * `initialHeadingIndex` — E11-T4's section `[edit]` links land here, and this
+ * component passes the section straight through to the editor without holding
+ * an opinion about it, the same way it passes `entries`.
  *
  * ## Why it is not a plain `<form action={…}>`
  *
@@ -47,6 +50,16 @@ export interface EntryEditFormProps {
    * itself.
    */
   entries?: readonly TitledEntry[];
+  /**
+   * Which heading to open the editor on, in document order, or `null` for the
+   * top (E11-T4, `YEO-74`).
+   *
+   * Resolved on the server by `app/wiki/[slug]/edit/page.tsx` from the
+   * `?section=` a `[edit]` link carries, so what arrives here is already known
+   * to be a heading this document has — or `null`, which is what a link to a
+   * section that has since been renamed degrades to.
+   */
+  initialHeadingIndex?: number | null;
 }
 
 export function EntryEditForm({
@@ -54,6 +67,7 @@ export function EntryEditForm({
   title: storedTitle,
   initialHtml,
   entries,
+  initialHeadingIndex,
 }: EntryEditFormProps) {
   const router = useRouter();
   const titleId = useId();
@@ -125,6 +139,7 @@ export function EntryEditForm({
         initialHtml={initialHtml}
         onChange={onBodyChange}
         entries={entries}
+        initialHeadingIndex={initialHeadingIndex}
       />
 
       {error === null ? null : (

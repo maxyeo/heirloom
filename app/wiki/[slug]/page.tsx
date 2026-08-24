@@ -11,6 +11,7 @@ import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
 import { infoboxEntrySlugs } from "@/lib/person-infobox";
 import { resolveEntryLinks } from "@/lib/red-links";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { insertSectionEditLinks } from "@/lib/section-edit";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -111,6 +112,24 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   const infobox = await readEntryInfobox(entry.id);
 
   /**
+   * The section `[edit]` links (E11-T4): one inside every heading, pointing at
+   * the editor opened on that section, built from the ids the outline above
+   * just wrote. See `lib/section-edit.ts`.
+   *
+   * **Between the outline and the red links, and that is the whole of the
+   * ordering.** It is not a sanitiser pass — it copies the document and
+   * inserts a fixed shape of markup before each closing heading tag — so it
+   * cannot strip the `class` and `title` the rewrite below adds. Running it
+   * here rather than after keeps that rewrite the last thing to touch the
+   * document, which is the invariant `lib/red-links.test.ts` guards.
+   */
+  const bodyWithEditLinks = insertSectionEditLinks(
+    outline.html,
+    outline.headings,
+    entry.slug,
+  );
+
+  /**
    * Red links (E11-T6): every internal link in the body is resolved against
    * `pages.slug` here, and the ones that lead nowhere are rendered red with an
    * invitation to write the entry. One query for the whole article, however
@@ -120,13 +139,14 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    * **After the sanitiser, never before.** The rewrite adds `class` and
    * `title` to the anchors it marks, and the allowlist permits neither on an
    * `a`; sanitising this value again would quietly strip the feature back out.
-   * That is why this runs on `outline.html` and not on `bodyHtml`:
-   * `readArticleOutline` is itself a sanitiser pass, so ordering it after this
-   * one would undo the red links. It splices opening tags by byte offset, so
-   * the heading ids written above survive untouched.
+   * That is why this runs on the outline's html — by now with the `[edit]`
+   * links in it — and not on `bodyHtml`: `readArticleOutline` is itself a
+   * sanitiser pass, so ordering it after this one would undo the red links.
+   * It splices opening tags by byte offset, so the heading ids and the
+   * `[edit]` links written above survive untouched.
    */
   const { html: articleHtml, existingSlugs } = await resolveEntryLinks(
-    outline.html,
+    bodyWithEditLinks,
     findExistingSlugs,
     // The infobox links to entries too (E11-T5), and its slugs join the body's
     // in *this* question rather than asking a second one. `entryLinkProps`

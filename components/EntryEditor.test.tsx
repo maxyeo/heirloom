@@ -2,13 +2,14 @@
 import { Editor } from "@tiptap/core";
 import { StarterKit } from "@tiptap/starter-kit";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { EntryEditor } from "@/components/EntryEditor";
 import {
   EDITOR_INPUT_OPTIONS,
   createEntryExtensions,
 } from "@/lib/editor-extensions";
+import { headingNodePosition } from "@/lib/section-edit";
 import { render } from "@/test/render";
 
 /**
@@ -519,5 +520,130 @@ describe("linking to another entry", () => {
     expect(
       host.querySelector<HTMLInputElement>('input[type="text"]')?.placeholder,
     ).toBe("example.com or /wiki/rose");
+  });
+});
+
+/**
+ * Opening the editor on one section (E11-T4, `YEO-74`).
+ *
+ * The `[edit]` beside a heading opens the *whole* editor and lands the author
+ * in that section — see `lib/section-edit.ts` for why it is not true section
+ * editing. The half that ticket can test without a document is over there;
+ * this is the half that needs one: finding the nth heading in a live document
+ * and putting the cursor in it.
+ *
+ * The index, not the heading id, is what crosses into the editor. This
+ * document has no ids in it at all — the sanitiser allows none — so "the third
+ * heading" is the only thing both ends can agree on. That agreement is exactly
+ * what the first test below is about.
+ */
+describe("opening on a section", () => {
+  const BODY =
+    "<h2>Early life</h2><p>Born at Rose Hall.</p>" +
+    "<h3>School</h3><p>Then school.</p>" +
+    "<h2>Marriage</h2><p>Then Walter.</p>";
+
+  /**
+   * jsdom does no layout and so implements no `scrollIntoView`. Standing one
+   * up records what the component asked to scroll, which is the assertion
+   * worth making anyway — that it scrolled the heading rather than the
+   * editor, so the `scroll-margin-top` under the sticky header applies.
+   */
+  const scrolled: Element[] = [];
+
+  /** The block the cursor is in, by its text. */
+  function openedAt(editor: Editor): string {
+    return editor.state.selection.$from.parent.textContent;
+  }
+
+  beforeEach(() => {
+    scrolled.length = 0;
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value(this: Element) {
+        scrolled.push(this);
+      },
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  });
+
+  describe("headingNodePosition", () => {
+    it("counts headings in document order, whatever their level", () => {
+      const editor = entryEditor(BODY);
+      const { doc } = editor.state;
+
+      const texts = [0, 1, 2].map((index) => {
+        const position = headingNodePosition(doc, index);
+        if (position === null) throw new Error(`no heading ${index}`);
+        return doc.nodeAt(position)?.textContent;
+      });
+
+      expect(texts).toEqual(["Early life", "School", "Marriage"]);
+    });
+
+    it("is null for an index the document has no heading for", () => {
+      const editor = entryEditor(BODY);
+
+      // The stale link, arriving as an index that used to mean something.
+      expect(headingNodePosition(editor.state.doc, 3)).toBeNull();
+      expect(headingNodePosition(editor.state.doc, -1)).toBeNull();
+      const noHeadings = entryEditor("<p>No headings here.</p>");
+      expect(headingNodePosition(noHeadings.state.doc, 0)).toBeNull();
+    });
+  });
+
+  it("puts the cursor in the section that was asked for", () => {
+    const host = render(
+      <EntryEditor initialHtml={BODY} initialHeadingIndex={1} />,
+    );
+    const editor = editorOf(host);
+
+    const { $from } = editor.state.selection;
+    expect($from.parent.type.name).toBe("heading");
+    expect($from.parent.textContent).toBe("School");
+    // At the start of it, so typing retitles the section rather than appending
+    // to its name.
+    expect($from.parentOffset).toBe(0);
+  });
+
+  it("scrolls the heading itself, not the editor around it", () => {
+    render(<EntryEditor initialHtml={BODY} initialHeadingIndex={2} />);
+
+    expect(scrolled).toHaveLength(1);
+    expect(scrolled[0].tagName).toBe("H2");
+    expect(scrolled[0].textContent).toBe("Marriage");
+  });
+
+  it("opens at the top when the section has been renamed away", () => {
+    // `sectionHeadingIndex` answers `null` for an id no heading has, and this
+    // is what the editor does with that answer: nothing at all. The cursor is
+    // where Tiptap puts it on a fresh document — the start of the first
+    // heading, which is the top of the entry.
+    const host = render(
+      <EntryEditor initialHtml={BODY} initialHeadingIndex={null} />,
+    );
+
+    expect(scrolled).toEqual([]);
+    expect(openedAt(editorOf(host))).toBe("Early life");
+  });
+
+  it("opens at the top rather than throwing on an index it cannot reach", () => {
+    const host = render(
+      <EntryEditor initialHtml={BODY} initialHeadingIndex={9} />,
+    );
+
+    expect(scrolled).toEqual([]);
+    expect(openedAt(editorOf(host))).toBe("Early life");
+  });
+
+  it("leaves the cursor alone when no section was asked for", () => {
+    const host = render(<EntryEditor initialHtml={BODY} />);
+
+    expect(scrolled).toEqual([]);
+    expect(openedAt(editorOf(host))).toBe("Early life");
   });
 });
