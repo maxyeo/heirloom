@@ -79,6 +79,36 @@ describe("what the panel shows", () => {
     expect(text).toContain("Kept the family bible.");
   });
 
+  /**
+   * Both sides of the one branch this panel takes on a person's `sex`
+   * (`YEO-85`).
+   *
+   * `unknown` is the column default, and it is the value that *hides* the row
+   * — so a fixture carrying anything else, which is all this file had, only
+   * ever renders the half that shows. Nothing asserted the row at all, in
+   * either direction, which left "an unrecorded sex is omitted rather than
+   * printed as the word unknown" as a claim the code made and no test read
+   * back. Printing it would be the same category of error as an invented
+   * birthday: stating a fact from the absence of one.
+   */
+  it("shows a recorded sex and omits an unrecorded one", () => {
+    const shown = render(
+      <PersonPanel detail={detail()} onSelectPerson={noop} onClose={noop} />,
+    );
+    expect(shown.textContent).toContain("Sex");
+    expect(shown.textContent).toContain("female");
+
+    const hidden = render(
+      <PersonPanel
+        detail={detail({ sex: "unknown" })}
+        onSelectPerson={noop}
+        onClose={noop}
+      />,
+    );
+    expect(hidden.textContent).not.toContain("Sex");
+    expect(hidden.textContent).not.toContain("unknown");
+  });
+
   it("says that a relation is unrecorded rather than hiding the heading", () => {
     // The two mean different things in genealogy, and the difference is the
     // whole point: an absent section reads as "this panel does not show

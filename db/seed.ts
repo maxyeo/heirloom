@@ -37,13 +37,17 @@ const SEED_AUTHOR = "seed@example.com";
  * ## The values, which are as much the point as the shape (`YEO-85`)
  *
  * The paragraph above was true about structure and quietly false about
- * everything else: every date here used to be stored at `day` precision with
+ * everything else. Every date here used to be stored at `day` precision with
  * an `exact` qualifier, every child was `biological`, every union was a
- * `marriage` that was `ongoing` or ended in `death`, and no individual had an
- * entry. Those are the *column defaults*, and a fixture that only ever carries
- * a column's default cannot show anybody the branch that handles the other
- * value — which is how three separate bugs shipped through a green CI in one
- * run. See "Fixtures carry the awkward value" in docs/testing.md.
+ * `marriage`, and no individual had an entry — every one of those the *column
+ * default*, and a fixture that only ever carries a column's default cannot
+ * show anybody the branch that handles the other value. That is how three
+ * separate bugs shipped through a green CI in one run; see "Fixtures carry the
+ * awkward value" in docs/testing.md.
+ *
+ * `end_reason` was the one enum already doing its job, since `death` is a real
+ * non-default value and two unions here have carried it all along. Its gap was
+ * narrower: `divorce`, `separation` and `unknown` had no row between them.
  *
  * Two of those defaults were not merely uninformative here, they were wrong.
  * The eleven children were each stored on 1 January of their birth year — the

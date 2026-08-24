@@ -100,7 +100,17 @@ const SHAW_NAMES = [
   ["stanley", "Stanley", 1961],
 ] as const;
 
-/** `db/seed.ts`, as a value. Entries exist for the four adults and Edward. */
+/**
+ * The seed tree from docs/architecture.md as a plain value.
+ *
+ * Related to `db/seed.ts` but deliberately not a transcription of it. Several
+ * people here carry a `pageId`, because what this box does with a linked
+ * relative — and with an unlinked one beside them — is the thing under test,
+ * where the real seed writes a single entry, for Thomas. Which people those
+ * are is answered by the `pageId` lines below and deliberately not restated
+ * here: a count in a comment is a fact that drifts the first time somebody
+ * adds a person, which is what this one had already done.
+ */
 function seedGraph(): FamilyGraph {
   return {
     people: [
