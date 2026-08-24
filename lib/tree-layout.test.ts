@@ -14,13 +14,33 @@ import {
 import type { FamilyGraph } from "@/lib/family-graph";
 
 /**
- * The seed fixture from docs/architecture.md, trimmed to the shape that
- * matters. Mary married Thomas and died; Rose married Thomas and he died;
- * Rose then married Walter. Thomas and Rose are each a partner in two unions,
- * which is precisely the case a parent-pointer model cannot represent — and u0
- * covers the other awkward case, a union with one unrecorded partner.
+ * A small graph in the seed's *shape*, invented for the cases below.
+ *
+ * Emphatically **not** the seeded family, though this docblock used to say it
+ * was — "the seed fixture from docs/architecture.md, trimmed" — while the
+ * names, the dates and the child counts were none of `db/seed.ts`'s, and its
+ * half-known union carried `marriage`/`ongoing` where the seed's carries
+ * `unknown`/`unknown`. Nothing was wrong with the tests; they were simply not
+ * testing what they claimed to, and no run could report that. The seeded
+ * family is now imported rather than transcribed, in
+ * `lib/tree-layout.seed.test.ts` (E10-T3, `YEO-67`).
+ *
+ * So the two files divide the work. That one asserts what has to hold for the
+ * real fixture — who exists, how many times, on which rank, with which edge
+ * style. This one keeps the invented graph, because what is left here needs
+ * people the seed does not have and should not grow: somebody with no surname,
+ * somebody whose death is recorded and whose birth is not, and a fixed row
+ * order to pin the arithmetic that turns a dagre centre into a React Flow
+ * corner. Do not "correct" the dates below towards `db/seed.ts` — they differ
+ * on purpose, and nothing here is a claim about the seed.
+ *
+ * The shape is still the shape that matters: Mary married Thomas and died;
+ * Rose married Thomas and he died; Rose then married Walter. Thomas and Rose
+ * are each a partner in two unions, which is precisely the case a
+ * parent-pointer model cannot represent — and u0 covers the other awkward
+ * case, a union with one unrecorded partner.
  */
-function seedGraph(): FamilyGraph {
+function sampleGraph(): FamilyGraph {
   return {
     people: [
       person({
@@ -149,7 +169,7 @@ function centreX(node: Node, width: number): number {
 
 describe("layoutFamilyGraph", () => {
   it("lays out every person and every union exactly once", () => {
-    const { nodes } = layoutFamilyGraph(seedGraph());
+    const { nodes } = layoutFamilyGraph(sampleGraph());
 
     // The whole reason unions are their own nodes: Thomas and Rose each belong
     // to two unions and must still appear once. Duplicating them is the
@@ -174,7 +194,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("ranks each generation below the one above it", () => {
-    const { nodes } = layoutFamilyGraph(seedGraph());
+    const { nodes } = layoutFamilyGraph(sampleGraph());
 
     // Generation is dagre rank, top to bottom: partners sit above their union,
     // and the union sits above its children. Reversing an edge or flipping
@@ -198,7 +218,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("reports each node by its top-left corner, not its centre", () => {
-    const { nodes } = layoutFamilyGraph(seedGraph());
+    const { nodes } = layoutFamilyGraph(sampleGraph());
 
     // Dagre reports centres and translates its graph so the bounding box
     // starts at the origin; React Flow positions from the top-left. Subtract
@@ -229,7 +249,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("carries the fields the person and union nodes render from", () => {
-    const { nodes } = layoutFamilyGraph(seedGraph());
+    const { nodes } = layoutFamilyGraph(sampleGraph());
 
     expect(nodeById(nodes, "thomas").data).toMatchObject({
       name: "Thomas Hale",
@@ -249,7 +269,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("labels a person node for anything that cannot see it", () => {
-    const { nodes } = layoutFamilyGraph(seedGraph());
+    const { nodes } = layoutFamilyGraph(sampleGraph());
 
     // The wrapper React Flow puts in the tab order has no text of its own, so
     // without this a screen reader announces every person as "group, node".
@@ -260,7 +280,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("formats a lifespan from whichever dates are known", () => {
-    const { nodes } = layoutFamilyGraph(seedGraph());
+    const { nodes } = layoutFamilyGraph(sampleGraph());
     const lifespan = (id: string) => nodeById(nodes, id).data.lifespan;
 
     // Genealogy data is full of half-known dates, so every combination has to
@@ -278,7 +298,7 @@ describe("layoutFamilyGraph", () => {
     // is the most-read surface in the application to be making the wrong one
     // on. E4-T3 moved `formatLifespan` into `lib/format-date.ts` and gave it
     // the qualifier columns precisely so this reaches the canvas.
-    const graph = seedGraph();
+    const graph = sampleGraph();
     graph.people.push(
       person({
         id: "silas",
@@ -313,7 +333,7 @@ describe("layoutFamilyGraph", () => {
     // A year read off a headstone is stored on 1 January and a month on the
     // 1st. The lifespan is years only, so neither can leak — this is the
     // assertion that notices if it ever starts rendering the whole date.
-    const graph = seedGraph();
+    const graph = sampleGraph();
     graph.people.push(
       person({
         id: "silas",
@@ -331,7 +351,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("skips the edge for a partner nobody recorded", () => {
-    const { edges } = layoutFamilyGraph(seedGraph());
+    const { edges } = layoutFamilyGraph(sampleGraph());
 
     // Both partner columns are nullable so that an unknown parent never has to
     // be invented as a placeholder person. u0 has one recorded partner, so it
@@ -345,7 +365,7 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("dashes the edges that carry a qualification", () => {
-    const { edges } = layoutFamilyGraph(seedGraph());
+    const { edges } = layoutFamilyGraph(sampleGraph());
 
     // Widowhood, divorce, and adoption are visible on the canvas rather than
     // buried in a detail panel, which means the styling is behaviour.
