@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useMemo, useRef, useState } from "react";
 
 import {
   detachChildAction,
   detachPartnerAction,
   removePersonAction,
 } from "@/app/tree/actions";
+import { ModalDialog } from "@/components/ModalDialog";
 import type { FamilyGraph } from "@/lib/family-graph";
 import type { PersonSummary } from "@/lib/person-detail";
 import {
@@ -112,7 +113,7 @@ export function PersonRemoval({
       </button>
 
       {open ? (
-        <RemovalDialog
+        <ModalDialog
           title={
             choice === null
               ? `Remove something about ${preview.person.name}`
@@ -134,7 +135,7 @@ export function PersonRemoval({
               onCancel={close}
             />
           )}
-        </RemovalDialog>
+        </ModalDialog>
       ) : null}
     </section>
   );
@@ -644,135 +645,6 @@ function DialogButtons({
         Cancel
       </button>
       {children}
-    </div>
-  );
-}
-
-/**
- * The modal shell.
- *
- * `fixed` rather than `absolute`, because this is rendered from inside the
- * detail panel — which is itself positioned and scrolls its own content — and
- * an absolutely positioned overlay would be clipped to a 320px column.
- * Nothing between here and the viewport sets a transform, so `fixed` means
- * the viewport.
- *
- * ## The Escape key, and why it is captured
- *
- * `components/PersonPanel.tsx` listens for Escape on `document` and closes
- * the panel. This dialogue is inside that panel, so an Escape meant for the
- * dialogue would bubble to the same listener and close both — the author
- * would dismiss a confirmation and lose the record they were reading in one
- * keystroke.
- *
- * A capture-phase listener on `document` runs before any bubble-phase
- * listener on `document`, so stopping propagation here means the panel's
- * handler never sees the event. That is a deliberate coupling to a real
- * behaviour of the panel rather than a defensive flourish, and
- * `components/PersonRemoval.test.tsx` pins it — it is exactly the kind of
- * thing that would quietly stop working.
- */
-function RemovalDialog({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-
-      if (event.key !== "Tab") return;
-
-      /**
-       * The focus trap, which `aria-modal="true"` below is otherwise a
-       * promise this dialogue does not keep. Assistive tech reads that
-       * attribute as "everything outside is inert"; a Tab that walks out to
-       * the panel behind the backdrop makes it a lie, and on a confirmation
-       * for something irreversible that is worth more than the fifteen lines
-       * it costs.
-       *
-       * The order is read from the DOM on each Tab rather than cached,
-       * because the dialogue's contents change under it — picking a removal
-       * swaps the whole body, and a submitting form disables its own confirm
-       * button.
-       */
-      const focusable = surfaceRef.current?.querySelectorAll<HTMLElement>(
-        "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-      );
-      if (!focusable || focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-
-      // Wrapping in either direction, and also pulling focus back in when it
-      // is on the heading — which is not in the tab order, so neither branch
-      // below would otherwise fire on the first Tab after the dialogue opens.
-      if (event.shiftKey && (active === first || active === headingRef.current)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
-
-  /**
-   * Focus lands on the heading, which reads out what is being confirmed
-   * before anything else. `tabIndex={-1}` for the same reason the panel's
-   * header has it: somewhere to put focus, not somewhere to tab to.
-   *
-   * Keyed on the title so it fires again when the dialogue moves from its
-   * list of removals to a confirmation. The heading is the only thing that
-   * says which stage this is, and without the re-focus a screen-reader user
-   * picks a removal and is told nothing at all about what replaced it.
-   */
-  useEffect(() => {
-    headingRef.current?.focus();
-  }, [title]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
-      // A click on the backdrop cancels. Safe by construction: everything
-      // this dialogue can do is behind a further button press, so dismissing
-      // it by accident costs nothing.
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        ref={surfaceRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="removal-dialog-title"
-        className="max-h-full w-full max-w-md overflow-y-auto rounded-panel border border-rule bg-panel p-4 shadow-lg"
-      >
-        <h2
-          id="removal-dialog-title"
-          ref={headingRef}
-          tabIndex={-1}
-          className="border-0 pb-2 text-h2"
-        >
-          {title}
-        </h2>
-        {children}
-      </div>
     </div>
   );
 }

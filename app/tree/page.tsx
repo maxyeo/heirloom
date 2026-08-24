@@ -2,6 +2,7 @@ import {
   addChildAction,
   addSpouseAction,
   createIndividualAction,
+  updateIndividualAction,
 } from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
@@ -44,14 +45,16 @@ export default async function TreePage() {
       </header>
       <div className="min-h-0 flex-1">
         {/*
-          The add-spouse action (E3-T4) is handed down for the same reason, and
-          one more: the canvas renders the form, so importing the action inside
-          `FamilyTree` would take `components/FamilyTree.test.tsx` down with it.
+          The add-spouse action (E3-T4) and the edit-person action (E3-T3)
+          are handed down for the same reason, and one more: the canvas renders
+          both forms, so importing either action inside `FamilyTree` would take
+          `components/FamilyTree.test.tsx` down with it.
         */}
         <FamilyTree
           graph={graph}
           addSpouseAction={addSpouseAction}
           addChildAction={addChildAction}
+          updateIndividualAction={updateIndividualAction}
           /*
             And the add-person action once more (E3-T9): on an empty database
             the canvas is replaced by an invitation that opens the same panel
