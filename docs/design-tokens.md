@@ -84,8 +84,8 @@ to everyone who reads it at a glance.
 The measure is in `em` deliberately, so it scales with the content type rather
 than drifting away from it. At the 14px body size it resolves to ~644px, which
 is the Wikipedia column. Apply it as `max-w-content` on the element holding the
-prose — `app/page.tsx` is the current example, and the shell that sets this
-column beside a sidebar is E11-T2.
+prose — `app/page.tsx` is the current example. The E11-T2 shell sets that
+column beside the sidebar but does not own it; see "The shell" below.
 
 ## Base styles, and the one distinction that matters
 
@@ -131,7 +131,41 @@ Two things inside it take a modifier:
   would be worse than shipping none, so `:root` declares `color-scheme: light`
   and the browser stops painting dark scrollbars over a light page.
 - **No infobox styles.** Derived from the tree record, not authored — E11-T5.
-- **No hatnote, tabs, sidebar or table of contents.** E11-T2, T3, T7, T9.
+- **No hatnote, tabs or table of contents.** E11-T3, T7, T9.
+
+## The shell
+
+E11-T2 added the page furniture around an article — sticky header, collapsible
+left sidebar, and the region the content column sits in. It is assembled in
+`components/AppShell.tsx` entirely out of the tokens above; there is not a
+colour or a type size in it that this file did not already declare.
+
+Three things about it are not utilities, and so live in `app/globals.css`:
+
+| Name              | What it is                                                          |
+| ----------------- | ------------------------------------------------------------------- |
+| `--header-height` | `3rem` — the sticky header, and so where the usable viewport starts |
+| `.site-sidebar`   | the sidebar: a pinned column, a drawer, or nothing                  |
+| `.site-scrim`     | the dim behind the drawer                                           |
+
+Both classes exist because their answer depends on `data-sidebar` on `<html>`,
+which is an **ancestor** attribute, and utilities style the element they are on.
+`--header-height` is a plain custom property rather than a `@theme` token
+because it generates no utility of its own: it is read as `h-(--header-height)`
+on the header and inside `calc()` by anything that has to fill what is left
+below it — `app/tree/page.tsx` is the worked example.
+
+**The shell does not own the content column.** Every route still centres its own
+`<main>` at `max-w-content`; the shell only gives that column somewhere to be,
+beside the sidebar. That is what lets `/tree` be a full-bleed canvas and
+`/wiki/[slug]` be a 46em measure inside the same chrome, with neither of them
+fighting a wrapper.
+
+**Where the state lives.** `data-sidebar` on `<html>`, set by an inline script
+before the first paint, because a sidebar the viewer collapsed cannot be allowed
+to appear for a frame on every page load. `lib/sidebar-preference.ts` has the
+long version, including why the stored preference is a wide-screen one that a
+phone ignores.
 
 ## The rule that keeps this honest
 

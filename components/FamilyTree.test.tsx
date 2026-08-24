@@ -4,6 +4,11 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
+import type { EntryLink } from "@/lib/entry-link";
+import {
+  changedEntryLinkState,
+  type PersonEntryActions,
+} from "@/lib/entry-link-state";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { emptyIndividualFormState } from "@/lib/individual-form-state";
 import { removedState } from "@/lib/removal-state";
@@ -166,6 +171,37 @@ function graph(): FamilyGraph {
     ],
     childLinks: [{ unionId: "u1", childId: "dora", relation: "biological" }],
   };
+}
+
+/** Two entries: one about Rose, one nobody has claimed. */
+const ROSE_ENTRY: EntryLink = {
+  id: "page-rose",
+  slug: "rose-hale",
+  title: "Rose Hale",
+};
+
+const LOOSE_ENTRY: EntryLink = {
+  id: "page-loose",
+  slug: "the-farm",
+  title: "The farm",
+};
+
+/** Entry actions that record nothing and refuse nothing. */
+const inertEntryActions: PersonEntryActions = {
+  create: async () => changedEntryLinkState,
+  link: async () => changedEntryLinkState,
+  unlink: async () => changedEntryLinkState,
+};
+
+/** The canvas, wired for entries the way `app/tree/page.tsx` wires it. */
+function renderWithEntries(
+  people: FamilyGraph,
+  entries: readonly EntryLink[],
+  entryActions?: PersonEntryActions,
+): HTMLElement {
+  return mount(
+    <FamilyTree graph={people} entries={entries} entryActions={entryActions} />,
+  );
 }
 
 function nodeWrapper(host: HTMLElement, id: string): HTMLElement {
@@ -701,6 +737,178 @@ describe("the deep link", () => {
     click(buttonLabelled(host, "Dora Hale"));
 
     expect(panelLabel(host)).toBe("Details for Dora Hale");
+    expect(changes).toEqual(["dora"]);
+  });
+});
+
+/**
+ * The wiring E2-T2 added to this file: `page_id` on the graph and the entry
+ * list are two separate values, and matching them is the canvas's job. The
+ * matching itself is asserted in `lib/entry-link.test.ts` and the control in
+ * `components/PersonEntry.test.tsx`; what is checked here is that the panel is
+ * handed the right answer for the person who is actually selected.
+ */
+describe("the entry link on the panel", () => {
+  /** Rose has an entry; Walter and Dora do not. */
+  function linkedGraph(): FamilyGraph {
+    const family = graph();
+    return {
+      ...family,
+      people: family.people.map((candidate) =>
+        candidate.id === "rose"
+          ? { ...candidate, pageId: ROSE_ENTRY.id }
+          : candidate,
+      ),
+    };
+  }
+
+  it("links to the entry of the person whose panel is open", () => {
+    const host = renderWithEntries(linkedGraph(), [ROSE_ENTRY, LOOSE_ENTRY]);
+    open(host, "rose");
+
+    const link = [...host.querySelectorAll("a")].find((anchor) =>
+      anchor.getAttribute("href")?.startsWith("/wiki/"),
+    );
+
+    expect(link?.getAttribute("href")).toBe("/wiki/rose-hale");
+  });
+
+  it("offers to write one for a person who has none", () => {
+    const host = renderWithEntries(
+      linkedGraph(),
+      [ROSE_ENTRY, LOOSE_ENTRY],
+      inertEntryActions,
+    );
+    open(host, "walter");
+
+    expect(host.textContent).toContain("No entry yet for Walter Hale");
+    expect(buttonLabelled(host, "Write about this person")).toBeDefined();
+  });
+
+  it("swaps the answer when the panel moves to somebody else", () => {
+    // The panel stays open and changes person when a relative is followed, so
+    // an entry link left over from the previous record would be wrong *and*
+    // clickable.
+    const host = renderWithEntries(linkedGraph(), [ROSE_ENTRY, LOOSE_ENTRY]);
+    open(host, "rose");
+    open(host, "dora");
+
+    expect(
+      [...host.querySelectorAll("a")].some((anchor) =>
+        anchor.getAttribute("href")?.startsWith("/wiki/"),
+      ),
+    ).toBe(false);
+    expect(host.textContent).toContain("No entry yet for Dora Hale");
+  });
+
+  it("does not offer an entry somebody else already has", () => {
+    // `unlinkedEntries` filters the picker, so Rose's entry must not appear as
+    // an option on Walter's panel. Only the unclaimed one may.
+    const host = renderWithEntries(
+      linkedGraph(),
+      [ROSE_ENTRY, LOOSE_ENTRY],
+      inertEntryActions,
+    );
+    open(host, "walter");
+
+    const options = [...host.querySelectorAll("option")].map(
+      (option) => option.value,
+    );
+
+    expect(options).toContain(LOOSE_ENTRY.id);
+    expect(options).not.toContain(ROSE_ENTRY.id);
+  });
+
+  it("offers nothing to write with when the canvas was given no actions", () => {
+    // `/tree` always passes them, but the prop is optional so that this file
+    // can mount the canvas without reaching Auth.js — and a canvas without
+    // them still has to show the entry a person has.
+    const host = renderWithEntries(linkedGraph(), [ROSE_ENTRY, LOOSE_ENTRY]);
+    open(host, "walter");
+
+    expect(host.textContent).not.toContain("Write about this person");
+    expect(host.querySelector("select")).toBeNull();
+  });
+});
+
+/**
+ * The seam E2-T4 and E2-T2 share: the deep link decides *which* person is
+ * selected, and the entry link decides *what* the panel says about them.
+ * Neither ticket's own tests mount both props at once — "the deep link"
+ * above never passes `entries`, and "the entry link on the panel" above
+ * never passes `personLink` — so nothing else in this file catches the two
+ * wires crossed, or one of the pair overwriting the other's slot.
+ */
+describe("a deep link that opens on a person with an entry", () => {
+  /** Rose has an entry; Walter and Dora do not. Same shape as `linkedGraph`
+   * above, kept local rather than shared so this block reads on its own. */
+  function linkedGraph(): FamilyGraph {
+    const family = graph();
+    return {
+      ...family,
+      people: family.people.map((candidate) =>
+        candidate.id === "rose"
+          ? { ...candidate, pageId: ROSE_ENTRY.id }
+          : candidate,
+      ),
+    };
+  }
+
+  it("opens the panel on the linked person with their entry already rendered", () => {
+    const host = mount(
+      <FamilyTree
+        graph={linkedGraph()}
+        entries={[ROSE_ENTRY, LOOSE_ENTRY]}
+        personLink={{ personId: "rose", onChange: () => {} }}
+      />,
+    );
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(true);
+
+    const link = [...host.querySelectorAll("a")].find((anchor) =>
+      anchor.getAttribute("href")?.startsWith("/wiki/"),
+    );
+    expect(link?.getAttribute("href")).toBe("/wiki/rose-hale");
+  });
+
+  it("opens the panel on a linked person with none, offering to write one", () => {
+    const host = mount(
+      <FamilyTree
+        graph={linkedGraph()}
+        entries={[ROSE_ENTRY, LOOSE_ENTRY]}
+        entryActions={inertEntryActions}
+        personLink={{ personId: "walter", onChange: () => {} }}
+      />,
+    );
+
+    expect(panelLabel(host)).toBe("Details for Walter Hale");
+    expect(host.textContent).toContain("No entry yet for Walter Hale");
+    expect(buttonLabelled(host, "Write about this person")).toBeDefined();
+  });
+
+  it("swaps the entry when a relative's link moves the deep-linked selection", () => {
+    const changes: (string | null)[] = [];
+    const host = mount(
+      <FamilyTree
+        graph={linkedGraph()}
+        entries={[ROSE_ENTRY, LOOSE_ENTRY]}
+        personLink={{
+          personId: "rose",
+          onChange: (next) => changes.push(next),
+        }}
+      />,
+    );
+
+    click(buttonLabelled(host, "Dora Hale"));
+
+    expect(panelLabel(host)).toBe("Details for Dora Hale");
+    expect(host.textContent).toContain("No entry yet for Dora Hale");
+    expect(
+      [...host.querySelectorAll("a")].some((anchor) =>
+        anchor.getAttribute("href")?.startsWith("/wiki/"),
+      ),
+    ).toBe(false);
     expect(changes).toEqual(["dora"]);
   });
 });

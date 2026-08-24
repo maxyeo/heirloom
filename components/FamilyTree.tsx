@@ -24,12 +24,15 @@ import { AddChildForm } from "@/components/AddChildForm";
 import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { EditPerson } from "@/components/EditPersonForm";
+import { PersonEntry } from "@/components/PersonEntry";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
 import { UnionOrder } from "@/components/UnionOrder";
 import type { AddChildFormAction } from "@/lib/child-form-state";
+import { type EntryLink, findEntry, unlinkedEntries } from "@/lib/entry-link";
+import type { PersonEntryActions } from "@/lib/entry-link-state";
 import type { FamilyGraph } from "@/lib/family-graph";
 import type { SetParentsFormAction } from "@/lib/parents-form-state";
 import { derivePersonDetail } from "@/lib/person-detail";
@@ -81,6 +84,13 @@ function UnionNode() {
 }
 
 const nodeTypes = { person: PersonNode, union: UnionNode };
+
+/**
+ * The default for `entries`, hoisted so it is the same array on every render.
+ * A literal in the parameter list would be a new one each time, which is a new
+ * dependency for the memos below and a re-filter of a list that did not change.
+ */
+const EMPTY_ENTRIES: readonly EntryLink[] = [];
 
 /**
  * The provider is what `useReactFlow` needs, and it has to sit *above* the
@@ -144,6 +154,26 @@ export interface FamilyTreeProps {
    * involved.
    */
   personLink?: PersonLink;
+  /**
+   * Every wiki entry, as something a person can be linked to (E2-T2).
+   *
+   * Not part of the graph, and deliberately: joining `pages` into
+   * `getFamilyGraph` would carry a slug and a title on all of the hundreds of
+   * people on the canvas in order to render one link on the one panel that is
+   * open. `lib/entry-link.ts` matches the two lists instead, in the browser,
+   * for the same reason the layout is computed there — both are small, and
+   * moving between people then costs no request.
+   *
+   * Defaults to empty, so a canvas given none simply has no entry to show.
+   */
+  entries?: readonly EntryLink[];
+  /**
+   * The three doors onto `individuals.page_id` (E2-T2), passed down for
+   * exactly the reasons every action above is — and as one prop, because they
+   * are one feature. Optional, with the same consequence: a canvas given none
+   * shows the entry a person already has and offers nothing further.
+   */
+  entryActions?: PersonEntryActions;
 }
 
 export function FamilyTree({
@@ -155,6 +185,8 @@ export function FamilyTree({
   createIndividualAction,
   reorderUnionsAction,
   personLink,
+  entries,
+  entryActions,
 }: FamilyTreeProps) {
   /**
    * An empty database gets an invitation instead of a canvas (E3-T9).
@@ -180,6 +212,8 @@ export function FamilyTree({
         reorderUnionsAction={reorderUnionsAction}
         updateIndividualAction={updateIndividualAction}
         personLink={personLink}
+        entries={entries}
+        entryActions={entryActions}
       />
     </ReactFlowProvider>
   );
@@ -193,6 +227,8 @@ function FamilyTreeCanvas({
   reorderUnionsAction,
   updateIndividualAction,
   personLink,
+  entries = EMPTY_ENTRIES,
+  entryActions,
 }: FamilyTreeProps) {
   const layout = useMemo(() => layoutFamilyGraph(graph), [graph]);
 
@@ -294,6 +330,22 @@ function FamilyTreeCanvas({
         : (graph.people.find((candidate) => candidate.id === selectedId) ??
           null),
     [graph, selectedId],
+  );
+
+  /**
+   * The entry this person is linked to, and the entries nobody is (E2-T2).
+   *
+   * Both are derived rather than fetched: `page_id` is already on the graph
+   * and the entries arrived with it, so opening one panel after another costs
+   * no request — the same property that makes the relatives' links work.
+   */
+  const entry = useMemo(
+    () => findEntry(entries, person?.pageId ?? null),
+    [entries, person],
+  );
+  const linkableEntries = useMemo(
+    () => unlinkedEntries(entries, graph.people),
+    [entries, graph.people],
   );
 
   /**
@@ -597,6 +649,21 @@ function FamilyTreeCanvas({
           detail={detail}
           onSelectPerson={selectPerson}
           onClose={close}
+          /*
+            E2-T2's entry link, composed into its own slot above the relatives
+            rather than into the footer: it is not an edit to the record, it is
+            the other half of the product. The panel is handed the answer — an
+            entry or none — and does no looking up of its own.
+          */
+          entryLink={
+            <PersonEntry
+              personId={detail.id}
+              personName={detail.name}
+              entry={entry}
+              options={linkableEntries}
+              actions={entryActions}
+            />
+          }
           /*
             E3-T8's remove/detach affordance, composed in rather than built
             into the panel. It needs the whole graph — the confirmation has to

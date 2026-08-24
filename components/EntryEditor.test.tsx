@@ -267,3 +267,257 @@ describe("the rendered component", () => {
     expect(host.querySelector('input[type="text"]')).toBeNull();
   });
 });
+
+/**
+ * Cross-entry linking (E2-T5, `YEO-28`).
+ *
+ * The ranking, the address arithmetic and the fact that the markup survives
+ * the sanitiser are all checked without a document in
+ * `lib/entry-links.test.ts`, which is where docs/testing.md wants them. What
+ * is left here is what genuinely needs a live editor: that clicking an entry
+ * in the list puts the right mark on the right text, and that the panel
+ * reports what an existing link already points at.
+ */
+const ENTRIES = [
+  { title: "Ambrose Lane", slug: "ambrose-lane" },
+  { title: "Rose Hall", slug: "rose-hall" },
+  { title: "Walter Hale", slug: "walter-hale" },
+];
+
+/** Type into a controlled input the way React can see. */
+function typeInto(input: HTMLInputElement, text: string): void {
+  act(() => {
+    // React tracks the last value it wrote to the node, so assigning `.value`
+    // directly makes it treat an identical value as "no change". Going through
+    // the prototype setter is what makes the change visible to React.
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set?.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function entrySearch(host: HTMLElement): HTMLInputElement {
+  const input = host.querySelector<HTMLInputElement>('input[type="search"]');
+  if (!input) throw new Error("no entry search box");
+  return input;
+}
+
+function offeredTitles(host: HTMLElement): string[] {
+  const list = host.querySelector('ul[aria-label="Matching entries"]');
+  return [...(list?.querySelectorAll("button") ?? [])].map((button) =>
+    (button.textContent ?? "").trim(),
+  );
+}
+
+function offered(host: HTMLElement, title: string): HTMLButtonElement {
+  const list = host.querySelector('ul[aria-label="Matching entries"]');
+  const found = [...(list?.querySelectorAll("button") ?? [])].find(
+    (button) => button.textContent?.trim() === title,
+  );
+  if (!found) throw new Error(`"${title}" is not offered`);
+  return found;
+}
+
+function modeRadio(host: HTMLElement, label: string): HTMLInputElement {
+  const found = [...host.querySelectorAll("label")].find((element) =>
+    element.textContent?.includes(label),
+  );
+  const input = found?.querySelector<HTMLInputElement>('input[type="radio"]');
+  if (!input) throw new Error(`no "${label}" choice`);
+  return input;
+}
+
+/** Open the link panel with the cursor somewhere in particular. */
+function openLinkPanelAt(host: HTMLElement, from: number, to = from): void {
+  // Before opening, never after: the panel closes when the selection moves
+  // out from under it, which is the behaviour the test above this one covers.
+  act(() => {
+    editorOf(host).commands.setTextSelection({ from, to });
+  });
+  act(() => linkButton(host).click());
+}
+
+describe("linking to another entry", () => {
+  it("offers the wiki's entries by title, without adding a toolbar button", () => {
+    const host = render(<EntryEditor entries={ENTRIES} />);
+
+    act(() => linkButton(host).click());
+
+    // Alphabetical, the way `/wiki` lists them: an empty query is a picker
+    // that has just been opened, not a search that found nothing.
+    expect(offeredTitles(host)).toEqual([
+      "Ambrose Lane",
+      "Rose Hall",
+      "Walter Hale",
+    ]);
+    // The bar is still the six controls `lib/editor-extensions.ts` fixes it
+    // at — the picker lives inside the link panel, not beside it.
+    expect(host.querySelectorAll('[role="toolbar"] button')).toHaveLength(5);
+    expect(host.querySelectorAll('[role="toolbar"] select')).toHaveLength(1);
+  });
+
+  it("narrows the list as the author types", () => {
+    const host = render(<EntryEditor entries={ENTRIES} />);
+
+    act(() => linkButton(host).click());
+    typeInto(entrySearch(host), "hal");
+
+    // "Walter Hale" matches on its surname; "Rose Hall" on its second word.
+    expect(offeredTitles(host)).toEqual(["Rose Hall", "Walter Hale"]);
+  });
+
+  it("says so when nothing matches, rather than showing an empty box", () => {
+    const host = render(<EntryEditor entries={ENTRIES} />);
+
+    act(() => linkButton(host).click());
+    typeInto(entrySearch(host), "zeppelin");
+
+    expect(offeredTitles(host)).toEqual([]);
+    expect(host.textContent).toContain("No entry matches that.");
+  });
+
+  it("inserts a site-relative link that reads as the entry's title", () => {
+    // The acceptance criterion twice over: the href carries no origin, so it
+    // survives a domain change; and the words in the sentence are the entry's
+    // title rather than its address.
+    const host = render(<EntryEditor entries={ENTRIES} />);
+
+    act(() => linkButton(host).click());
+    act(() => offered(host, "Rose Hall").click());
+
+    expect(editorOf(host).getHTML()).toBe(
+      '<p><a href="/wiki/rose-hall">Rose Hall</a></p>',
+    );
+  });
+
+  it("links the author's own words when there is a selection", () => {
+    const host = render(
+      <EntryEditor
+        entries={ENTRIES}
+        initialHtml="<p>She grew up at her grandmother's house.</p>"
+      />,
+    );
+
+    // "her grandmother's house" — the paragraph's text starts at 1.
+    openLinkPanelAt(host, 16, 39);
+    act(() => offered(host, "Rose Hall").click());
+
+    expect(editorOf(host).getHTML()).toBe(
+      "<p>She grew up at " +
+        `<a href="/wiki/rose-hall">her grandmother's house</a>.</p>`,
+    );
+  });
+
+  it("re-points an existing link without disturbing its text", () => {
+    const host = render(
+      <EntryEditor
+        entries={ENTRIES}
+        initialHtml='<p><a href="/wiki/ambrose-lane">the old house</a></p>'
+      />,
+    );
+
+    openLinkPanelAt(host, 3);
+    act(() => offered(host, "Rose Hall").click());
+
+    expect(editorOf(host).getHTML()).toBe(
+      '<p><a href="/wiki/rose-hall">the old house</a></p>',
+    );
+  });
+
+  it("names the entry a link already points at", () => {
+    const host = render(
+      <EntryEditor
+        entries={ENTRIES}
+        initialHtml='<p><a href="/wiki/rose-hall">the old house</a></p>'
+      />,
+    );
+
+    openLinkPanelAt(host, 3);
+
+    expect(host.textContent).toContain("Currently links to");
+    expect(host.textContent).toContain("Rose Hall");
+  });
+
+  it("degrades visibly when the entry a link points at is gone", () => {
+    /**
+     * The fourth acceptance criterion, in the one place this ticket owns.
+     * The author is standing in front of the only screen the link can be
+     * fixed on, so the panel says the target is missing instead of showing
+     * an address that looks as good as any other. The reader's half of the
+     * same fact — a red link on the rendered page — is E11-T6 (`YEO-76`).
+     */
+    const host = render(
+      <EntryEditor
+        entries={ENTRIES}
+        initialHtml='<p><a href="/wiki/demolished">the old house</a></p>'
+      />,
+    );
+
+    openLinkPanelAt(host, 3);
+
+    expect(host.textContent).toContain("no longer exists");
+    // And the fix is right there: the list is open, and Remove is offered.
+    expect(offeredTitles(host)).toEqual([
+      "Ambrose Lane",
+      "Rose Hall",
+      "Walter Hale",
+    ]);
+    expect(
+      [...host.querySelectorAll("button")].some(
+        (button) => button.textContent === "Remove",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not call an external link broken", () => {
+    const host = render(
+      <EntryEditor
+        entries={ENTRIES}
+        initialHtml='<p><a href="https://example.com/x">a source</a></p>'
+      />,
+    );
+
+    openLinkPanelAt(host, 3);
+
+    expect(host.textContent).not.toContain("no longer exists");
+    // Opened in the mode the link is already in, showing its address.
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="text"]')?.value,
+    ).toBe("https://example.com/x");
+  });
+
+  it("still takes a raw address for an external link", () => {
+    const host = render(<EntryEditor entries={ENTRIES} />);
+
+    act(() => linkButton(host).click());
+    act(() => modeRadio(host, "A web address").click());
+
+    const field = host.querySelector<HTMLInputElement>('input[type="text"]');
+    if (!field) throw new Error("no address field");
+    typeInto(field, "example.com/photos");
+    act(() => {
+      field.form?.requestSubmit();
+    });
+
+    // `normaliseLinkHref` supplies the scheme, as it did before E2-T5.
+    expect(editorOf(host).getHTML()).toBe(
+      '<p><a href="https://example.com/photos">https://example.com/photos</a></p>',
+    );
+  });
+
+  it("keeps the address field alone when given no entries to offer", () => {
+    // Nothing about the picker is required. A caller that passes no entries
+    // gets exactly the panel E1-T2 shipped.
+    const host = render(<EntryEditor />);
+
+    act(() => linkButton(host).click());
+
+    expect(host.querySelector('input[type="search"]')).toBeNull();
+    expect(host.querySelector('input[type="radio"]')).toBeNull();
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="text"]')?.placeholder,
+    ).toBe("example.com or /wiki/rose");
+  });
+});

@@ -106,6 +106,13 @@
 @layer base {
   :root {
     color-scheme: light;
+
+    /* The sticky header's height (E11-T2), and so where the usable viewport
+     * starts. A plain custom property rather than a `@theme` token because it
+     * generates no utility of its own: it is read as `h-(--header-height)` on
+     * the header, and inside `calc()` by everything that has to fill what is
+     * left below it. */
+    --header-height: 3rem;
   }
 
   body {
@@ -380,6 +387,97 @@
         width: auto;
         margin-inline: 0;
       }
+    }
+  }
+}
+
+@layer components {
+  /*
+   * The shell's left sidebar (E11-T2).
+   *
+   * Whether it shows, and as what, is the one thing here that Tailwind
+   * utilities cannot express: it depends on `data-sidebar` on `<html>`, which
+   * is an *ancestor* attribute set by an inline script before the page paints.
+   * See `lib/sidebar-preference.ts` for why the state lives up there.
+   *
+   * Three states, in order of increasing specificity:
+   *
+   *   no attribute   the stylesheet's own answer, and the one a viewer with
+   *                  JavaScript off keeps: a column on a wide screen, out of
+   *                  the way on a narrow one.
+   *   "open"         a drawer over the article, or a pinned column above the
+   *                  breakpoint.
+   *   "closed"       gone, at every width.
+   *
+   * 55rem is 880px — the width the E11 reference mockup collapses its own
+   * two-column grid at, and the number `SIDEBAR_PINNED_QUERY` spells as a
+   * media query in JavaScript. The two have to agree.
+   */
+  .site-sidebar {
+    display: none;
+    flex: none;
+    /* The mockup's column. */
+    width: 12.5rem;
+    overflow-y: auto;
+    background-color: var(--color-paper);
+  }
+
+  /* Open on a narrow screen: over the article, not beside it. Taking a column
+   * from a phone would leave the prose about four words wide, and the ticket
+   * asks for an article that stays comfortable to read on one. */
+  html[data-sidebar="open"] .site-sidebar {
+    display: block;
+    position: fixed;
+    inset-block: var(--header-height) 0;
+    inset-inline-start: 0;
+    z-index: 40;
+  }
+
+  @media (width >= 55rem) {
+    /* Wide, open or unanswered: a column that scrolls with its own contents
+     * and stays put while the article moves. `sticky` rather than `fixed` so
+     * it keeps its place in the flex row and the article keeps the rest. */
+    .site-sidebar,
+    html[data-sidebar="open"] .site-sidebar {
+      display: block;
+      position: sticky;
+      /* Undoing the drawer above: a sticky box with `left: 0` still hanging
+       * on it would try to stick sideways too. */
+      inset-block: auto;
+      inset-inline-start: auto;
+      top: var(--header-height);
+      height: calc(100dvh - var(--header-height));
+      z-index: auto;
+    }
+  }
+
+  /* Last, and so the winner wherever it applies: an explicit collapse means
+   * collapsed at every width. */
+  html[data-sidebar="closed"] .site-sidebar {
+    display: none;
+  }
+
+  /*
+   * The dim behind the drawer. Its colour is a utility on the element
+   * (`bg-ink/30`, the same one `ModalDialog` uses); only the showing and the
+   * placing are here, because both depend on the ancestor attribute.
+   */
+  .site-scrim {
+    display: none;
+  }
+
+  html[data-sidebar="open"] .site-scrim {
+    display: block;
+    position: fixed;
+    inset-block: var(--header-height) 0;
+    inset-inline: 0;
+    z-index: 30;
+  }
+
+  /* Above the breakpoint the sidebar is a column, and a column dims nothing. */
+  @media (width >= 55rem) {
+    html[data-sidebar="open"] .site-scrim {
+      display: none;
     }
   }
 }

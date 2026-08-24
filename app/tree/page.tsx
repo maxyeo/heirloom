@@ -1,24 +1,42 @@
 import {
   addChildAction,
   addSpouseAction,
+  createEntryForPersonAction,
   createIndividualAction,
+  linkPersonEntryAction,
   reorderUnionsAction,
   setParentsAction,
+  unlinkPersonEntryAction,
   updateIndividualAction,
 } from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { DeepLinkedFamilyTree } from "@/components/DeepLinkedFamilyTree";
 import { getFamilyGraph } from "@/lib/family-graph";
+import { listEntryLinks } from "@/lib/pages";
 import { requireSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function TreePage() {
   await requireSession();
-  const graph = await getFamilyGraph();
+
+  /**
+   * Two independent reads, so they overlap rather than queue. The entries are
+   * for E2-T2's link on the detail panel: which one a person already has, and
+   * which are still free to be linked to somebody. See `lib/entry-link.ts` for
+   * why they travel as their own list rather than as columns on the graph.
+   */
+  const [graph, entries] = await Promise.all([
+    getFamilyGraph(),
+    listEntryLinks(),
+  ]);
 
   return (
-    <main className="flex h-dvh flex-col">
+    // The viewport less the shell's sticky header (E11-T2). It was `h-dvh`
+    // before there was a header above it; left that way the canvas would run
+    // 3rem past the bottom of the screen and give the page a scrollbar with
+    // nothing in it.
+    <main className="flex h-[calc(100dvh-var(--header-height))] flex-col">
       {/* The h1 carries its own rule (globals.css), so the header needs no
           border of its own. */}
       <header className="flex items-start justify-between gap-3 px-4 py-3">
@@ -82,6 +100,17 @@ export default async function TreePage() {
             always sorted on and nothing has ever written.
           */
           reorderUnionsAction={reorderUnionsAction}
+          /*
+            And the entry link (E2-T2): the entries themselves, plus the three
+            actions that set and clear `individuals.page_id`. One prop for the
+            three, because they are one feature — see `PersonEntryActions`.
+          */
+          entries={entries}
+          entryActions={{
+            create: createEntryForPersonAction,
+            link: linkPersonEntryAction,
+            unlink: unlinkPersonEntryAction,
+          }}
         />
       </div>
     </main>

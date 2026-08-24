@@ -18,9 +18,10 @@ import type {
  * It does no reasoning. `derivePersonDetail` turns the graph into the value
  * this renders, so "who are Rose's children" is answered and tested in a file
  * with no DOM in it, and the component below is a list of rows. Editing the
- * person is E3-T3 and an "open entry" link is E2-T2 — the panel deliberately
- * stops at showing what is recorded, so that neither of those has to unpick a
- * form that was guessed at here first.
+ * person is E3-T3 and the entry link is E2-T2 — the panel deliberately stops
+ * at showing what is recorded, so that neither of those had to unpick a form
+ * that was guessed at here first. Both arrived as slots (`footer`,
+ * `entryLink`) rather than as forms this file learned to render.
  *
  * The one exception is `onAddSpouse` (E3-T4, `YEO-32`), and it is a *route in*
  * rather than a form: the add-spouse flow is about one person, so the only
@@ -57,6 +58,17 @@ export interface PersonPanelProps {
    */
   footer?: React.ReactNode;
   /**
+   * Rendered under the dates and above the relatives: the person's wiki entry,
+   * or the offer to write one (E2-T2).
+   *
+   * A slot rather than a prop per feature, for the reason `footer` gives — and
+   * a *second* slot rather than more of the first, because this is not an edit
+   * to the record. `components/PersonEntry.tsx` is what the canvas composes in
+   * here; the panel neither knows what an entry is nor how one is started, and
+   * omitting the prop leaves it exactly what it was.
+   */
+  entryLink?: React.ReactNode;
+  /**
    * Start recording a marriage or partnership for this person (E3-T4).
    *
    * Optional, so the panel keeps working anywhere the flow is not offered —
@@ -90,6 +102,7 @@ export function PersonPanel({
   onSelectPerson,
   onClose,
   footer,
+  entryLink,
   onAddSpouse,
   onAddChild,
   onSetParents,
@@ -156,6 +169,8 @@ export function PersonPanel({
             </>
           )}
         </dl>
+
+        {entryLink}
 
         <Section title="Parents" count={detail.parents.length}>
           {detail.parents.map((parent) => (

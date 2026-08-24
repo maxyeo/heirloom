@@ -43,6 +43,20 @@ const SOURCE_EXTENSIONS = [".ts", ".tsx"];
 const EXEMPT = new Set([
   join("lib", "sanitize-html.call-sites.test.ts"),
   join("lib", "sanitize-html.ts"),
+  /**
+   * The shell's sidebar boot script (E11-T2). Not HTML from the database and
+   * not HTML from a person: a constant string of JavaScript declared in
+   * `lib/sidebar-preference.ts`, with nothing interpolated into it that
+   * anything outside this repository can reach. Running it through the entry
+   * allowlist would strip it to nothing, which is precisely what that
+   * allowlist is for and precisely the wrong thing here.
+   *
+   * The tripwire still matters: if `AppShell` ever grows a *second*
+   * `dangerouslySetInnerHTML` carrying something a reader wrote, this
+   * exemption would hide it. It covers a file that renders one constant, and
+   * it should be deleted the day that stops being true.
+   */
+  join("components", "AppShell.tsx"),
 ]);
 
 function sourceFiles(): string[] {

@@ -1,4 +1,5 @@
 import { signIn } from "@/auth";
+import { siteName } from "@/lib/site";
 
 export default async function SignInPage({
   searchParams,
@@ -10,7 +11,7 @@ export default async function SignInPage({
   return (
     <main className="flex min-h-dvh items-center justify-center px-6">
       <div className="w-full max-w-sm text-center">
-        <h1>{process.env.NEXT_PUBLIC_SITE_TITLE ?? "Heirloom"}</h1>
+        <h1>{siteName()}</h1>
         <p className="text-caption text-ink-muted">This site is private.</p>
 
         {error ? (
