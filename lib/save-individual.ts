@@ -175,13 +175,7 @@ export async function updateIndividual(
    * was already null therefore counts as unchanged, which is what stops an
    * edit form that was opened and closed from reporting a save.
    *
-   * No `FOR UPDATE` here, unlike `lib/save-page.ts`. That lock exists there to
-   * stop two concurrent saves of identical content from both writing a
-   * *revision* — an extra row in an append-only history that nothing can
-   * remove. There is no history table under this one, so the worst a lost
-   * race can do is issue a redundant `UPDATE` that sets a row to the values
-   * it already holds. Taking a row lock to avoid that would cost every edit a
-   * lock for a saving nobody can observe.
+   * This read takes no row lock; see the note on the update below for why.
    *
    * The select above is checked by this loop rather than by inspection: a
    * column left out of it makes `existing[field]` a type error, so the query
@@ -192,10 +186,32 @@ export async function updateIndividual(
   );
   if (unchanged) return { status: "unchanged", id };
 
-  await db
+  /**
+   * `returning` rather than a bare `update`, so the answer comes from the
+   * statement that did the work instead of from the read above it.
+   *
+   * The gap it closes: the select and the update are two statements with no
+   * lock between them, so a delete (E3-T8) landing in that window leaves the
+   * update matching nothing — and a bare `update` reports success either way,
+   * telling the author their correction was saved onto a person who no longer
+   * exists. Asking for the row back costs nothing extra (it is the same
+   * round trip) and makes the two outcomes distinguishable.
+   *
+   * Deliberately still no `FOR UPDATE`, unlike `lib/save-page.ts`. That lock
+   * exists there to stop two concurrent saves of identical content from both
+   * appending a *revision* to an append-only history that nothing can remove.
+   * There is no history table under this one, so the only race left is
+   * last-write-wins between two people editing one person at once — which a
+   * lock would not resolve so much as order, at the cost of a lock on every
+   * edit.
+   */
+  const [updated] = await db
     .update(schema.individuals)
     .set(checked.value)
-    .where(eq(schema.individuals.id, id));
+    .where(eq(schema.individuals.id, id))
+    .returning({ id: schema.individuals.id });
+
+  if (!updated) return { status: "not-found" };
 
   return { status: "updated", id };
 }
