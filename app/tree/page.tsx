@@ -10,7 +10,7 @@ import {
   updateIndividualAction,
 } from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
-import { FamilyTree } from "@/components/FamilyTree";
+import { DeepLinkedFamilyTree } from "@/components/DeepLinkedFamilyTree";
 import { getFamilyGraph } from "@/lib/family-graph";
 import { listEntryLinks } from "@/lib/pages";
 import { requireSession } from "@/lib/session";
@@ -70,7 +70,14 @@ export default async function TreePage() {
           both forms, so importing either action inside `FamilyTree` would take
           `components/FamilyTree.test.tsx` down with it.
         */}
-        <FamilyTree
+        {/*
+          The canvas, wrapped in the ten lines that read and write
+          `?person=<id>` (E2-T4). The wrapper is a Client Component because
+          `useSearchParams` is a client hook and this page is not; the canvas
+          itself stays unaware of routing, which is what keeps it mountable in
+          a test with no router. See `components/DeepLinkedFamilyTree.tsx`.
+        */}
+        <DeepLinkedFamilyTree
           graph={graph}
           addSpouseAction={addSpouseAction}
           addChildAction={addChildAction}

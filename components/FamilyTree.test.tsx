@@ -624,6 +624,130 @@ describe("reaching the edit form", () => {
 });
 
 /**
+ * The deep link (E2-T4). The canvas takes the URL as a prop rather than
+ * reading it — `components/DeepLinkedFamilyTree.tsx` explains why — which is
+ * what lets this file drive both directions of it with no router: a changed
+ * `personId` is what arriving on a link and pressing Back both look like from
+ * in here, and `onChange` is what the address bar would be asked to follow.
+ *
+ * Everything that is arithmetic — resolving an unknown id, rewriting a query
+ * string, applying a selection to a list of nodes — is asserted with no DOM in
+ * `lib/tree-selection.test.ts`. Only the joins are here.
+ */
+describe("the deep link", () => {
+  function renderLinked(
+    personId: string | null,
+    onChange: (next: string | null) => void,
+  ): HTMLElement {
+    return mount(
+      <FamilyTree graph={graph()} personLink={{ personId, onChange }} />,
+    );
+  }
+
+  /** The URL changing under a mounted canvas: a deep link, or back/forward. */
+  function navigate(
+    host: HTMLElement,
+    personId: string | null,
+    onChange: (next: string | null) => void,
+  ): void {
+    rerender(
+      host,
+      <FamilyTree graph={graph()} personLink={{ personId, onChange }} />,
+    );
+  }
+
+  it("opens on the person the URL names", () => {
+    const host = renderLinked("rose", () => {});
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(true);
+  });
+
+  it("does not push back the selection it was handed", () => {
+    // Arriving on a link is the URL and the canvas already agreeing. Reporting
+    // it would write the entry the reader just followed into the history a
+    // second time, and Back would then land on the page they are looking at.
+    const changes: (string | null)[] = [];
+    renderLinked("rose", (next) => changes.push(next));
+
+    expect(changes).toEqual([]);
+  });
+
+  it("falls back to the ordinary canvas for an id nobody answers to", () => {
+    const changes: (string | null)[] = [];
+    const host = renderLinked("nobody", (next) => changes.push(next));
+
+    expect(panelLabel(host)).toBeNull();
+    // The tree itself is untouched: three people, drawn as usual.
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(
+      false,
+    );
+    // And the bad parameter is left alone rather than tidied away, which would
+    // be a history entry nobody asked for.
+    expect(changes).toEqual([]);
+  });
+
+  it("reports a click for the URL to follow", () => {
+    const changes: (string | null)[] = [];
+    const host = renderLinked(null, (next) => changes.push(next));
+
+    open(host, "walter");
+
+    expect(changes).toEqual(["walter"]);
+  });
+
+  it("reports the panel closing", () => {
+    const changes: (string | null)[] = [];
+    const host = renderLinked("rose", (next) => changes.push(next));
+
+    pressEscape();
+
+    expect(panelLabel(host)).toBeNull();
+    expect(changes).toEqual([null]);
+  });
+
+  it("follows the URL back to nobody", () => {
+    // Back, from a panel the reader opened by clicking. The canvas closes it,
+    // and reports nothing: the history already holds this entry, and pushing
+    // it again is what breaks Forward.
+    const changes: (string | null)[] = [];
+    const onChange = (next: string | null) => changes.push(next);
+    const host = renderLinked("rose", onChange);
+
+    navigate(host, null, onChange);
+
+    expect(panelLabel(host)).toBeNull();
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(
+      false,
+    );
+    expect(changes).toEqual([]);
+  });
+
+  it("follows the URL on to somebody else", () => {
+    // Forward again, or a second link followed from a wiki entry.
+    const changes: (string | null)[] = [];
+    const onChange = (next: string | null) => changes.push(next);
+    const host = renderLinked(null, onChange);
+
+    navigate(host, "dora", onChange);
+
+    expect(panelLabel(host)).toBe("Details for Dora Hale");
+    expect(nodeWrapper(host, "dora").classList.contains("selected")).toBe(true);
+    expect(changes).toEqual([]);
+  });
+
+  it("reports where the panel's own links go", () => {
+    const changes: (string | null)[] = [];
+    const host = renderLinked("rose", (next) => changes.push(next));
+
+    click(buttonLabelled(host, "Dora Hale"));
+
+    expect(panelLabel(host)).toBe("Details for Dora Hale");
+    expect(changes).toEqual(["dora"]);
+  });
+});
+
+/**
  * The wiring E2-T2 added to this file: `page_id` on the graph and the entry
  * list are two separate values, and matching them is the canvas's job. The
  * matching itself is asserted in `lib/entry-link.test.ts` and the control in
@@ -710,5 +834,87 @@ describe("the entry link on the panel", () => {
 
     expect(host.textContent).not.toContain("Write about this person");
     expect(host.querySelector("select")).toBeNull();
+  });
+});
+
+/**
+ * The seam E2-T4 and E2-T2 share: the deep link decides *which* person is
+ * selected, and the entry link decides *what* the panel says about them.
+ * Neither ticket's own tests mount both props at once — "the deep link"
+ * above never passes `entries`, and "the entry link on the panel" above
+ * never passes `personLink` — so nothing else in this file catches the two
+ * wires crossed, or one of the pair overwriting the other's slot.
+ */
+describe("a deep link that opens on a person with an entry", () => {
+  /** Rose has an entry; Walter and Dora do not. Same shape as `linkedGraph`
+   * above, kept local rather than shared so this block reads on its own. */
+  function linkedGraph(): FamilyGraph {
+    const family = graph();
+    return {
+      ...family,
+      people: family.people.map((candidate) =>
+        candidate.id === "rose"
+          ? { ...candidate, pageId: ROSE_ENTRY.id }
+          : candidate,
+      ),
+    };
+  }
+
+  it("opens the panel on the linked person with their entry already rendered", () => {
+    const host = mount(
+      <FamilyTree
+        graph={linkedGraph()}
+        entries={[ROSE_ENTRY, LOOSE_ENTRY]}
+        personLink={{ personId: "rose", onChange: () => {} }}
+      />,
+    );
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(true);
+
+    const link = [...host.querySelectorAll("a")].find((anchor) =>
+      anchor.getAttribute("href")?.startsWith("/wiki/"),
+    );
+    expect(link?.getAttribute("href")).toBe("/wiki/rose-hale");
+  });
+
+  it("opens the panel on a linked person with none, offering to write one", () => {
+    const host = mount(
+      <FamilyTree
+        graph={linkedGraph()}
+        entries={[ROSE_ENTRY, LOOSE_ENTRY]}
+        entryActions={inertEntryActions}
+        personLink={{ personId: "walter", onChange: () => {} }}
+      />,
+    );
+
+    expect(panelLabel(host)).toBe("Details for Walter Hale");
+    expect(host.textContent).toContain("No entry yet for Walter Hale");
+    expect(buttonLabelled(host, "Write about this person")).toBeDefined();
+  });
+
+  it("swaps the entry when a relative's link moves the deep-linked selection", () => {
+    const changes: (string | null)[] = [];
+    const host = mount(
+      <FamilyTree
+        graph={linkedGraph()}
+        entries={[ROSE_ENTRY, LOOSE_ENTRY]}
+        personLink={{
+          personId: "rose",
+          onChange: (next) => changes.push(next),
+        }}
+      />,
+    );
+
+    click(buttonLabelled(host, "Dora Hale"));
+
+    expect(panelLabel(host)).toBe("Details for Dora Hale");
+    expect(host.textContent).toContain("No entry yet for Dora Hale");
+    expect(
+      [...host.querySelectorAll("a")].some((anchor) =>
+        anchor.getAttribute("href")?.startsWith("/wiki/"),
+      ),
+    ).toBe(false);
+    expect(changes).toEqual(["dora"]);
   });
 });

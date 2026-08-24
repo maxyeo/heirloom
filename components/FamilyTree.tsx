@@ -9,7 +9,9 @@ import {
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
+  useNodesInitialized,
   useReactFlow,
+  type FitViewOptions,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -38,6 +40,11 @@ import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
 import type { ReorderUnionsFormAction } from "@/lib/union-order-state";
 import { layoutFamilyGraph } from "@/lib/tree-layout";
 import { treeOnboarding } from "@/lib/tree-onboarding";
+import {
+  linkedPersonId,
+  withSelection,
+  type PersonLink,
+} from "@/lib/tree-selection";
 import { panToReveal, toRect, unobscuredRegion } from "@/lib/tree-viewport";
 
 function PersonNode({
@@ -137,6 +144,17 @@ export interface FamilyTreeProps {
    */
   reorderUnionsAction?: ReorderUnionsFormAction;
   /**
+   * The address bar, as something the canvas can read and write (E2-T4).
+   *
+   * Optional like every action above it, and for a closely related reason: the
+   * hook that reads a query parameter needs the App Router's own providers,
+   * which no test that mounts this canvas has.
+   * `components/DeepLinkedFamilyTree.tsx` supplies it on the route; a canvas
+   * given none selects and deselects exactly as it did before there was a URL
+   * involved.
+   */
+  personLink?: PersonLink;
+  /**
    * Every wiki entry, as something a person can be linked to (E2-T2).
    *
    * Not part of the graph, and deliberately: joining `pages` into
@@ -166,6 +184,7 @@ export function FamilyTree({
   updateIndividualAction,
   createIndividualAction,
   reorderUnionsAction,
+  personLink,
   entries,
   entryActions,
 }: FamilyTreeProps) {
@@ -192,6 +211,7 @@ export function FamilyTree({
         setParentsAction={setParentsAction}
         reorderUnionsAction={reorderUnionsAction}
         updateIndividualAction={updateIndividualAction}
+        personLink={personLink}
         entries={entries}
         entryActions={entryActions}
       />
@@ -206,6 +226,7 @@ function FamilyTreeCanvas({
   setParentsAction,
   reorderUnionsAction,
   updateIndividualAction,
+  personLink,
   entries = EMPTY_ENTRIES,
   entryActions,
 }: FamilyTreeProps) {
@@ -218,6 +239,20 @@ function FamilyTreeCanvas({
    * beyond the cards themselves.
    */
   const onboarding = useMemo(() => treeOnboarding(graph), [graph]);
+
+  /**
+   * Who the URL is asking for (E2-T4), resolved against the graph rather than
+   * taken at its word — `null` when it names nobody this tree has.
+   *
+   * That resolution is the whole of "unknown or malformed id falls back to the
+   * default view without erroring": an id that answers to nobody is
+   * indistinguishable here from no id at all, and every line below this one is
+   * written against a person who exists.
+   */
+  const linkedId = useMemo(
+    () => (personLink ? linkedPersonId(graph, personLink.personId) : null),
+    [graph, personLink],
+  );
 
   /**
    * The nodes are held in state rather than passed straight from the layout,
@@ -236,8 +271,15 @@ function FamilyTreeCanvas({
    * Layout is still computed and never stored: this state is seeded from the
    * layout and re-seeded whenever the graph changes, and the only changes ever
    * applied to it are selections — dragging is off.
+   *
+   * A deep link is applied to the *seed* rather than in an effect (E2-T4), so
+   * that `/tree?person=<id>` renders with the panel already open and the node
+   * already marked, instead of painting the plain canvas first and opening a
+   * panel over it a frame later.
    */
-  const [nodes, setNodes] = useState<Node[]>(layout.nodes);
+  const [nodes, setNodes] = useState<Node[]>(() =>
+    withSelection(layout.nodes, linkedId),
+  );
   const [seededFrom, setSeededFrom] = useState(layout);
 
   if (seededFrom !== layout) {
@@ -256,15 +298,9 @@ function FamilyTreeCanvas({
      * node to be selected, and the panel closes because there is nothing left
      * to show.
      */
-    const keep = nodes.find((node) => node.selected)?.id;
+    const keep = nodes.find((node) => node.selected)?.id ?? null;
     setSeededFrom(layout);
-    setNodes(
-      keep === undefined
-        ? layout.nodes
-        : layout.nodes.map((node) =>
-            node.id === keep ? { ...node, selected: true } : node,
-          ),
-    );
+    setNodes(withSelection(layout.nodes, keep));
   }
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -369,23 +405,11 @@ function FamilyTreeCanvas({
 
   /** Following a relative's link: the same selection a click would make. */
   const selectPerson = useCallback((personId: string) => {
-    setNodes((current) =>
-      current.map((node) =>
-        node.id === personId
-          ? { ...node, selected: true }
-          : node.selected
-            ? { ...node, selected: false }
-            : node,
-      ),
-    );
+    setNodes((current) => withSelection(current, personId));
   }, []);
 
   const close = useCallback(() => {
-    setNodes((current) =>
-      current.map((node) =>
-        node.selected ? { ...node, selected: false } : node,
-      ),
-    );
+    setNodes((current) => withSelection(current, null));
   }, []);
 
   /**
@@ -417,6 +441,88 @@ function FamilyTreeCanvas({
   }, [selectedId, nodeElement]);
 
   /**
+   * The selection and the URL, kept saying the same thing (E2-T4).
+   *
+   * One effect and one ref, because the two directions are the same
+   * conversation and running them as separate effects makes them argue: a
+   * click changes the selection a whole render before the router has caught up
+   * with the URL it is about to write, so an effect watching the URL on its own
+   * would read `null`, conclude that nobody is selected, and undo the click.
+   *
+   * `mirrored` is the id both sides last agreed on, which is what tells them
+   * apart. Whichever side no longer matches it is the side that moved:
+   *
+   * - the **URL** moved — a deep link opened from a wiki entry, or the
+   *   browser's back and forward buttons — so the canvas follows it;
+   * - the **canvas** moved — a click, Enter on a focused node, a relative's
+   *   link in the panel, Escape, the close button, or a person deleted out
+   *   from under an open panel — so the URL follows it.
+   *
+   * The URL is read first for no deeper reason than that one of them has to
+   * be; the two cannot both move between renders.
+   */
+  const mirrored = useRef<string | null>(linkedId);
+
+  useEffect(() => {
+    if (!personLink) return;
+
+    if (linkedId !== mirrored.current) {
+      mirrored.current = linkedId;
+      setNodes((current) => withSelection(current, linkedId));
+      return;
+    }
+
+    if (selectedId !== mirrored.current) {
+      mirrored.current = selectedId;
+      personLink.onChange(selectedId);
+    }
+  }, [personLink, linkedId, selectedId]);
+
+  /**
+   * Whether the canvas has settled into the view it arrives at.
+   *
+   * React Flow fits the viewport in the same store update that records the
+   * measurements it was waiting for, and that update is strictly *after* this
+   * component's first effects have run. On a deep link the ordering matters:
+   * the pan below would compute a translation, and the fit would then throw it
+   * away and leave the node wherever the fit put it — which on a narrow
+   * viewport can be underneath a bottom sheet 60% of the canvas tall. Reading
+   * the measurement instead means the pan re-runs once, against the viewport
+   * the reader is actually looking at.
+   *
+   * Derived rather than latched, so there is no state to keep in step. It is
+   * true from the first render when nobody was deep-linked, which is what
+   * leaves an ordinary click — long after any of this — behaving exactly as it
+   * did before E2-T4.
+   */
+  const nodesInitialized = useNodesInitialized();
+  const arrived = linkedId === null || nodesInitialized;
+
+  /**
+   * Fit, but never magnify (E3-T9). React Flow's fitView zooms up to 2x by
+   * default, which is invisible on a family — a dozen cards always need
+   * zooming *out* — and absurd on the first one: a single card blown up to
+   * twice its size, alone in the middle of the viewport, is most of what makes
+   * a one-person tree look broken rather than new. Capping the fit at 1
+   * renders the lone card at the size every other card on this canvas is
+   * drawn at.
+   *
+   * And fit onto the deep-linked person when the URL named one (E2-T4). The
+   * criterion is "opens the tree centred on that person", and a fit over the
+   * whole family meets "on screen" without meeting "centred" — past a few
+   * dozen people it is a highlighted card the size of a stamp. Held in state
+   * so it is read once, at mount, which is also the only time React Flow reads
+   * it: a later change to `?person=` is navigation around a canvas the reader
+   * has already framed, and re-fitting under them would throw away their pan
+   * and zoom.
+   */
+  const [fitViewOptions] = useState<FitViewOptions>(() =>
+    linkedId === null
+      ? { maxZoom: 1 }
+      : { maxZoom: 1, nodes: [{ id: linkedId }] },
+  );
+
+  /**
    * "The panel does not obscure the selected node — pan the canvas if needed."
    *
    * Measured rather than assumed, and in an effect so that the panel is
@@ -429,7 +535,7 @@ function FamilyTreeCanvas({
    * would pan to clear a position the panel is about to leave.
    */
   useEffect(() => {
-    if (selectedId === null) return;
+    if (!arrived || selectedId === null) return;
 
     const container = containerRef.current;
     const node = nodeElement(selectedId);
@@ -452,7 +558,7 @@ function FamilyTreeCanvas({
       { x: viewport.x + dx, y: viewport.y + dy, zoom: viewport.zoom },
       { duration: 200 },
     );
-  }, [selectedId, nodeElement, getViewport, setViewport]);
+  }, [arrived, selectedId, nodeElement, getViewport, setViewport]);
 
   return (
     <div ref={containerRef} className="relative h-full w-full">
@@ -461,16 +567,9 @@ function FamilyTreeCanvas({
         edges={layout.edges}
         nodeTypes={nodeTypes}
         fitView
-        /*
-          Fit, but never magnify (E3-T9). React Flow's fitView zooms up to 2x
-          by default, which is invisible on a family — a dozen cards always
-          need zooming *out* — and absurd on the first one: a single card
-          blown up to twice its size, alone in the middle of the viewport, is
-          most of what makes a one-person tree look broken rather than new.
-          Capping the fit at 1 renders the lone card at the size every other
-          card on this canvas is drawn at.
-        */
-        fitViewOptions={{ maxZoom: 1 }}
+        // Capped at 1, and aimed at the deep-linked person when there is one.
+        // Both are explained where the value is built, above.
+        fitViewOptions={fitViewOptions}
         // Layout is computed, never stored. Nobody positions anything by hand,
         // so there is no way to drag the family into a mess.
         nodesDraggable={false}

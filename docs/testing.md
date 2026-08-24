@@ -152,6 +152,18 @@ The harness is deliberately small, and one thing is simply not set up:
   should take its action, not import it.** `NewEntryForm` and `EntryEditForm`
   predate this and still import theirs; neither is mounted by anything.
 
+  E2-T4 hit the same wall from a third direction, and the rule generalises:
+  **take it, do not import it** — whatever "it" is. There the module that
+  cannot be loaded is `next/navigation`. It imports fine, which is worse:
+  `useSearchParams` simply returns `null` when nothing above it is the App
+  Router, so a canvas that read the URL itself would have taken every
+  assertion in `components/FamilyTree.test.tsx` down with the first
+  `searchParams.get`. So `FamilyTree` takes a `PersonLink` — the id in the URL,
+  and a callback for the URL to follow — and `components/DeepLinkedFamilyTree.tsx`
+  is the ten unmounted lines that know about routing. A changed prop is what
+  both arriving on a link and pressing Back look like from inside the canvas,
+  which is how both are asserted with no router anywhere.
+
 Note also that `async` Server Components are not unit-testable — React and
 Vitest do not support it yet — so treat those as end-to-end territory.
 
