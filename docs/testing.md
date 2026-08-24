@@ -407,6 +407,111 @@ from. `"use server"` modules are looked for across `app`, `components` and
 because the directive is legal in any module, and an action module outside
 `app/` would otherwise be invisible to every check above it.
 
+## Relationships are derived, never stored
+
+`lib/relationship-derivation.test.ts` is the second test in here that is not
+about a feature. `docs/architecture.md` rests the data model on one claim — a
+union is a first-class entity, so "spouse", "half-sibling" and "step-mother"
+are read back out of `unions` and `union_children` rather than written into a
+third table — and this is where that claim is cashed.
+
+**What is actually at stake.** The claim's sharp edge is that you never have to
+_anticipate_ a relationship type, because you never store one. So the file asks
+four questions the application has never been asked — half-sibling,
+step-parent, step-sibling, blood relation — over `db/seed.ts`'s family, and
+answers all four with no new column, no new enum member and no migration. That
+is the property, and it is one that erodes silently: the first `mother_id`
+somebody adds would not break a single existing test.
+
+**Where the walks live.** In `test/relationship-kinds.ts`, not in `lib/`, and
+the distinction is not "derivation belongs in tests" — `lib/person-detail.ts`
+and `lib/person-infobox.ts` are both derivation and both ship. It is that
+nothing in the application asks these four questions: no panel shows a kinship
+degree, no box lists step-siblings. A `lib/relationships.ts` would be exported
+API with no caller, and a taxonomy of relationship kinds is precisely the
+speculative surface that not storing a label exists to make unnecessary. This
+is the `test/route-inventory.ts` arrangement — logic a test needs and the
+application does not — and like that one it gets its own unit test, because the
+suite that uses it runs over one family and one family cannot reach every
+branch.
+
+**Two sources, on purpose.** Parents come from `derivePersonDetail`, so the
+matrix asserts what a reader actually sees rather than what a second private
+walk over `childLinks` computes; a derivation that broke identically in both
+would otherwise stay green. The _union_ a person was born into comes from the
+rows, because a union with neither partner recorded still holds its children
+together and `PersonDetail.parents` has no parent in it to report. That case is
+also why `siblingKind` is union-first rather than a count of shared parents:
+Thomas's own union records his mother and leaves his father unknown, and
+"shares one parent" would demote a sibling of his to a half-sibling on the
+strength of a blank column. Union-first alone is not quite enough either,
+because `lib/save-union.ts` deliberately allows a couple to hold two unions —
+divorced and remarried each other — so a shared _pair_ of fully recorded
+parents answers "full" as well. That second rule is restricted to the case
+where both partners are recorded on both sides, which is the blank column
+again from the other end: Agnes in two half-known unions has two children who
+share every parent anybody wrote down, and "full" would be inventing that the
+unknown partner was the same man.
+
+**The one exception, pinned rather than swept past.** Three `child_relation`
+values say how a child _arrived_ — born, adopted, fostered — and none of them
+may move anything derived; that is asserted by sweeping the enum out of
+`db/schema.ts` rather than listing it, so a fifth value arrives inside the
+sweep. `step` is different in kind: it records a relationship, and
+`lib/person-infobox.ts` reads it as one. A stored label sitting beside the
+derivation without replacing it is exactly the arrangement the rest of the
+model avoids by not having one.
+
+Because it is a relationship rather than an arrival, `step` is the one value
+the walks must _subtract_: a link marked `step` is not a birth, and the person
+on the other end of it is not a parent. `test/relationship-kinds.ts` takes it
+out of `birthUnionsOf` and `parentsOf`, which is the same line
+`lib/person-infobox.ts` draws from the parent's end when it keeps `step` links
+out of `ownChildren`.
+
+That subtraction has to be there, and the interesting case is the one where a
+`step` link sits _beside_ a birth link rather than replacing it — a child
+attached to a parent's second marriage, which `lib/child-input.ts` allows by
+letting an existing person be added to another union. Read as a birth, the
+step-parent joins the parents; that then hides them from the step-parents
+(already a parent) and makes their own children full siblings rather than
+half. All three are asserted in `test/relationship-kinds.test.ts`, and all
+three were confirmed to fail without the subtraction.
+
+The subtraction is also why `step` is read from both ends. Taking it out of
+the parents means a person whose _only_ link is `step` has no parents — which
+is correct, they were not born into that union — but it would leave them
+somebody's stepchild in the infobox and with no step-parent of their own.
+`stepParentsOf` therefore reads the stated link as well as deriving from a
+parent's remarriage, and the two directions are asserted against each other.
+
+**The tripwire underneath.** Every walk above is only _possible_ because a
+person row points at no other person: people meet through a union and nowhere
+else. So the schema is enumerated the way `app/auth-boundary.test.ts`
+enumerates routes — the only foreign keys reaching `individuals` are
+`unions.partner_a_id`, `unions.partner_b_id` and `union_children.child_id`, and
+the only one leaving it is `page_id`. A `mother_id`, or a `siblings` table, is
+the first stored relationship in the model, and turns this red in the change
+that adds it.
+
+**If you change it, break it first.** Validated by mutation, like the auth
+boundary:
+
+| Mutation                                         | Caught by                                |
+| ------------------------------------------------ | ---------------------------------------- |
+| `derivePersonDetail` lists only `partner_a_id`   | 16 tests, across all four criteria       |
+| `descendantsOrSelf` stops including self         | `names the line each end does belong to` |
+| A child link loses its `otherParent`             | `is legible in the panel …`              |
+| `individuals` gains a `mother_id`                | `the schema stores no relationship`      |
+| `siblingKind` stops checking for a shared parent | 5 tests, incl. the pairwise matrix       |
+
+The first row is the one worth noticing. Every union in the fixture records a
+partner A, so a walk that reads only that column still finds a parent for
+every child and still fills every panel — the family it produces looks
+entirely plausible and is wrong about every relationship in it. That is the
+failure the pairwise matrix exists to catch, and the one a spot check of a
+few named pairs would sail past.
+
 ## Fixtures carry the awkward value
 
 **A fixture that only ever carries a column's default is not coverage of that
