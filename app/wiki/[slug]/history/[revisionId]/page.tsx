@@ -70,7 +70,26 @@ const loadRevision = cache(async (slug: string, revisionId: string) => {
   const revision = await getRevisionById(revisionId);
   if (!revision || revision.pageId !== page.id) return undefined;
 
-  return { page, revision };
+  /**
+   * If this revision was written by a restore (E1-T7), the revision it was
+   * copied forward from — so the banner below can say where the content came
+   * from and link back to it.
+   *
+   * A second query, but only for the rows that have a source, which is a small
+   * minority of any history. The same cross-entry check applies to it as to
+   * the revision above: `restored_from_id` is a foreign key within one table,
+   * so a source belonging to another page should be impossible, and treating
+   * "impossible" as "need not be checked" is how the check that mattered gets
+   * left out of the next caller. A source that fails it is dropped rather than
+   * 404ing — the revision being viewed is still perfectly valid; only the note
+   * about where it came from is not.
+   */
+  const source = revision.restoredFromId
+    ? await getRevisionById(revision.restoredFromId)
+    : undefined;
+  const restoredFrom = source?.pageId === page.id ? source : undefined;
+
+  return { page, revision, restoredFrom };
 });
 
 export async function generateMetadata({
@@ -98,7 +117,7 @@ export default async function RevisionDetailPage({
 
   if (!loaded) notFound();
 
-  const { revision } = loaded;
+  const { revision, restoredFrom } = loaded;
 
   // Sanitised again on the way out, exactly as the live route does — see the
   // "sanitise on write and read" reasoning in `lib/sanitize-html.ts`'s header
@@ -128,10 +147,51 @@ export default async function RevisionDetailPage({
           by {formatRevisionAuthor(revision.createdBy)}. It may differ
           significantly from the current version.
         </p>
+
+        {restoredFrom ? (
+          /*
+            Provenance, for the rows a restore wrote (E1-T7). Without it this
+            revision is indistinguishable from someone having retyped an old
+            version by hand — the content is byte-identical to its source, so
+            only `revisions.restored_from_id` can tell the two apart, and a
+            note nobody can read is not a note. Named as an action somebody
+            took, with a date, because "restored from an earlier version" on
+            its own invites the question this sentence answers.
+          */
+          <p className="mt-2 text-caption text-ink-muted">
+            This version was restored by{" "}
+            {formatRevisionAuthor(revision.createdBy)} from{" "}
+            <Link href={`/wiki/${slug}/history/${restoredFrom.id}`}>
+              the version saved{" "}
+              <time dateTime={revisionTimestampIso(restoredFrom.createdAt)}>
+                {formatRevisionTimestamp(restoredFrom.createdAt)}
+              </time>
+            </Link>
+            . Restoring copied that content forward; it did not remove anything.
+          </p>
+        ) : null}
+
         <p className="mt-2 text-caption">
           <Link href={`/wiki/${slug}`}>View the current version</Link>
           {" · "}
           <Link href={`/wiki/${slug}/history`}>View revision history</Link>
+          {" · "}
+          {/*
+            The restore entry point (E1-T7). Every revision has a page of its
+            own, reached from every row of the history list, so a control here
+            is a control "on any revision" — and it is the surface MediaWiki
+            uses for the same operation, on the same reasoning: the decision to
+            bring a version back is made while looking at it, not while
+            scanning a column of dates.
+
+            A link to a confirmation route rather than a button that acts,
+            because the ticket asks for confirmation and because a `GET` must
+            not change anything. The route names the version, states what
+            restoring does to the history, and holds the button that posts.
+          */}
+          <Link href={`/wiki/${slug}/history/${revision.id}/restore`}>
+            Restore this version
+          </Link>
         </p>
       </div>
 

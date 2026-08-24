@@ -54,12 +54,13 @@ export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
  * it records, and a helper that opened its own would reintroduce exactly the
  * gap the module header argues against.
  *
- * Shared with `lib/create-page.ts` (E1-T8), so a page's first revision is
- * written by the same code as its hundredth — including the rule above it,
- * that a revision holds the state being *saved* rather than the one being
- * replaced. The values arrive already trimmed and sanitised, deliberately:
- * this is the last step rather than a second place content gets cleaned up,
- * so there is one answer to what exactly ends up stored.
+ * Shared with `lib/create-page.ts` (E1-T8) and `lib/restore-revision.ts`
+ * (E1-T7), so a page's first revision, its hundredth, and the one a restore
+ * appends are all written by the same code — including the rule above it, that
+ * a revision holds the state being *saved* rather than the one being replaced.
+ * The values arrive already trimmed and sanitised, deliberately: this is the
+ * last step rather than a second place content gets cleaned up, so there is
+ * one answer to what exactly ends up stored.
  *
  * @returns the new revision's id
  */
@@ -70,6 +71,17 @@ export async function writeRevision(
     title: string;
     bodyHtml: string;
     editedBy: string;
+    /**
+     * The revision this content was copied forward from, when the caller is
+     * `lib/restore-revision.ts`. Optional because it is the exception: an
+     * ordinary save has no source revision, and `undefined` here stores null.
+     *
+     * Note what this parameter is *not*: it is not the previous revision, and
+     * it does not chain. History is ordered by `created_at` and always has
+     * been; this records provenance for the one operation whose content does
+     * not say where it came from. See `db/schema.ts`.
+     */
+    restoredFrom?: string;
   },
 ): Promise<string> {
   const [revision] = await tx
@@ -79,6 +91,7 @@ export async function writeRevision(
       title: entry.title,
       bodyHtml: entry.bodyHtml,
       createdBy: entry.editedBy,
+      restoredFromId: entry.restoredFrom ?? null,
     })
     .returning({ id: schema.revisions.id });
 

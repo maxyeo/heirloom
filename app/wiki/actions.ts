@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createPage } from "@/lib/create-page";
+import { restoreRevision } from "@/lib/restore-revision";
 import {
   savePage,
   type SavePageEdit,
@@ -166,4 +167,129 @@ export async function createPageAction(
    * `Location` header of the no-JavaScript response has to be a valid URL.
    */
   redirect(`/wiki/${encodeURIComponent(result.slug)}/edit`);
+}
+
+/**
+ * What the confirmation form renders while it waits, and after a refusal.
+ *
+ * Shaped like `NewEntryFormState`, and for the same reason: a successful
+ * restore ends in a `redirect`, which throws, so the only state this action
+ * ever returns is one in which the reader is still standing in front of the
+ * confirmation.
+ */
+export type RestoreFormState = {
+  /** A sentence to show the reader, or null when there is nothing to say. */
+  error: string | null;
+};
+
+/**
+ * Restore an entry to one of its earlier revisions (E1-T7).
+ *
+ * Takes only *references* — which entry, which revision — and never the
+ * content. That is the security shape the Next.js server-actions guide asks
+ * for ("send a reference plus the user's change, and re-read the rest from a
+ * trusted source"), and here it is also the correctness shape: the content of
+ * a restore is by definition a row that is already in the database, so a
+ * version of this action that accepted HTML would be an unauthenticated way to
+ * write arbitrary markup into a page while calling it a restore.
+ *
+ * Both guards that make that safe live in `lib/restore-revision.ts` rather
+ * than here — the id's shape, and the check that the revision belongs to this
+ * entry — because this action is one of two doors onto the same operation and
+ * a check on the door is a check somebody can forget to fit to the next one.
+ *
+ * Shaped for `useActionState`, so it takes the previous state and the form's
+ * own `FormData`, which also means the confirmation page works as a plain form
+ * POST before any JavaScript has loaded.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields — `slug` and `revisionId`, both references
+ * @returns a state to render, or never, when the redirect fires
+ */
+export async function restoreRevisionAction(
+  _previous: RestoreFormState,
+  form: FormData,
+): Promise<RestoreFormState> {
+  const session = await requireSession();
+
+  // As in the two actions above: `requireSession` has already thrown if there
+  // is no email, but its return type is next-auth's `Session`, whose
+  // `user.email` is optional, and the compiler cannot see that narrowing.
+  const restoredBy = session.user?.email;
+  if (!restoredBy) throw new UnauthorizedError();
+
+  // Hidden fields on a form the browser posts; `File` and null are what a
+  // direct POST can send instead, and neither is a reference to anything.
+  const slug = form.get("slug");
+  const revisionId = form.get("revisionId");
+  if (typeof slug !== "string" || typeof revisionId !== "string") {
+    throw new TypeError(
+      "restoreRevisionAction expects a slug and a revisionId, both as text.",
+    );
+  }
+
+  const result = await restoreRevision({ slug, revisionId, restoredBy });
+
+  switch (result.status) {
+    case "not-found":
+      /**
+       * One message for three situations — no such entry, no such revision,
+       * and a revision belonging to a different entry — matching the single
+       * `not-found` status the library deliberately folds them into. Naming
+       * which of the three happened would tell someone probing revision ids
+       * whether the one they guessed exists.
+       */
+      return {
+        error:
+          "That version could not be found. It may belong to a different entry, or the entry may have been deleted.",
+      };
+
+    case "empty-title":
+      // Only reachable for a revision whose title was written by hand; see
+      // `restoreRevision`. Said plainly rather than as an internal error.
+      return {
+        error: "That version has no title, so it cannot be restored as it is.",
+      };
+
+    case "unchanged":
+      // Not a failure. The reader asked for a state the entry is already in,
+      // and the honest response is to say so rather than to append a revision
+      // that records nothing. See the no-op reasoning in `restoreRevision`.
+      return {
+        error:
+          "This entry already matches that version, so nothing was changed.",
+      };
+
+    case "restored":
+      break;
+  }
+
+  /**
+   * Everything this write moved, revalidated before the `redirect` below,
+   * because `redirect` throws. Bare paths rather than `"layout"`, matching
+   * `savePageAction`: each of these is one route by name, and the layout form
+   * would additionally discard every other entry's cached payload.
+   *
+   * All four are dynamic routes that call `requireSession()`, so nothing
+   * server-side is stale — what is being cleared is the *client* router cache,
+   * which otherwise serves the reader the payload it fetched on the way in and
+   * shows them the restore they just performed as not having happened.
+   */
+  revalidatePath(`/wiki/${slug}`);
+  revalidatePath(`/wiki/${slug}/history`);
+  // The history list has a new row, and the revision that was restored *from*
+  // now has a descendant that links back to it.
+  revalidatePath(`/wiki/${slug}/history/${revisionId}`);
+  // And the index (E1-T9), which shows this entry's title and the date it last
+  // changed — a restore can move both.
+  revalidatePath("/wiki");
+
+  /**
+   * To the entry, which is where "restore" actually finishes: the payoff is
+   * seeing the paragraphs back. The slug is encoded rather than interpolated
+   * raw, as `createPageAction` does, because a non-Latin title produces a
+   * non-Latin slug and the `Location` header of the no-JavaScript response has
+   * to be a valid URL.
+   */
+  redirect(`/wiki/${encodeURIComponent(slug)}`);
 }

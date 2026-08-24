@@ -177,6 +177,11 @@ describe("getRevisionById", () => {
       bodyHtml: "<p>v2.</p>",
       createdAt: new Date("2024-06-01T00:00:00Z"),
       createdBy: AUTHOR,
+      // Null, because this fixture row is an ordinary save rather than a
+      // restore (E1-T7). Asserted rather than left out of the object: this
+      // `toEqual` is exact on purpose, so a column added to the select
+      // without a decision about what it means to a reader fails here.
+      restoredFromId: null,
     });
   });
 

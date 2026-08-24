@@ -15,6 +15,13 @@
       "when": 1787465892534,
       "tag": "0001_cooing_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787529034548,
+      "tag": "0002_restore_provenance",
+      "breakpoints": true
     }
   ]
 }

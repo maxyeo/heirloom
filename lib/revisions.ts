@@ -46,6 +46,16 @@ export type RevisionDetail = {
   bodyHtml: string;
   createdAt: Date;
   createdBy: string | null;
+  /**
+   * The revision this one's content was copied forward from, or null for an
+   * ordinary save — see `db/schema.ts` for why the column exists.
+   *
+   * Selected here rather than left write-only because a note nobody can read
+   * is not a note. `app/wiki/[slug]/history/[revisionId]/page.tsx` renders it
+   * as a link back to the source, which is what turns "restore is append-only"
+   * from a claim in a docstring into something visible in the history itself.
+   */
+  restoredFromId: string | null;
 };
 
 /**
@@ -106,6 +116,7 @@ export async function getRevisionById(
       bodyHtml: schema.revisions.bodyHtml,
       createdAt: schema.revisions.createdAt,
       createdBy: schema.revisions.createdBy,
+      restoredFromId: schema.revisions.restoredFromId,
     })
     .from(schema.revisions)
     .where(eq(schema.revisions.id, revisionId))
