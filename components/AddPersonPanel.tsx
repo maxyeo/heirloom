@@ -1,6 +1,13 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useRef, useState } from "react";
+import {
+  useActionState,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import {
   IndividualFieldset,
@@ -66,6 +73,8 @@ export interface AddPersonPanelProps {
 export function AddPersonPanel({ action }: AddPersonPanelProps) {
   const [open, setOpen] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
+  /** Named so the button can point at what it expands. */
+  const panelId = useId();
 
   /**
    * Focus goes back to the button the panel came from, for the same reason
@@ -85,12 +94,15 @@ export function AddPersonPanel({ action }: AddPersonPanelProps) {
         type="button"
         onClick={() => setOpen(true)}
         aria-expanded={open}
+        aria-controls={panelId}
         className="shrink-0 rounded-panel border border-rule px-3 py-1.5 font-medium transition hover:bg-panel"
       >
         Add person
       </button>
 
-      {open ? <AddPersonForm action={action} onClose={close} /> : null}
+      {open ? (
+        <AddPersonForm action={action} onClose={close} panelId={panelId} />
+      ) : null}
     </>
   );
 }
@@ -98,6 +110,8 @@ export function AddPersonPanel({ action }: AddPersonPanelProps) {
 export interface AddPersonFormProps {
   action: IndividualFormAction;
   onClose: () => void;
+  /** The id the opening button's `aria-controls` points at. */
+  panelId?: string;
 }
 
 /**
@@ -109,7 +123,11 @@ export interface AddPersonFormProps {
  * genealogical record that arrived from a census index before anybody worked
  * out whose child they were.
  */
-export function AddPersonForm({ action, onClose }: AddPersonFormProps) {
+export function AddPersonForm({
+  action,
+  onClose,
+  panelId,
+}: AddPersonFormProps) {
   const [state, formAction, pending] = useActionState(
     action,
     emptyIndividualFormState,
@@ -145,6 +163,20 @@ export function AddPersonForm({ action, onClose }: AddPersonFormProps) {
     setValues(emptyIndividualFormValues);
   }
 
+  /**
+   * The confirmation belongs to the *latest* submission, not to the last one
+   * that worked.
+   *
+   * `saved` is deliberately never cleared — it is what keys the fieldset, and
+   * resetting it on a refusal would remount the fields and move the cursor
+   * mid-correction. So the question "is there something to confirm" is asked
+   * of `state` instead, which `useActionState` replaces on every result:
+   * `savedId` is null for a refusal, so adding Rose, then getting the next
+   * person's death date wrong, shows the error on its own rather than beside
+   * a stale "Added Rose."
+   */
+  const confirmation = state.savedId === null ? null : saved;
+
   // Escape closes, from wherever focus is inside the panel — the same
   // dismissal `PersonPanel` gives the detail view, so the two panels on this
   // canvas behave alike.
@@ -159,6 +191,7 @@ export function AddPersonForm({ action, onClose }: AddPersonFormProps) {
 
   return (
     <aside
+      id={panelId}
       aria-label="Add a person"
       className="fixed inset-x-0 bottom-0 z-20 flex max-h-[85%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-96 sm:border-t-0 sm:border-l"
     >
@@ -204,15 +237,15 @@ export function AddPersonForm({ action, onClose }: AddPersonFormProps) {
           </p>
         )}
 
-        {saved === null ? null : (
+        {confirmation === null ? null : (
           /**
            * `role="status"` rather than `alert`: a save that worked is worth
            * announcing but not worth interrupting, and the author is already
            * typing the next person by the time it is read out.
            */
           <p role="status" className="mt-4 text-caption text-ink-muted">
-            Added {saved.name}. They are on the tree — add another, or close
-            this panel.
+            Added {confirmation.name}. They are on the tree — add another, or
+            close this panel.
           </p>
         )}
 

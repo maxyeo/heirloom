@@ -240,6 +240,42 @@ describe("submitting", () => {
     expect(document.activeElement).toBe(control(host, "givenName"));
   });
 
+  it("stops confirming an earlier save once a later one is refused", async () => {
+    // The confirmation belongs to the latest submission, not to the last one
+    // that worked: "Added Rose." sitting beside the next person's error reads
+    // as though the error were Rose's.
+    let refuse = false;
+    const action = stubAction(() =>
+      refuse
+        ? invalidFormState([
+            {
+              field: "deathDate",
+              message:
+                "The death date is before the birth date. Check whether one of them has the wrong year.",
+            },
+          ])
+        : savedFormState(nextSavedId()),
+    );
+    const host = mount(action);
+    open(host);
+
+    type(host, "givenName", "Rose");
+    await submit(host);
+    expect(host.textContent).toContain("Added Rose.");
+
+    refuse = true;
+    type(host, "givenName", "Thomas");
+    type(host, "deathDate", "1880-01-01");
+    await submit(host);
+
+    expect(host.textContent).not.toContain("Added Rose.");
+    expect(host.textContent).toContain("before the birth date");
+    // The correction is still in the fields, waiting to be fixed.
+    expect((control(host, "givenName") as HTMLInputElement).value).toBe(
+      "Thomas",
+    );
+  });
+
   it("shows a failure that belongs to no single field", async () => {
     const action = stubAction(() => ({
       savedId: null,
