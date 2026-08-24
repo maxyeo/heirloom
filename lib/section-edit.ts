@@ -1,6 +1,6 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 
-import type { OutlineHeading } from "@/lib/article-outline";
+import { HEADING_LEVELS, type OutlineHeading } from "@/lib/article-outline";
 import { entryHref } from "@/lib/entry-links";
 import { escapeHtmlAttribute, HTML_TOKEN_PATTERN } from "@/lib/html-text";
 
@@ -45,8 +45,20 @@ import { escapeHtmlAttribute, HTML_TOKEN_PATTERN } from "@/lib/html-text";
  * agree with that for about a week.
  */
 
-/** The heading tags an entry body can hold. See `HEADING_LEVELS`. */
-const HEADING_TAGS = new Set(["h2", "h3", "h4"]);
+/**
+ * The heading tags an entry body can hold, derived from the levels rather than
+ * written out again.
+ *
+ * A second literal `["h2", "h3", "h4"]` would be a second answer to a question
+ * `lib/article-outline.ts` has already answered, and the two would agree until
+ * the day a level was added to one of them. The failure that day would be
+ * silent and specific: the counter below only advances on a tag it recognises,
+ * so an unrecognised heading would shift every `[edit]` link after it onto the
+ * wrong section rather than going missing.
+ */
+const HEADING_TAGS: ReadonlySet<string> = new Set(
+  HEADING_LEVELS.map((level) => `h${level}`),
+);
 
 /**
  * The query parameter the editor reads the target section from.
@@ -145,6 +157,14 @@ export function sectionHeadingIndex(
  * an `aria-label` becomes the link's accessible name, and the link is inside
  * the heading, so it would replace "edit" in the heading's own name with the
  * heading's text a second time.
+ *
+ * The leading space is the one departure from MediaWiki's markup, and it is
+ * there for the same accessible name. The link sits inside the heading, so the
+ * name is the heading's text and the link's text concatenated — without a text
+ * node between them a screen reader announces "Early lifeedit". The space is
+ * *not* `aria-hidden`, because being read is its entire job, and it costs
+ * nothing on screen: it is trailing whitespace at the end of a line, and what
+ * follows it is floated out of the flow anyway.
  */
 function sectionEditLink(slug: string, heading: OutlineHeading): string {
   const href = escapeHtmlAttribute(sectionEditHref(slug, heading.id));
@@ -157,6 +177,7 @@ function sectionEditLink(slug: string, heading: OutlineHeading): string {
   );
 
   return (
+    " " +
     '<span class="wiki-editsection">' +
     '<span aria-hidden="true">[</span>' +
     `<a href="${href}" title="${title}">edit</a>` +
@@ -218,7 +239,18 @@ export function insertSectionEditLinks(
   let rewritten = "";
   let cursor = 0;
   let index = 0;
-  /** The heading tag currently open, or `null`. Headings do not nest. */
+  /**
+   * The heading tag currently open, or `null`.
+   *
+   * One value rather than a stack, because a heading cannot contain another
+   * one — and that is guaranteed by the input rather than assumed of it. This
+   * runs on `sanitize-html`'s output, which is the serialisation of a real
+   * HTML5 parse: the parser closes an open heading when it meets the next one,
+   * and closes an open `p` around a heading, so `<h2>a<h3>b</h3></h2>` cannot
+   * survive to reach this loop. `collectHeadings` in `lib/article-outline.ts`
+   * counts on the same guarantee, which is what keeps the nth heading here the
+   * nth heading there.
+   */
   let open: string | null = null;
 
   for (const token of html.matchAll(HTML_TOKEN_PATTERN)) {

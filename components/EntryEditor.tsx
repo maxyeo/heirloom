@@ -205,6 +205,13 @@ export function EntryEditor({
    * an index the document has no heading for, a node whose DOM is not an
    * element. The author gets an editor open at the top of the entry, which is
    * where the Edit tab would have put them anyway.
+   *
+   * The dependencies are the editor and the index, so this runs again if the
+   * index changes under a mounted editor. That is deliberate rather than
+   * overlooked: the only way it happens is a back or forward between two
+   * `?section=` addresses for the same entry — `[edit]` links live on the
+   * article, never inside the editor — and moving the cursor to the section
+   * the author just navigated to is the right answer to that navigation.
    */
   useEffect(() => {
     if (!editor || initialHeadingIndex === null) return;

@@ -129,7 +129,7 @@ describe("insertSectionEditLinks", () => {
 
   it("closes each link before the heading it belongs to closes", () => {
     expect(withEditLinks("<h2>Early life</h2>")).toBe(
-      '<h2 id="early-life">Early life' +
+      '<h2 id="early-life">Early life ' +
         '<span class="wiki-editsection">' +
         '<span aria-hidden="true">[</span>' +
         '<a href="/wiki/rose-hall/edit?section=early-life"' +
@@ -168,8 +168,20 @@ describe("insertSectionEditLinks", () => {
 
   it("puts the link after markup inside the heading, not inside it", () => {
     const html = withEditLinks("<h2><strong>Early</strong> life</h2>");
-    expect(html).toContain('life<span class="wiki-editsection">');
+    expect(html).toContain('life <span class="wiki-editsection">');
     expect(html).toContain("</span></h2>");
+  });
+
+  /**
+   * The link is inside the heading, so the heading's accessible name is its
+   * own text and the link's text run together. Without a text node between
+   * them a screen reader says "Early lifeedit"; MediaWiki has had that quirk
+   * for years and there is no reason to inherit it.
+   */
+  it("keeps a word boundary between the heading and the link", () => {
+    const html = withEditLinks("<h2>Early life</h2>");
+    expect(html).toContain('life <span class="wiki-editsection">');
+    expect(html).not.toContain("life<span");
   });
 
   it("names the section in the tooltip, escaping what an author typed", () => {
