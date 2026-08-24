@@ -331,7 +331,7 @@ describe("resolveEntryLinks", () => {
 
     const html =
       '<p>Rose married Walter at <a href="https://example.test">the hall</a>.</p>';
-    expect(await resolveEntryLinks(html, lookup)).toBe(html);
+    expect((await resolveEntryLinks(html, lookup)).html).toBe(html);
     expect(calls).toHaveLength(0);
   });
 
@@ -345,24 +345,82 @@ describe("resolveEntryLinks", () => {
     ).join(" ");
     const { lookup, calls } = recordingLookup([]);
 
-    const resolved = await resolveEntryLinks(`<p>${links}</p>`, lookup);
+    const { html } = await resolveEntryLinks(`<p>${links}</p>`, lookup);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].size).toBe(30);
-    expect(resolved.match(/class="new"/g)).toHaveLength(30);
+    expect(html.match(/class="new"/g)).toHaveLength(30);
   });
 
   it("renders the red links the lookup did not account for", async () => {
     const { lookup } = recordingLookup(["rose-hall"]);
 
-    const resolved = await resolveEntryLinks(BODY, lookup);
+    const { html } = await resolveEntryLinks(BODY, lookup);
 
-    expect(resolved).toContain(
+    expect(html).toContain(
       '<a href="/wiki/new?title=Walter+Hale" class="new" title="page does not exist">',
     );
-    expect(resolved).toContain(
-      `<a href="${entryHref("rose-hall")}">Rose Hall</a>`,
+    expect(html).toContain(`<a href="${entryHref("rose-hall")}">Rose Hall</a>`);
+  });
+
+  it("returns the resolved set, for the links a page renders as elements", async () => {
+    // E11-T5's infobox renders `<Link>`s rather than HTML, so it needs the
+    // decision without the rewrite. The set comes back with the body.
+    const { lookup } = recordingLookup(["rose-hall"]);
+
+    const { existingSlugs } = await resolveEntryLinks(BODY, lookup);
+
+    expect(existingSlugs.has("rose-hall")).toBe(true);
+    expect(existingSlugs.has("walter-hale")).toBe(false);
+  });
+});
+
+/**
+ * The infobox (E11-T5, `YEO-75`) is the second thing on an article that links
+ * to entries, and the acceptance criterion it shares with this module is that
+ * it does *not* get a query of its own: its slugs join the body's in the one
+ * call the render already makes.
+ */
+describe("slugs linked outside the body", () => {
+  it("asks about them in the body's one call", async () => {
+    const { lookup, calls } = recordingLookup(["rose-hall"]);
+
+    await resolveEntryLinks(BODY, lookup, ["thomas-hale", "rose-hall"]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(
+      new Set(["walter-hale", "rose-hall", "thomas-hale"]),
     );
+  });
+
+  it("still asks once when the body has no links of its own", async () => {
+    // An entry whose prose links nowhere still has an infobox full of
+    // relatives, and every one of them needs resolving.
+    const { lookup, calls } = recordingLookup(["thomas-hale"]);
+
+    const { html, existingSlugs } = await resolveEntryLinks(
+      "<p>Nothing links anywhere.</p>",
+      lookup,
+      ["thomas-hale", "edward-hale"],
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(html).toBe("<p>Nothing links anywhere.</p>");
+    expect(existingSlugs.has("thomas-hale")).toBe(true);
+    expect(existingSlugs.has("edward-hale")).toBe(false);
+  });
+
+  it("asks nothing at all when neither the body nor the box links anywhere", async () => {
+    const { lookup, calls } = recordingLookup([]);
+
+    const { existingSlugs } = await resolveEntryLinks(
+      "<p>Alone.</p>",
+      lookup,
+      [],
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(existingSlugs.size).toBe(0);
   });
 });
 
@@ -424,7 +482,7 @@ describe("chained with the article outline", () => {
 
   it("keeps the heading ids and the red links in one body", async () => {
     const outline = readArticleOutline(sanitizeHtml(BODY_WITH_HEADINGS));
-    const html = await resolveEntryLinks(
+    const { html } = await resolveEntryLinks(
       outline.html,
       recordingLookup(["rose-hall"]).lookup,
     );
@@ -439,7 +497,7 @@ describe("chained with the article outline", () => {
   });
 
   it("loses the red links if the outline runs last, which is why it does not", async () => {
-    const marked = await resolveEntryLinks(
+    const { html: marked } = await resolveEntryLinks(
       sanitizeHtml(BODY_WITH_HEADINGS),
       recordingLookup(["rose-hall"]).lookup,
     );

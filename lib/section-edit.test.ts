@@ -278,10 +278,11 @@ describe("chained with the red links", () => {
   /** Exactly what `app/wiki/[slug]/page.tsx` does, in the same order. */
   async function articleHtml(): Promise<string> {
     const outline = readArticleOutline(sanitizeHtml(BODY));
-    return resolveEntryLinks(
+    const { html } = await resolveEntryLinks(
       insertSectionEditLinks(outline.html, outline.headings, "rose-hall"),
       async () => new Set(["rose-hall"]),
     );
+    return html;
   }
 
   it("marks the missing entry red with the [edit] links already in place", async () => {

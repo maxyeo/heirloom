@@ -396,23 +396,57 @@ export type ExistingSlugLookup = (
 ) => Promise<ReadonlySet<string>>;
 
 /**
- * Resolve a body's internal links and mark the ones that lead nowhere.
+ * A rendered article's links, resolved.
+ *
+ * The set comes back alongside the rewritten body because the body is not the
+ * only thing on the page that links to entries — E11-T5's infobox renders its
+ * links as React elements rather than as HTML, so it needs the *decision*
+ * without the rewrite. Handing it the same set is what keeps a page to one
+ * query, and what stops the box and the prose disagreeing about whether an
+ * entry exists.
+ */
+export type ResolvedEntryLinks = {
+  /** The body, with unresolved links rendered red. */
+  html: string;
+  /** Which of the slugs asked about exist, for `entryLinkProps`. */
+  existingSlugs: ReadonlySet<string>;
+};
+
+/**
+ * Resolve everything a rendered article links to, and mark the body's links
+ * that lead nowhere.
  *
  * The whole feature, as one call: scan once, ask once, rewrite once.
  *
+ * `extraSlugs` is what a second consumer on the same page adds to that one
+ * question. E11-T5's infobox collects the entries it names and passes them in
+ * here rather than issuing a lookup of its own — see
+ * `infoboxEntrySlugs` in `lib/person-infobox.ts` and the call in
+ * `app/wiki/[slug]/page.tsx`. A body with no links still asks once when the
+ * box has slugs to resolve, and a page with neither asks nothing at all.
+ *
  * @param html a body, already through `sanitizeHtml`
  * @param lookup which of a set of slugs exist — called at most once
- * @returns the body, with unresolved links rendered red
+ * @param extraSlugs slugs linked elsewhere on the page, resolved in the same
+ *   question
+ * @returns the rewritten body, and the resolved set for the other consumers
  */
 export async function resolveEntryLinks(
   html: string,
   lookup: ExistingSlugLookup,
-): Promise<string> {
+  extraSlugs: Iterable<string> = [],
+): Promise<ResolvedEntryLinks> {
   const links = scanEntryLinks(html);
-  // No internal links, no question to ask. Most bodies in a young wiki.
-  if (links.length === 0) return html;
+  const wanted = new Set([...links.map((link) => link.slug), ...extraSlugs]);
 
-  const existingSlugs = await lookup(new Set(links.map((link) => link.slug)));
+  // Nothing on the page points at an entry, so there is no question to ask.
+  // Most bodies in a young wiki.
+  if (wanted.size === 0) return { html, existingSlugs: EMPTY_SLUGS };
 
-  return markMissingEntryLinks(html, existingSlugs, links);
+  const existingSlugs = await lookup(wanted);
+
+  return {
+    html: markMissingEntryLinks(html, existingSlugs, links),
+    existingSlugs,
+  };
 }

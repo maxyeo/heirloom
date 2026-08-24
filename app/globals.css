@@ -98,6 +98,12 @@
   --container-content: 46em;
   /* Wikipedia's default thumbnail width. */
   --container-thumb: 220px;
+  /* The person infobox (E11-T5). Vector 2022's own width, and the reference
+   * mockup's: wide enough for a date and a place under it, narrow enough to
+   * leave a readable measure beside it in a 46em column. Below `sm` the box
+   * stops floating and takes the full width instead — a float this wide in a
+   * phone-width column would leave the prose two words across. */
+  --container-infobox: 20.5rem;
 
   /* Vector 2022 rounds almost nothing. 2px, or square. */
   --radius-panel: 2px;
