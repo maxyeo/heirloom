@@ -69,7 +69,7 @@ export const dateQualifier = pgEnum("date_qualifier", [
  * January *with `year` beside it*, and the day is an anchor rather than an
  * assertion. Nothing formats, compares or exports it as a day: see
  * `DATE_PRECISIONS` and `isImpossibleOrder` in `lib/field-input.ts`, and
- * `formatQualifiedDate` in `lib/person-format.ts`.
+ * `formatQualifiedDate` in `lib/format-date.ts`.
  *
  * `day` is the default, which is what makes the migration safe: every existing
  * row came from an `<input type="date">` and therefore carries a full date, so

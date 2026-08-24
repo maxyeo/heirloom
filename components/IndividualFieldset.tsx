@@ -13,7 +13,7 @@ import {
   type IndividualFields,
   type Sex,
 } from "@/lib/individual-input";
-import { formatQualifiedDate } from "@/lib/person-format";
+import { formatQualifiedDate } from "@/lib/format-date";
 
 /**
  * One person's details as a set of form controls (E3-T2, `YEO-30`).

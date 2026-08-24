@@ -273,6 +273,63 @@ describe("layoutFamilyGraph", () => {
     expect(nodeById(nodes, "alice").data.name).toBe("Alice");
   });
 
+  it("says on the node when a date is only approximate", () => {
+    // `b. 1890` and `b. about 1890` are different claims, and the node label
+    // is the most-read surface in the application to be making the wrong one
+    // on. E4-T3 moved `formatLifespan` into `lib/format-date.ts` and gave it
+    // the qualifier columns precisely so this reaches the canvas.
+    const graph = seedGraph();
+    graph.people.push(
+      person({
+        id: "silas",
+        givenName: "Silas",
+        surname: "Byrne",
+        birthDate: "1890-01-01",
+        birthDateQualifier: "about",
+        birthDatePrecision: "year",
+      }),
+      person({
+        id: "eliza",
+        givenName: "Eliza",
+        surname: "Byrne",
+        deathDate: "1920-01-01",
+        deathDateQualifier: "before",
+        deathDatePrecision: "year",
+      }),
+    );
+
+    const { nodes } = layoutFamilyGraph(graph);
+
+    expect(nodeById(nodes, "silas").data.lifespan).toBe("b. about 1890");
+    expect(nodeById(nodes, "eliza").data.lifespan).toBe("d. before 1920");
+    // And into the accessible name, so a screen reader is told the same thing
+    // the sighted reader is rather than a more confident version of it.
+    expect(nodeById(nodes, "silas").ariaLabel).toBe(
+      "Silas Byrne, b. about 1890",
+    );
+  });
+
+  it("never prints a coarse date's anchor day on a node", () => {
+    // A year read off a headstone is stored on 1 January and a month on the
+    // 1st. The lifespan is years only, so neither can leak — this is the
+    // assertion that notices if it ever starts rendering the whole date.
+    const graph = seedGraph();
+    graph.people.push(
+      person({
+        id: "silas",
+        givenName: "Silas",
+        birthDate: "1890-01-01",
+        birthDatePrecision: "year",
+        deathDate: "1962-06-01",
+        deathDatePrecision: "month",
+      }),
+    );
+
+    const { nodes } = layoutFamilyGraph(graph);
+
+    expect(nodeById(nodes, "silas").data.lifespan).toBe("1890–1962");
+  });
+
   it("skips the edge for a partner nobody recorded", () => {
     const { edges } = layoutFamilyGraph(seedGraph());
 
