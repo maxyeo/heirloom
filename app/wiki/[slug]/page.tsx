@@ -6,7 +6,8 @@ import { cache } from "react";
 import { ArticleHeading } from "@/components/ArticleHeading";
 import { EntryPersonCard } from "@/components/EntryPersonCard";
 import { getEntryPerson } from "@/lib/entry-person";
-import { getPageBySlug } from "@/lib/pages";
+import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
+import { resolveEntryLinks } from "@/lib/red-links";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
 
@@ -94,6 +95,19 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    */
   const person = await getEntryPerson(entry.id);
 
+  /**
+   * Red links (E11-T6): every internal link in the body is resolved against
+   * `pages.slug` here, and the ones that lead nowhere are rendered red with an
+   * invitation to write the entry. One query for the whole article, however
+   * many links it holds — and none at all when it holds none. See
+   * `lib/red-links.ts`.
+   *
+   * **After the sanitiser, never before.** The rewrite adds `class` and
+   * `title` to the anchors it marks, and the allowlist permits neither on an
+   * `a`; sanitising this value again would quietly strip the feature back out.
+   */
+  const articleHtml = await resolveEntryLinks(bodyHtml, findExistingSlugs);
+
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
     // half of "readable on a phone": the measure alone would run the text to
@@ -145,7 +159,7 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
           // leave the reader scrolling sideways through prose.
           <div
             className="wiki-body break-words"
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+            dangerouslySetInnerHTML={{ __html: articleHtml }}
           />
         ) : (
           // An entry can exist with an empty body — the column defaults to ''
