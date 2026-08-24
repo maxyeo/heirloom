@@ -131,7 +131,7 @@ export async function setParents(
      * error boundary, where this is a sentence the panel can render.
      */
     if (!(await individualExists(tx, value.childId))) {
-      return { status: "child-not-found" };
+      refuse({ status: "child-not-found" });
     }
 
     /**
@@ -154,7 +154,7 @@ export async function setParents(
         )
         .returning({ childId: schema.unionChildren.childId });
 
-      if (detached === undefined) return { status: "not-recorded-there" };
+      if (detached === undefined) refuse({ status: "not-recorded-there" });
     }
 
     let unionId = value.unionId;
@@ -174,8 +174,17 @@ export async function setParents(
       );
 
       for (const parentId of parentIds) {
+        /**
+         * Refused with a throw like every other refusal in here, and this one
+         * is the reason the rule is "every refusal, without exception" rather
+         * than "the ones that obviously need it". The detach above has already
+         * run by the time this loop does — a move into a family being created
+         * inline is an ordinary combination, and the form offers both controls
+         * at once — so a plain `return` would commit the detach, create
+         * nothing, attach nothing, and leave the child with no parents at all.
+         */
         if (!(await individualExists(tx, parentId))) {
-          return { status: "parent-not-found" };
+          refuse({ status: "parent-not-found" });
         }
       }
 
@@ -237,25 +246,21 @@ export async function setParents(
         /**
          * Not reachable through this door: every field `attachChild`
          * re-validates was already checked by `validateSetParents`, and the
-         * two share `isRowId` and `CHILD_RELATIONS`. Surfaced rather than
-         * swallowed, because the alternative is a write that silently did
-         * nothing, and because a rule added to one validator and not the other
-         * should show up as a refusal rather than as a shrug.
+         * two share `isRowId` and `CHILD_RELATIONS`. Refused the same way as
+         * everything else all the same, rather than being reasoned about — a
+         * rule added to one validator and not the other should show up as a
+         * refused submission, and it must not show up as a committed detach.
          */
-        return { status: "invalid", issues: attached.linkIssues };
+        refuse({ status: "invalid", issues: attached.linkIssues });
+        break;
 
       case "union-not-found":
       case "child-not-found":
       case "child-is-partner":
       case "already-recorded":
       case "child-is-ancestor":
-        /**
-         * Returning a refusal rolls nothing back on its own — Drizzle commits
-         * a callback that returns normally — so the detach above would stand
-         * while the attach it was half of did not. Throwing is what makes the
-         * whole move atomic; `withSetParents` turns it back into a result.
-         */
-        throw new Refusal(attached.status);
+        refuse({ status: attached.status });
+        break;
 
       case "added":
         break;
@@ -289,43 +294,40 @@ export async function setParents(
 }
 
 /**
- * A refusal that has to roll the transaction back on its way out.
+ * Refuse, and take everything this transaction has already written with it.
  *
  * Drizzle commits a transaction callback that returns normally, which is
- * exactly right for every other module here: their refusals happen before any
- * write. This one can refuse *after* the detach, and a committed detach whose
- * attach was refused is the one outcome this whole file exists to prevent — a
- * person left with no parents at all.
+ * exactly right for every other module here: their refusals all happen before
+ * any write. This one can refuse *after* the detach, and a committed detach
+ * whose attach never happened is the single outcome this whole file exists to
+ * prevent — a person left with no parents at all, silently, because nothing
+ * about the resulting record looks damaged.
  *
- * So the refusal travels as a throw, which Drizzle turns into a rollback, and
- * is unwrapped into an ordinary result by the `catch` above. A real fault is
- * not an instance of this and goes on propagating untouched.
+ * So **every** refusal inside the transaction goes through here, including the
+ * ones that today happen before anything is written. Deciding case by case
+ * which refusals need a rollback is how the one that does gets missed: the
+ * dangerous cases are dangerous because of where they sit in the sequence, and
+ * that is precisely the thing an edit to this function can change without
+ * touching the refusal itself. A rollback of nothing costs nothing.
+ *
+ * Returns `never`, so the compiler treats a call as an exit and the code after
+ * it narrows as though the refusal had returned.
+ *
+ * @param result what the caller of `setParents` should be told
  */
-class Refusal extends Error {
-  constructor(readonly status: RefusalStatus) {
-    super(`set-parents refused: ${status}`);
-    this.name = "Refusal";
-  }
-
-  get result(): SetParentsResult {
-    return { status: this.status };
-  }
+function refuse(result: SetParentsResult): never {
+  throw new Refusal(result);
 }
 
 /**
- * The refusals `attachChild` can reach *after* this module has already
- * written something, and therefore the ones that have to roll back on the way
- * out. Spelled as a union of `SetParentsResult`'s own statuses so that a
- * status added to one and not the other fails to compile.
+ * The carrier. Only ever thrown by `refuse` and only ever caught by
+ * `setParents`, which unwraps it into an ordinary result; a real fault — the
+ * database unreachable, a constraint violated — is not an instance of this and
+ * goes on propagating untouched.
  */
-type RefusalStatus = Extract<
-  SetParentsResult,
-  {
-    status:
-      | "union-not-found"
-      | "child-not-found"
-      | "child-is-partner"
-      | "already-recorded"
-      | "child-is-ancestor";
+class Refusal extends Error {
+  constructor(readonly result: SetParentsResult) {
+    super(`set-parents refused: ${result.status}`);
+    this.name = "Refusal";
   }
->["status"];
+}

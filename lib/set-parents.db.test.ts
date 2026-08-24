@@ -552,6 +552,45 @@ describe("moving a child from one family to another", () => {
     expect(await familiesOf(dora)).toEqual([wrong, right].sort());
   });
 
+  it("rolls the detach back when a named parent has been deleted", async () => {
+    /**
+     * The combination the form offers and the first version of this module got
+     * wrong: a move *into a family being created inline*. The detach runs
+     * before the parents are looked up, so a parent deleted in another tab in
+     * the meantime used to commit the detach, create nothing, attach nothing,
+     * and leave the child with no parents at all — the exact outcome the whole
+     * module exists to prevent, and silently, because nothing about the
+     * resulting record looks damaged.
+     */
+    const { dora, wrong, walter } = await twoFamilies();
+    const ghost = await makePerson("Ghost");
+    await db.delete(schema.individuals).where(eq(schema.individuals.id, ghost));
+
+    expect(
+      await setParents(
+        submission({
+          childId: dora,
+          familyMode: "new",
+          unionId: null,
+          parentAId: walter,
+          parentBId: ghost,
+          fromUnionId: wrong,
+        }),
+      ),
+    ).toEqual({ status: "parent-not-found" });
+
+    // Still where she started, and no half-made family left standing.
+    expect(await familiesOf(dora)).toEqual([wrong]);
+    const graph = await getFamilyGraph();
+    expect(
+      graph.unions.filter(
+        (union) =>
+          union.id !== wrong &&
+          (union.partnerAId === walter || union.partnerBId === walter),
+      ),
+    ).toHaveLength(1);
+  });
+
   it("rolls the detach back when the move would create a cycle", async () => {
     // The same atomicity, reached through the check this ticket added. Rose is
     // moved out of a family she really is a child of, into her own daughter's

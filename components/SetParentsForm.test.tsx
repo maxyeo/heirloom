@@ -338,6 +338,20 @@ describe("naming the parents when no family is recorded yet", () => {
     expect(host.textContent).not.toContain("as a new person");
   });
 
+  it("keeps whoever one slot holds out of the other", () => {
+    // The server refuses a union naming one person in both columns, but
+    // finding that out on submit is finding it out too late.
+    const { host } = openInlineMode();
+
+    type(searchBoxes(host)[0], "Rose");
+    click(buttonLabelled(host, "Rose Hale"));
+    type(searchBoxes(host)[0], "Rose");
+
+    // The remaining picker offers nobody: the only Rose is spoken for. Her
+    // name is still on screen, in the first slot's answer.
+    expect(host.textContent).toContain("Nobody on the tree matches that.");
+  });
+
   it("keeps the person and their descendants out of both pickers", () => {
     // Nobody at or below Dora may be named as her parent.
     const { host } = openInlineMode();

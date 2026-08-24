@@ -274,10 +274,20 @@ export function SetParentsForm({
                 if they are not known — no placeholder person is created.
               </p>
 
+              {/*
+                Each slot also leaves out whoever the other one holds. The
+                server refuses the same person twice — a union naming one
+                person in both columns is not a family — but finding that out
+                on submit is finding it out too late, and the two slots sit
+                close enough together that picking the same name in both is an
+                easy slip rather than an odd one.
+              */}
               <ParentPicker
                 title="One parent"
                 people={graph.people}
-                excludeIds={excludeIds}
+                excludeIds={
+                  parentB === null ? excludeIds : [...excludeIds, parentB.id]
+                }
                 selected={parentA}
                 onSelect={setParentA}
                 onClear={() => setParentA(null)}
@@ -286,7 +296,9 @@ export function SetParentsForm({
               <ParentPicker
                 title="The other parent"
                 people={graph.people}
-                excludeIds={excludeIds}
+                excludeIds={
+                  parentA === null ? excludeIds : [...excludeIds, parentA.id]
+                }
                 selected={parentB}
                 onSelect={setParentB}
                 onClear={() => setParentB(null)}
