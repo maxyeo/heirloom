@@ -18,7 +18,11 @@ export default async function TreePage() {
   const graph = await getFamilyGraph();
 
   return (
-    <main className="flex h-dvh flex-col">
+    // The viewport less the shell's sticky header (E11-T2). It was `h-dvh`
+    // before there was a header above it; left that way the canvas would run
+    // 3rem past the bottom of the screen and give the page a scrollbar with
+    // nothing in it.
+    <main className="flex h-[calc(100dvh-var(--header-height))] flex-col">
       {/* The h1 carries its own rule (globals.css), so the header needs no
           border of its own. */}
       <header className="flex items-start justify-between gap-3 px-4 py-3">

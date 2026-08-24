@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { ArticleHeading } from "@/components/ArticleHeading";
 import { getPageBySlug } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
@@ -82,12 +83,13 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
     // half of "readable on a phone": the measure alone would run the text to
     // both edges of a narrow screen, and 46em is expressed in `em`, so it
-    // never exceeds the viewport at any text size. The article shell that sets
-    // this column beside a sidebar is E11-T2.
+    // never exceeds the viewport at any text size. E11-T2's shell sets this
+    // column beside the sidebar; the centring and the measure stay here.
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
       <article>
-        {/* Serif, and carrying its own bottom rule, from globals.css. */}
-        <h1>{entry.title}</h1>
+        {/* The title and "From Heirloom, the family wiki" under it, with the
+            rule under the pair — E11-T2. */}
+        <ArticleHeading title={entry.title} />
 
         {/*
           A minimal, single-line link rather than a tab bar — E11-T7 owns the
