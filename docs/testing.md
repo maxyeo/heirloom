@@ -392,6 +392,15 @@ The shadowing rows are why this reads the syntax tree rather than the source.
 A boundary test that cannot fail is worse than none, because it is also
 reassuring.
 
+**The checker has its own test.** `test/route-inventory.boundary-usage.test.ts`
+runs `boundaryUsageOfSource` over literal fixtures, because the suite over the
+real tree cannot reach every branch: no route aliases the guard or imports it
+as a namespace, so those paths would otherwise be code only a mutation run had
+ever executed — and they exist to _prevent_ a false failure, which is the kind
+of bug that gets an assertion deleted rather than the code fixed. The
+`shadowed` fixtures pin the other direction: each was a real false green at
+some point while this was being written.
+
 **Where it looks.** Routes come from `app/`, because that is where Next routes
 from. `"use server"` modules are looked for across `app`, `components` and
 `lib` — the directories `lib/sanitize-html.call-sites.test.ts` already scans —

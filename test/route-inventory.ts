@@ -217,14 +217,18 @@ export function pathnameFor(
  *
  * `typescript` is already a devDependency, so the real scanner is free.
  */
-function parse(file: string): ts.SourceFile {
+function parseSource(source: string, fileName: string): ts.SourceFile {
   return ts.createSourceFile(
-    file,
-    read(file),
+    fileName,
+    source,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ false,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
+}
+
+function parse(file: string): ts.SourceFile {
+  return parseSource(read(file), file);
 }
 
 /** Depth-first walk, stopping as soon as `visit` is satisfied. */
@@ -341,7 +345,27 @@ export type BoundaryUsage = {
  * guard, and reporting it as unguarded would be a baffling failure.
  */
 export function boundaryUsage(file: string): BoundaryUsage {
-  const source = parse(file);
+  return boundaryUsageOfSource(read(file), file);
+}
+
+/**
+ * `boundaryUsage`, against source text rather than a path.
+ *
+ * Exported for `test/route-inventory.boundary-usage.test.ts`. The alias and
+ * namespace-import branches above are not reachable from any file in this
+ * repository — every route imports the guard plainly — so without fixtures
+ * they would be code that only a mutation run has ever executed. A checker
+ * the whole suite rests on should not have untested branches, least of all
+ * the ones whose job is to *avoid* a false failure.
+ *
+ * @param source the module's text
+ * @param fileName only used to pick TS vs TSX parsing, and in diagnostics
+ */
+export function boundaryUsageOfSource(
+  source: string,
+  fileName = "fixture.tsx",
+): BoundaryUsage {
+  const parsed = parseSource(source, fileName);
 
   /** Local name in this file → the guard it refers to. */
   const bound = new Map<string, string>();
@@ -351,7 +375,7 @@ export function boundaryUsage(file: string): BoundaryUsage {
 
   // ESM import declarations are always top level, so there is no need to walk
   // the tree for them.
-  for (const statement of source.statements) {
+  for (const statement of parsed.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier)
@@ -392,7 +416,7 @@ export function boundaryUsage(file: string): BoundaryUsage {
 
   // The visitor never short-circuits: every call is wanted, not just the
   // first, so `some` here is being used to walk the whole tree.
-  some(source, (node) => {
+  some(parsed, (node) => {
     const declared = declaresBoundaryName(node);
     if (declared) shadowed.push(declared);
 
