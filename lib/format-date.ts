@@ -179,7 +179,23 @@ export function formatLifespan(lifespan: Lifespan): string {
 }
 
 /**
- * One end of a lifespan: the qualifier, then the year, or nothing.
+ * A stored date as its year alone, qualifier and all: `1933`, `about 1948`,
+ * or null when there is no date.
+ *
+ * ## Why this one needs no precision, when `formatQualifiedDate` does
+ *
+ * Every precision this schema holds is at least a year, and the anchor
+ * convention puts the year in the same four characters whether the source
+ * gave a day, a month or a year. So the year is the one part of a stored date
+ * that is always genuinely recorded, and reading it back can never invent
+ * anything — which is exactly the argument `formatLifespan` above makes for
+ * itself, extracted so that a second caller can make it too.
+ *
+ * That caller is E11-T5's infobox, whose spouse rows read "m. 1933; died
+ * 1947". Wikipedia writes a union as years beside a name, and the full dates
+ * `formatQualifiedDate` returns would make a summary line into a record. The
+ * qualifier still comes with it: "m. about 1948" and "m. 1948" are different
+ * claims, and dropping the word is how a guess becomes a fact.
  *
  * No malformed-value guard, and unlike `formatQualifiedDate`'s that is not an
  * omission. That function hands its string to `Date`, so it has to say what
@@ -187,8 +203,20 @@ export function formatLifespan(lifespan: Lifespan): string {
  * characters, which needs no parser and cannot throw. The column is a
  * Postgres `date`, so what arrives is `YYYY-MM-DD` or null — there is no
  * third case for a guard to catch.
+ *
+ * @param date ISO `YYYY-MM-DD`, or null when nothing is recorded
+ * @param qualifier how far the date can be trusted
+ * @returns the qualified year, or null when there is no date
  */
-function year(date: string | null, qualifier: DateQualifier): string {
-  if (!date) return "";
+export function formatQualifiedYear(
+  date: string | null,
+  qualifier: DateQualifier,
+): string | null {
+  if (!date) return null;
   return `${QUALIFIER_PREFIX[qualifier]}${date.slice(0, 4)}`;
+}
+
+/** One end of a lifespan: the qualified year, or the empty string. */
+function year(date: string | null, qualifier: DateQualifier): string {
+  return formatQualifiedYear(date, qualifier) ?? "";
 }

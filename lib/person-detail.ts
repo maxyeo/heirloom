@@ -275,8 +275,15 @@ function compareUnions(a: GraphUnion, b: GraphUnion): number {
   return byDate !== 0 ? byDate : a.id.localeCompare(b.id);
 }
 
-/** Siblings read as a family in birth order; the undated ones follow. */
-function compareByBirth(a: GraphPerson, b: GraphPerson): number {
+/**
+ * Siblings read as a family in birth order; the undated ones follow.
+ *
+ * Exported for E11-T5's infobox (`lib/person-infobox.ts`), which orders a
+ * spouse's children from an earlier marriage — people this module never
+ * reaches, sorted by the rule it already states. Two copies of "birth order,
+ * then name, then id" is two places for a sibling list to drift.
+ */
+export function compareByBirth(a: GraphPerson, b: GraphPerson): number {
   const byDate = compareNullableDates(a.birthDate, b.birthDate);
   if (byDate !== 0) return byDate;
   const byName = formatPersonName(a.givenName, a.surname).localeCompare(

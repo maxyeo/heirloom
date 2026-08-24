@@ -4,10 +4,11 @@ import { cache } from "react";
 
 import { ArticleContents } from "@/components/ArticleContents";
 import { ArticleHeading } from "@/components/ArticleHeading";
-import { EntryPersonCard } from "@/components/EntryPersonCard";
+import { PersonInfobox } from "@/components/PersonInfobox";
 import { readArticleOutline } from "@/lib/article-outline";
-import { getEntryPerson } from "@/lib/entry-person";
+import { readEntryInfobox } from "@/lib/entry-infobox";
 import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
+import { infoboxEntrySlugs } from "@/lib/person-infobox";
 import { resolveEntryLinks } from "@/lib/red-links";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
@@ -95,17 +96,19 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   const outline = readArticleOutline(bodyHtml);
 
   /**
-   * Who this entry is about, or `undefined` when nobody is linked to it
-   * (E2-T3). One row out of `individuals`, and the card below renders nothing
-   * at all for the entries — places, heirlooms, stories — that are not about a
-   * person.
+   * The person infobox (E11-T5), or null when nobody is linked to this entry
+   * — places, heirlooms and stories render no box and leave no gap.
+   *
+   * Every fact in it is derived from `individuals` / `unions` /
+   * `union_children` at this moment; none of it is stored, and none of it is
+   * anything the author typed. See `lib/person-infobox.ts` for why that is the
+   * whole point of the feature, and `lib/entry-infobox.ts` for the reads.
    *
    * Awaited after the entry rather than beside it, because it is keyed by
    * `entry.id`: there is no query to start until the slug has resolved to a
-   * row. It is a scan of a table that holds a family (docs/architecture.md),
-   * on a route that was already reading the database.
+   * row.
    */
-  const person = await getEntryPerson(entry.id);
+  const infobox = await readEntryInfobox(entry.id);
 
   /**
    * Red links (E11-T6): every internal link in the body is resolved against
@@ -122,7 +125,15 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    * one would undo the red links. It splices opening tags by byte offset, so
    * the heading ids written above survive untouched.
    */
-  const articleHtml = await resolveEntryLinks(outline.html, findExistingSlugs);
+  const { html: articleHtml, existingSlugs } = await resolveEntryLinks(
+    outline.html,
+    findExistingSlugs,
+    // The infobox links to entries too (E11-T5), and its slugs join the body's
+    // in *this* question rather than asking a second one. `entryLinkProps`
+    // then decides blue or red for the prose and the box from one set, so the
+    // two cannot disagree about whether an entry exists.
+    infoboxEntrySlugs(infobox),
+  );
 
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
@@ -131,7 +142,15 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
     // never exceeds the viewport at any text size. E11-T2's shell sets this
     // column beside the sidebar; the centring and the measure stay here.
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
-      <article>
+      {/*
+        The clearfix the infobox needs (E11-T5). It floats, and a float taller
+        than the prose beside it would otherwise hang out of the bottom of the
+        article and over whatever the shell puts below — the ordinary case for
+        a short entry about a person with a long family. MediaWiki does exactly
+        this on `.mw-parser-output`; here it is one variant on the element that
+        holds both.
+      */}
+      <article className="after:block after:clear-both after:content-['']">
         {/* The title and "From Heirloom, the family wiki" under it, with the
             rule under the pair — E11-T2. */}
         <ArticleHeading title={entry.title} />
@@ -145,12 +164,19 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
         */}
 
         {/*
-          The backlink to the tree (E2-T3): who this entry is about, when it
-          is about somebody. One self-contained component that renders nothing
-          for an unlinked entry, so this stays a single line whichever of the
-          tickets editing this file lands first.
+          The infobox (E11-T5): the bordered summary box, floated top right,
+          generated from the tree rather than typed. One self-contained
+          component that renders nothing for an unlinked entry, so this stays a
+          single line whichever of the tickets editing this file lands first.
+
+          It replaces E2-T3's `EntryPersonCard`, which stated the same person's
+          name, lifespan, birth and death in a full-width card immediately
+          above the article. Two boxes repeating one set of facts at the top of
+          one page is a bug rather than a feature, so the card is gone and its
+          one affordance the box did not already have — E2-T4's "View in
+          family tree" link — moved into the box's footer.
         */}
-        <EntryPersonCard person={person} />
+        <PersonInfobox infobox={infobox} existingSlugs={existingSlugs} />
 
         {bodyHtml ? (
           // `wiki-body` is the article scope — the equivalent of MediaWiki's
