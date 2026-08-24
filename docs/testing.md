@@ -132,6 +132,26 @@ The harness is deliberately small, and one thing is simply not set up:
   the first to decide whether to mock `@/lib/session` or drive real sessions,
   and whichever way that goes belongs back in this document.
 
+  E3-T4 met the same wall from the component side and went around it rather
+  than through it. A Client Component that *imports* a server action pulls
+  `app/tree/actions.ts` — and with it Auth.js and `@/db` — into its import
+  graph, so it cannot be mounted in a suite that has no `AUTH_*` and no
+  `DATABASE_URL`. Worse, the failure spreads: the moment
+  `components/FamilyTree.tsx` rendered the add-spouse form, the canvas's own
+  suite went down with it.
+
+  So the action arrives as a **prop** instead
+  (`AddSpouseFormAction` in `lib/spouse-form-state.ts`), passed from
+  `app/tree/page.tsx` — a Server Component that was reaching the database
+  regardless. That is the framework's own pattern for handing an action to a
+  client component, and it leaves `components/AddSpouseForm.test.tsx` able to
+  submit the form for real against a stub that records the `FormData`. Nothing
+  is mocked, because nothing had to be.
+
+  The rule that falls out: **a Client Component that a test may want to mount
+  should take its action, not import it.** `NewEntryForm` and `EntryEditForm`
+  predate this and still import theirs; neither is mounted by anything.
+
 Note also that `async` Server Components are not unit-testable — React and
 Vitest do not support it yet — so treat those as end-to-end territory.
 

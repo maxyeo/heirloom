@@ -17,10 +17,17 @@ import type {
  *
  * It does no reasoning. `derivePersonDetail` turns the graph into the value
  * this renders, so "who are Rose's children" is answered and tested in a file
- * with no DOM in it, and the component below is a list of rows. Editing is
- * E3-T3 and an "open entry" link is E2-T2 — the panel deliberately stops at
- * showing what is recorded, so that neither of those has to unpick a form
- * that was guessed at here first.
+ * with no DOM in it, and the component below is a list of rows. Editing the
+ * person is E3-T3 and an "open entry" link is E2-T2 — the panel deliberately
+ * stops at showing what is recorded, so that neither of those has to unpick a
+ * form that was guessed at here first.
+ *
+ * The one exception is `onAddSpouse` (E3-T4, `YEO-32`), and it is a *route in*
+ * rather than a form: the add-spouse flow is about one person, so the only
+ * place it can start is the panel that names them. The panel neither renders
+ * that form nor knows what it contains — it renders a button when the canvas
+ * gives it one, and the canvas decides what opening it means. Omit the prop
+ * and the panel is exactly what it was.
  *
  * ## Where the dismissal logic lives
  *
@@ -49,6 +56,13 @@ export interface PersonPanelProps {
    * composes `components/PersonRemoval.tsx` in and this renders it.
    */
   footer?: React.ReactNode;
+  /**
+   * Start recording a marriage or partnership for this person (E3-T4).
+   *
+   * Optional, so the panel keeps working anywhere the flow is not offered —
+   * and so this file did not have to grow a form to gain a button.
+   */
+  onAddSpouse?: () => void;
   /** So the canvas can measure the panel and pan out from under it. */
   ref?: Ref<HTMLElement>;
 }
@@ -58,6 +72,7 @@ export function PersonPanel({
   onSelectPerson,
   onClose,
   footer,
+  onAddSpouse,
   ref,
 }: PersonPanelProps) {
   const headingRef = useRef<HTMLDivElement>(null);
@@ -144,6 +159,23 @@ export function PersonPanel({
             />
           ))}
         </Section>
+
+        {/*
+          Under the list rather than in the header, because that is where the
+          answer to "who else was there" is, and because a second marriage is
+          added by looking at the first and finding it incomplete. Offered
+          whether or not a spouse is already recorded: remarriage is the
+          ordinary case this data model exists for, not an edge one.
+        */}
+        {onAddSpouse ? (
+          <button
+            type="button"
+            onClick={onAddSpouse}
+            className="mt-1 text-note text-link hover:underline"
+          >
+            Add a spouse
+          </button>
+        ) : null}
 
         <Section title="Children" count={detail.children.length}>
           {detail.children.map((child) => (
