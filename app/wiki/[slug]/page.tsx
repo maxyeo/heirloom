@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
@@ -138,26 +137,12 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
         <ArticleHeading title={entry.title} />
 
         {/*
-          A minimal, single-line link rather than a tab bar — E11-T7 owns the
-          real article tabs (history among them) and this is deliberately not
-          an attempt at that. It exists so E1-T5's history route
-          (`/wiki/[slug]/history`) is reachable at all before that lands;
-          E11-T7 absorbs it into the tab row rather than building history
-          discovery from scratch.
+          No Edit / View history links here any more. E1-T5 and E1-T8 each left
+          one behind so their routes were reachable before there was a tab row;
+          E11-T7 is that tab row, and it is rendered once by the shell for every
+          view of an entry rather than once per route. See
+          `components/ArticleTabs.tsx`.
         */}
-        <p className="mb-4 flex gap-3 text-note">
-          {/*
-            Alongside the history link, and for the same reason it gives:
-            E1-T8 added the editor at `/wiki/[slug]/edit` so its create flow
-            had somewhere to land, and without this the only way back into an
-            entry you have already started is to type the URL. E11-T7 absorbs
-            both of these into the real tab row.
-          */}
-          <Link href={`/wiki/${encodeURIComponent(entry.slug)}/edit`}>
-            Edit
-          </Link>
-          <Link href={`/wiki/${entry.slug}/history`}>View history</Link>
-        </p>
 
         {/*
           The backlink to the tree (E2-T3): who this entry is about, when it

@@ -136,7 +136,7 @@ Two things inside it take a modifier:
   would be worse than shipping none, so `:root` declares `color-scheme: light`
   and the browser stops painting dark scrollbars over a light page.
 - **No infobox styles.** Derived from the tree record, not authored — E11-T5.
-- **No hatnote or article tabs.** E11-T7, T9.
+- **No hatnote.** E11-T9.
 
 ## The shell
 
@@ -171,6 +171,43 @@ before the first paint, because a sidebar the viewer collapsed cannot be allowed
 to appear for a frame on every page load. `lib/sidebar-preference.ts` has the
 long version, including why the stored preference is a wide-screen one that a
 phone ignores.
+
+## The article tabs
+
+E11-T7 hung the Article / Read / Edit / View history row on the seam the shell
+left for it, above the content column. It adds **no token and no rule to this
+file** — Vector 2022's tab treatment turns out to be four values that were all
+already here:
+
+| Part                 | Expressed as                                        |
+| -------------------- | --------------------------------------------------- |
+| the row's hairline   | `border-rule-soft`                                  |
+| an unselected tab    | `text-link`, over a transparent 2px bottom border   |
+| the selected tab     | `text-ink`, over a 2px `border-link` bottom border  |
+| the tab's attachment | `-mb-px`, so that 2px border sits _on_ the hairline |
+
+That last one is the whole trick. Without it the tab has a line under it; with
+it the tab is attached to the page below, which is what makes a tab a tab.
+
+Three things about the row are worth knowing before changing it:
+
+- **It opts into the content column by hand** — `mx-auto max-w-content` and the
+  same horizontal padding every route gives its own `<main>`. The shell does not
+  own that column (above), so anything sitting above the route's content has to
+  line itself up with it.
+- **It is a function of the path.** `lib/article-tabs.ts` decides which tab is
+  current and whether there is an article here at all;
+  `components/ArticleTabs.tsx` only renders the answer, and
+  `components/RoutedArticleTabs.tsx` is the client boundary that reads
+  `usePathname`. On `/tree`, `/wiki` and `/wiki/new` the row renders nothing.
+- **Below `sm` the view tabs collapse** into a `<details>` labelled with the
+  view you are on. The namespace tab stays visible; it is one word, and it is
+  the anchor the menu would otherwise hide.
+
+**No Talk tab**, and that is a decision rather than an omission — see the header
+of `lib/article-tabs.ts`. It is also why "Article" is a label rather than a
+link: with one namespace there is nowhere for it to go that "Read", beside it,
+does not already go.
 
 ## The contents panel
 
