@@ -1,6 +1,7 @@
 import { unionsWithoutCycle } from "@/lib/ancestry";
 import type { FamilyGraph, GraphUnion } from "@/lib/family-graph";
-import { formatLifespan, formatPersonName } from "@/lib/person-format";
+import { formatLifespan } from "@/lib/format-date";
+import { formatPersonName } from "@/lib/person-format";
 
 /**
  * The two lists the set-parents form is built out of (E3-T6, `YEO-34`).
@@ -74,10 +75,7 @@ export function parentOptions(
   );
 
   const lifespans = new Map(
-    graph.people.map((person) => [
-      person.id,
-      formatLifespan(person.birthDate, person.deathDate),
-    ]),
+    graph.people.map((person) => [person.id, formatLifespan(person)]),
   );
 
   const label = (union: GraphUnion) =>

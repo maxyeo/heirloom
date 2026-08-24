@@ -166,6 +166,54 @@ describe("searchPartners", () => {
   });
 });
 
+describe("how a candidate's years read", () => {
+  const lifespanOf = (id: string, people: GraphPerson[] = PEOPLE) => {
+    const found = searchPartners(people, "").find(
+      (candidate) => candidate.id === id,
+    );
+    if (!found) throw new Error(`no candidate for "${id}"`);
+    return found.lifespan;
+  };
+
+  it("does not present an approximate year as a recorded one", () => {
+    // The picker exists to stop somebody marrying the wrong Thomas. Choosing
+    // between two of them on a birth year means the confidence attached to
+    // that year is part of what is being chosen on.
+    const people = [
+      person({
+        id: "silas",
+        givenName: "Silas",
+        birthDate: "1890-01-01",
+        birthDateQualifier: "about",
+        birthDatePrecision: "year",
+      }),
+    ];
+
+    expect(lifespanOf("silas", people)).toBe("b. about 1890");
+  });
+
+  it("shows years only, whatever precision the dates were recorded at", () => {
+    const people = [
+      person({
+        id: "silas",
+        givenName: "Silas",
+        birthDate: "1890-06-01",
+        birthDatePrecision: "month",
+        deathDate: "1962-01-01",
+        deathDatePrecision: "year",
+      }),
+    ];
+
+    expect(lifespanOf("silas", people)).toBe("1890–1962");
+  });
+
+  it("renders nothing at all for somebody with no dates", () => {
+    // Not "unknown", not a dash. Most of an older record is missing, and a
+    // list of em dashes reads as a broken picker rather than an honest one.
+    expect(lifespanOf("walter")).toBe("");
+  });
+});
+
 describe("splitTypedName", () => {
   it("treats a single word as a given name", () => {
     // `given_name` is the required column and the label every node falls back

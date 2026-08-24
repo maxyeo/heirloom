@@ -2,7 +2,8 @@ import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
 
 import type { FamilyGraph } from "./family-graph";
-import { formatLifespan, formatPersonName } from "./person-format";
+import { formatLifespan } from "./format-date";
+import { formatPersonName } from "./person-format";
 
 export const PERSON_WIDTH = 176;
 export const PERSON_HEIGHT = 64;
@@ -72,7 +73,7 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
   for (const person of graph.people) {
     const laid = g.node(person.id);
     const name = formatPersonName(person.givenName, person.surname);
-    const lifespan = formatLifespan(person.birthDate, person.deathDate);
+    const lifespan = formatLifespan(person);
     nodes.push({
       id: person.id,
       type: "person",

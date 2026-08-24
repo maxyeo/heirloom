@@ -5,7 +5,9 @@ import { cache } from "react";
 
 import { ArticleContents } from "@/components/ArticleContents";
 import { ArticleHeading } from "@/components/ArticleHeading";
+import { EntryPersonCard } from "@/components/EntryPersonCard";
 import { readArticleOutline } from "@/lib/article-outline";
+import { getEntryPerson } from "@/lib/entry-person";
 import { getPageBySlug } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
@@ -91,6 +93,19 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    */
   const outline = readArticleOutline(bodyHtml);
 
+  /**
+   * Who this entry is about, or `undefined` when nobody is linked to it
+   * (E2-T3). One row out of `individuals`, and the card below renders nothing
+   * at all for the entries — places, heirlooms, stories — that are not about a
+   * person.
+   *
+   * Awaited after the entry rather than beside it, because it is keyed by
+   * `entry.id`: there is no query to start until the slug has resolved to a
+   * row. It is a scan of a table that holds a family (docs/architecture.md),
+   * on a route that was already reading the database.
+   */
+  const person = await getEntryPerson(entry.id);
+
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
     // half of "readable on a phone": the measure alone would run the text to
@@ -124,6 +139,14 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
           </Link>
           <Link href={`/wiki/${entry.slug}/history`}>View history</Link>
         </p>
+
+        {/*
+          The backlink to the tree (E2-T3): who this entry is about, when it
+          is about somebody. One self-contained component that renders nothing
+          for an unlinked entry, so this stays a single line whichever of the
+          tickets editing this file lands first.
+        */}
+        <EntryPersonCard person={person} />
 
         {bodyHtml ? (
           // `wiki-body` is the article scope — the equivalent of MediaWiki's

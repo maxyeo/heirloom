@@ -1,5 +1,6 @@
 import type { GraphPerson } from "./family-graph";
-import { formatLifespan, formatPersonName } from "./person-format";
+import { formatLifespan } from "./format-date";
+import { formatPersonName } from "./person-format";
 
 /**
  * Finding somebody who is already on the tree (E3-T4, `YEO-32`).
@@ -137,7 +138,7 @@ export function searchPartners(
     if (excluded.has(person.id)) continue;
 
     const name = formatPersonName(person.givenName, person.surname);
-    const lifespan = formatLifespan(person.birthDate, person.deathDate);
+    const lifespan = formatLifespan(person);
 
     /**
      * The searchable text, in the order the tiers should prefer. The full name
