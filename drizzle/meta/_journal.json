@@ -22,6 +22,13 @@
       "when": 1787529034548,
       "tag": "0002_restore_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787589286624,
+      "tag": "0003_date_precision",
+      "breakpoints": true
     }
   ]
 }

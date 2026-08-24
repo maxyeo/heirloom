@@ -81,9 +81,11 @@ function person(
     sex: "female",
     birthDate: null,
     birthDateQualifier: "exact",
+    birthDatePrecision: "day",
     birthPlace: null,
     deathDate: null,
     deathDateQualifier: "exact",
+    deathDatePrecision: "day",
     deathPlace: null,
     notes: null,
     pageId: null,
@@ -102,8 +104,10 @@ function union(
     sequence: 1,
     startDate: null,
     startDateQualifier: "exact",
+    startDatePrecision: "day",
     endDate: null,
     endDateQualifier: "exact",
+    endDatePrecision: "day",
     ...overrides,
   } satisfies FamilyGraph["unions"][number];
 }

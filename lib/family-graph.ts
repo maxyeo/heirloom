@@ -10,6 +10,16 @@ import { db, schema } from "@/db";
  */
 export type DateQualifier = "exact" | "about" | "before" | "after";
 
+/**
+ * Mirrors the `date_precision` enum in `db/schema.ts` (E4-T2, `YEO-39`),
+ * declared here for the same reason `DateQualifier` above is.
+ *
+ * Read together with the date and the qualifier, always. A year-only date is
+ * stored on the first of January with `year` here beside it, so a reader that
+ * takes the day and ignores this one is reading a birthday nobody typed.
+ */
+export type DatePrecision = "day" | "month" | "year";
+
 export type GraphPerson = {
   id: string;
   givenName: string;
@@ -17,9 +27,11 @@ export type GraphPerson = {
   sex: "male" | "female" | "other" | "unknown";
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
+  birthDatePrecision: DatePrecision;
   birthPlace: string | null;
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
+  deathDatePrecision: DatePrecision;
   deathPlace: string | null;
   notes: string | null;
   pageId: string | null;
@@ -47,8 +59,10 @@ export type GraphUnion = {
   sequence: number;
   startDate: string | null;
   startDateQualifier: DateQualifier;
+  startDatePrecision: DatePrecision;
   endDate: string | null;
   endDateQualifier: DateQualifier;
+  endDatePrecision: DatePrecision;
 };
 
 export type GraphChildLink = {
@@ -104,9 +118,11 @@ export async function getFamilyGraph(
       sex: p.sex,
       birthDate: p.birthDate,
       birthDateQualifier: p.birthDateQualifier,
+      birthDatePrecision: p.birthDatePrecision,
       birthPlace: p.birthPlace,
       deathDate: p.deathDate,
       deathDateQualifier: p.deathDateQualifier,
+      deathDatePrecision: p.deathDatePrecision,
       deathPlace: p.deathPlace,
       notes: p.notes,
       pageId: p.pageId,
@@ -120,8 +136,10 @@ export async function getFamilyGraph(
       sequence: u.sequence,
       startDate: u.startDate,
       startDateQualifier: u.startDateQualifier,
+      startDatePrecision: u.startDatePrecision,
       endDate: u.endDate,
       endDateQualifier: u.endDateQualifier,
+      endDatePrecision: u.endDatePrecision,
     })),
     childLinks,
   };

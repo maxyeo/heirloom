@@ -66,9 +66,11 @@ const rose: GraphPerson = {
   sex: "female",
   birthDate: "1890-04-12",
   birthDateQualifier: "about",
+  birthDatePrecision: "day",
   birthPlace: "Cork",
   deathDate: "1953-11-02",
   deathDateQualifier: "exact",
+  deathDatePrecision: "day",
   deathPlace: "Dublin",
   notes: "From the 1911 census.",
   pageId: null,
@@ -81,9 +83,11 @@ const sparse: GraphPerson = {
   sex: "unknown",
   birthDate: null,
   birthDateQualifier: "exact",
+  birthDatePrecision: "day",
   birthPlace: null,
   deathDate: null,
   deathDateQualifier: "exact",
+  deathDatePrecision: "day",
   deathPlace: null,
   notes: null,
 };
@@ -174,6 +178,36 @@ function type(host: HTMLElement, name: string, value: string): void {
         bubbles: true,
       }),
     );
+  });
+}
+
+/**
+ * The visible box for one date, found by the word above it.
+ *
+ * Since E4-T2 (`YEO-39`) a date is a free-text control with no `name` — what
+ * posts is three hidden inputs it derives — so the label is the only route to
+ * it. See `components/DateField.tsx`.
+ */
+function dateBox(host: HTMLElement, legend: string): HTMLInputElement {
+  const label = [...host.querySelectorAll("label")].find(
+    (candidate) => candidate.textContent?.trim() === legend,
+  );
+  if (!label) throw new Error(`no label reading ${legend}`);
+
+  const input = host.querySelector<HTMLInputElement>(`#${label.htmlFor}`);
+  if (input === null) throw new Error(`${legend} labels nothing`);
+  return input;
+}
+
+/** Type into a control found by something other than its `name`. */
+function typeInto(element: HTMLElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(element) as object,
+    "value",
+  )?.set;
+  setter?.call(element, value);
+  act(() => {
+    element.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
@@ -330,7 +364,7 @@ describe("saving", () => {
     open(host);
 
     type(host, "surname", "Doyle");
-    type(host, "deathDate", "1880-01-01");
+    typeInto(dateBox(host, "Died"), "1880-01-01");
     await submit(host);
 
     // Still open, still holding the correction, and saying what is wrong.
@@ -387,7 +421,7 @@ describe("clearing a field", () => {
     type(host, "surname", "");
     type(host, "birthPlace", "");
     type(host, "deathPlace", "");
-    type(host, "deathDate", "");
+    typeInto(dateBox(host, "Died"), "");
     type(host, "notes", "");
 
     await submit(host);

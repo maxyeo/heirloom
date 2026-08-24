@@ -18,15 +18,16 @@ import { render } from "@/test/render";
  * What the fields promise the rest of E3 (E3-T2, `YEO-30`).
  *
  * Three things here genuinely need a document, and they are all joins that no
- * pure function can stand in for: that every control carries a `<label>`
- * pointing at it, that each of the ten inputs is named the key
+ * pure function can stand in for: that every control an author touches carries
+ * a `<label>` pointing at it, that every `name` the form posts is a key
  * `individualInputFromFormData` will look for, and that a message from
  * `fieldErrors` is rendered beside its own field and referenced by it. Break
  * any one of those and the form still renders perfectly — which is exactly why
  * they are worth asserting.
  *
  * Everything the messages *say* is decided in `lib/individual-input.ts` and
- * tested there with no DOM at all.
+ * tested there with no DOM at all. What a typed date *means* is decided in
+ * `lib/parse-date.ts` and tested there, likewise.
  */
 
 beforeAll(() => {
@@ -35,16 +36,36 @@ beforeAll(() => {
   ).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
-/** Every key of `IndividualFields`, which is every `name` on the form. */
-const FIELD_NAMES = [
+/**
+ * Every `name` the fieldset posts — which is every key of `IndividualFields`.
+ *
+ * Since E4-T2 (`YEO-39`) four of them belong to no visible control: each
+ * date's qualifier and precision are worked out from what the author typed and
+ * posted as hidden inputs. They are still listed here, because the promise
+ * this array is making is about the *submission*, and that promise did not
+ * change when the controls did.
+ */
+const POSTED_NAMES = [
   "givenName",
   "surname",
   "sex",
   "birthDate",
   "birthDateQualifier",
+  "birthDatePrecision",
   "birthPlace",
   "deathDate",
   "deathDateQualifier",
+  "deathDatePrecision",
+  "deathPlace",
+  "notes",
+] as const;
+
+/** The named controls an author types into. The two dates are found by label. */
+const TYPED_NAMES = [
+  "givenName",
+  "surname",
+  "sex",
+  "birthPlace",
   "deathPlace",
   "notes",
 ] as const;
@@ -72,6 +93,25 @@ function control(host: HTMLElement, name: string): HTMLElement {
 }
 
 /**
+ * The visible box for one date, found the way a person finds it: by the word
+ * above it.
+ *
+ * It has no `name` — see `components/DateField.tsx` — so there is nothing else
+ * to look it up by, and going through the label is the assertion that the
+ * label points at the right thing.
+ */
+function dateBox(host: HTMLElement, legend: string): HTMLInputElement {
+  const label = [...host.querySelectorAll("label")].find(
+    (candidate) => candidate.textContent?.trim() === legend,
+  );
+  if (!label) throw new Error(`no label reading ${legend}`);
+
+  const input = host.querySelector<HTMLInputElement>(`#${label.htmlFor}`);
+  if (input === null) throw new Error(`${legend} labels nothing`);
+  return input;
+}
+
+/**
  * Type into a controlled input the way a person does.
  *
  * Assigning `.value` alone is not enough: React remembers the value it last
@@ -92,36 +132,42 @@ function type(element: HTMLElement, value: string): void {
 }
 
 describe("the fields", () => {
-  it("names every control after the record's own field", () => {
+  it("names every posted value after the record's own field", () => {
     const host = mount();
 
-    for (const name of FIELD_NAMES) {
+    for (const name of POSTED_NAMES) {
       expect(control(host, name)).not.toBeNull();
     }
   });
 
-  it("labels every control", () => {
+  it("labels every control an author touches", () => {
     const host = mount();
 
-    for (const name of FIELD_NAMES) {
+    for (const name of TYPED_NAMES) {
       const id = control(host, name).id;
       expect(id, `${name} has no id to label`).not.toBe("");
 
       const label = host.querySelector(`label[for="${id}"]`);
       expect(label?.textContent?.trim(), `${name} has no label`).toBeTruthy();
     }
+
+    // Both dates, by the only route there is to them.
+    expect(dateBox(host, "Born")).not.toBeNull();
+    expect(dateBox(host, "Died")).not.toBeNull();
   });
 
   it("requires the first name and nothing else", () => {
     const host = mount();
 
-    const required = FIELD_NAMES.filter((name) =>
+    const required = TYPED_NAMES.filter((name) =>
       control(host, name).hasAttribute("required"),
     );
 
     // Partial knowledge is the normal case in genealogy: everything except a
     // first name is optional, and this is the assertion that keeps it so.
     expect(required).toEqual(["givenName"]);
+    expect(dateBox(host, "Born").hasAttribute("required")).toBe(false);
+    expect(dateBox(host, "Died").hasAttribute("required")).toBe(false);
   });
 
   it("shows the current values", () => {
@@ -131,8 +177,7 @@ describe("the fields", () => {
         givenName: "Rose",
         surname: "Hale",
         sex: "female",
-        birthDate: "1890-04-12",
-        birthDateQualifier: "about",
+        birthDate: "about 1890",
         notes: "From the 1911 census.",
       },
     });
@@ -140,14 +185,45 @@ describe("the fields", () => {
     expect((control(host, "givenName") as HTMLInputElement).value).toBe("Rose");
     expect((control(host, "surname") as HTMLInputElement).value).toBe("Hale");
     expect((control(host, "sex") as HTMLSelectElement).value).toBe("female");
-    expect((control(host, "birthDate") as HTMLInputElement).value).toBe(
-      "1890-04-12",
-    );
-    expect(
-      (control(host, "birthDateQualifier") as HTMLSelectElement).value,
-    ).toBe("about");
     expect((control(host, "notes") as HTMLTextAreaElement).value).toBe(
       "From the 1911 census.",
+    );
+
+    // The author's own phrasing stays on screen …
+    expect(dateBox(host, "Born").value).toBe("about 1890");
+  });
+
+  it("posts a typed date as the three columns it occupies", () => {
+    const host = mount({
+      values: { ...emptyIndividualFormValues, birthDate: "about 1890" },
+    });
+
+    // … and the columns it means are posted beside it. The year anchors to 1
+    // January because a `date` column has to hold a day; `birthDatePrecision`
+    // is what stops anything downstream reading it as one.
+    expect((control(host, "birthDate") as HTMLInputElement).value).toBe(
+      "1890-01-01",
+    );
+    expect(
+      (control(host, "birthDateQualifier") as HTMLInputElement).value,
+    ).toBe("about");
+    expect(
+      (control(host, "birthDatePrecision") as HTMLInputElement).value,
+    ).toBe("year");
+  });
+
+  it("posts a date it could not read unchanged, rather than nothing", () => {
+    const host = mount({
+      values: {
+        ...emptyIndividualFormValues,
+        birthDate: "sometime in the 90s",
+      },
+    });
+
+    // The point of the whole ticket: an unreadable date must come back as a
+    // refusal from the server, not as a save with the date quietly missing.
+    expect((control(host, "birthDate") as HTMLInputElement).value).toBe(
+      "sometime in the 90s",
     );
   });
 
@@ -158,6 +234,16 @@ describe("the fields", () => {
     type(control(host, "surname"), "Hale");
 
     expect(onChange).toHaveBeenCalledWith("surname", "Hale");
+  });
+
+  it("reports a typed date unparsed, as the author wrote it", () => {
+    const onChange = vi.fn();
+    const host = mount({ onChange });
+
+    type(dateBox(host, "Born"), "abt 1890");
+
+    // The form holds the phrasing; the parsing happens on the way out.
+    expect(onChange).toHaveBeenCalledWith("birthDate", "abt 1890");
   });
 });
 
@@ -186,9 +272,7 @@ describe("errors", () => {
       },
     });
 
-    expect(control(host, "deathDate").getAttribute("aria-invalid")).toBe(
-      "true",
-    );
+    expect(dateBox(host, "Died").getAttribute("aria-invalid")).toBe("true");
     expect(control(host, "givenName").getAttribute("aria-invalid")).toBe(
       "false",
     );
@@ -197,8 +281,26 @@ describe("errors", () => {
     ).toBeNull();
 
     // One message on the page, not one per field with an empty one hiding
-    // under each of the nine that are fine.
+    // under each of the ones that are fine.
     expect(host.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+
+  it("shows a qualifier's own message under its date", () => {
+    // Only a hand-made POST can get here, since nobody types a qualifier any
+    // more — but a message with no field to hang under is a message nobody
+    // reads, which is the silent drop this ticket exists to prevent.
+    const host = mount({
+      fieldErrors: {
+        birthDatePrecision:
+          "That is not one of the options for how much of a date is known.",
+      },
+    });
+
+    const box = dateBox(host, "Born");
+    expect(box.getAttribute("aria-invalid")).toBe("true");
+    expect(host.textContent).toContain(
+      "That is not one of the options for how much of a date is known.",
+    );
   });
 });
 
@@ -210,9 +312,11 @@ describe("prefilling from a record", () => {
     sex: "unknown",
     birthDate: null,
     birthDateQualifier: "exact",
+    birthDatePrecision: "day",
     birthPlace: null,
     deathDate: null,
     deathDateQualifier: "exact",
+    deathDatePrecision: "day",
     deathPlace: null,
     notes: null,
   };
@@ -224,21 +328,34 @@ describe("prefilling from a record", () => {
     });
   });
 
-  it("carries every recorded value through unchanged", () => {
+  it("writes each date back as the sentence the author would have typed", () => {
     const recorded: IndividualFields = {
       givenName: "Rose",
       surname: "Hale",
       sex: "female",
-      birthDate: "1890-04-12",
+      birthDate: "1890-01-01",
       birthDateQualifier: "about",
+      birthDatePrecision: "year",
       birthPlace: "Cork",
       deathDate: "1953-11-02",
-      deathDateQualifier: "before",
+      deathDateQualifier: "exact",
+      deathDatePrecision: "day",
       deathPlace: "Dublin",
       notes: "From the 1911 census.",
     };
 
-    expect(individualFormValuesFrom(recorded)).toEqual(recorded);
+    expect(individualFormValuesFrom(recorded)).toEqual({
+      givenName: "Rose",
+      surname: "Hale",
+      sex: "female",
+      // Not "1 January 1890": the precision says the day was never recorded,
+      // and prefilling it would put a fact in the author's mouth.
+      birthDate: "about 1890",
+      birthPlace: "Cork",
+      deathDate: "2 November 1953",
+      deathPlace: "Dublin",
+      notes: "From the 1911 census.",
+    });
   });
 
   it("fills every field the fieldset renders", () => {
@@ -247,8 +364,11 @@ describe("prefilling from a record", () => {
     // turns into an uncontrolled one without saying so.
     const values = individualFormValuesFrom(unknown);
 
-    for (const name of FIELD_NAMES) {
-      expect(typeof values[name], `${name} is not prefilled`).toBe("string");
+    for (const name of Object.keys(emptyIndividualFormValues)) {
+      expect(
+        typeof values[name as keyof IndividualFormValues],
+        `${name} is not prefilled`,
+      ).toBe("string");
     }
   });
 

@@ -178,6 +178,28 @@ where nothing can query or format it; and the four values are exactly GEDCOM
 5.5.1's date modifiers, so `ABT`/`BEF`/`AFT` survive a round trip through
 import and export instead of being silently discarded.
 
+A qualifier answers only half the question, though, and E4-T2 (`YEO-39`) added
+the other half. "How far can this be trusted" is not the same question as "how
+much of a date did the source actually give" — a headstone gives a year, a
+census gives a year, a parish register gives a day, and none of those is
+`about`. So every date column has a **second** sibling, `date_precision`
+(`day` / `month` / `year`, defaulting to `day`).
+
+The storage convention it establishes: a coarse date is stored on the **first
+day of the month or year it names**, and that day is an _anchor_, never an
+assertion. Nothing reads it as a day on its own — `formatQualifiedDate` prints
+`1890`, `isImpossibleOrder` widens it back out to the whole year before
+comparing, and a GEDCOM export will emit `1890`. Without the column, a year off
+a headstone had nowhere to go but 1 January, and every reader downstream then
+repeated that invented day as though somebody had recorded it.
+
+That pair is what lets the date field be a single text box. `lib/parse-date.ts`
+turns `about 1890`, `c. 1890`, `before 1920` or `12 March 1890` into the three
+columns; `formatQualifiedDate` turns them back into the same sentence, so the
+round trip closes and an edit form can prefill free text without a second
+formatter. An author never picks a qualifier from a dropdown before typing a
+date — see `components/DateField.tsx`.
+
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations

@@ -54,6 +54,35 @@ export const DATE_QUALIFIERS = ["exact", "about", "before", "after"] as const;
 export type DateQualifier = (typeof DATE_QUALIFIERS)[number];
 
 /**
+ * How much of the date sitting beside this was actually known (E4-T2,
+ * `YEO-39`), mirroring the `date_precision` enum in `db/schema.ts`.
+ *
+ * A qualifier and a precision answer two different questions, and a record
+ * needs both. The qualifier says how far the source can be trusted — "about
+ * 1890" against a flat "1890". The precision says how much of a date the
+ * source supplied at all: a headstone gives a year, a census gives a year, a
+ * parish register gives a day. Neither `exact` nor `about` can say "the year
+ * 1890, day unknown" — and stamping `exact` on a value whose day nobody typed
+ * is how a third of a family tree ends up born on 1 January.
+ *
+ * Postgres `date` has no room for the distinction: the column must hold a real
+ * calendar day or nothing at all. So a year-only date is stored as the **first
+ * day of the year it names, with `precision = 'year'` in the column beside
+ * it**, and that pair — never the day on its own — is what every reader goes
+ * through. `dateRange` below widens the anchor back out to the whole year
+ * before comparing anything; `formatQualifiedDate` renders `1890` rather than
+ * `1 January 1890`. The anchor is a storage detail, not a claim about when
+ * somebody was born, and nothing formats, compares or exports it as one.
+ *
+ * `day` is the default, which is what makes the column safe to add: every row
+ * written before it existed came from an `<input type="date">` and therefore
+ * carries a full date, so it keeps meaning exactly what it meant before.
+ */
+export const DATE_PRECISIONS = ["day", "month", "year"] as const;
+
+export type DatePrecision = (typeof DATE_PRECISIONS)[number];
+
+/**
  * How long a free-text note may be.
  *
  * Larger than a name and much smaller than an essay, because an essay belongs
@@ -129,10 +158,19 @@ function isRealCalendarDay(year: number, month: number, day: number): boolean {
  * needs no interpretation.
  *
  * What this deliberately does *not* do is parse "abt 1890" or "before 1920".
- * That is E4-T2's date input, whose whole job is to turn what a person types
- * into a date plus a qualifier — the pair the validators then check. Putting a
- * second, looser parser here would give the app two answers to "what does
- * `1890` mean", and the one nobody could see would win on the import path.
+ * That is `lib/parse-date.ts` (E4-T2, `YEO-39`), whose whole job is to turn
+ * what a person types into a date, a qualifier and a precision — the three the
+ * validators then check. Putting a second, looser parser here would give the
+ * app two answers to "what does `1890` mean", and the one nobody could see
+ * would win on the import path.
+ *
+ * That division survived the free-text date field rather than being undone by
+ * it. `lib/parse-date.ts` runs in the browser and hands this an ISO day; this
+ * stays the single strict gate in front of the column, so a hand-made POST
+ * gets the same answer as a form. When the text cannot be parsed the field
+ * posts it unchanged, which is what turns "I cannot read that" into an
+ * ordinary validation issue against the date rather than a silently empty
+ * column.
  *
  * @returns the date, `null` when absent, or `undefined` when it is not a
  *   usable date — the caller turns that into an issue
@@ -188,14 +226,27 @@ export function readEnum<T extends string>(
  * around 1889 or 1890" and accept.
  *
  * So each date becomes an interval and the rule fires only when the intervals
- * cannot overlap:
+ * cannot overlap. The precision widens the stored anchor day into the span it
+ * stands for first, and the qualifier is then read against that span:
  *
- * | qualifier | means | interval |
+ * | precision | anchor `1890-01-01` stands for |
+ * | --- | --- |
+ * | `day` | `[1890-01-01, 1890-01-01]` |
+ * | `month` | `[1890-01-01, 1890-01-31]` |
+ * | `year` | `[1890-01-01, 1890-12-31]` |
+ *
+ * | qualifier | means | interval, over that span `[s, e]` |
  * | --- | --- | --- |
- * | `exact` | that day | `[d, d]` |
- * | `before` | at some point up to then | `(−∞, d]` |
- * | `after` | at some point from then on | `[d, +∞)` |
+ * | `exact` | somewhere in the span | `[s, e]` |
+ * | `before` | at some point up to then | `(−∞, e]` |
+ * | `after` | at some point from then on | `[s, +∞)` |
  * | `about` | roughly then, unquantified | `(−∞, +∞)` |
+ *
+ * Widening by precision is not a nicety. A year-only date is stored on the
+ * first of January (see `DATE_PRECISIONS`), so without it a person born
+ * 1890-06-01 who died "in 1890" would be refused — the death's anchor,
+ * 1890-01-01, reads as five months before the birth. Comparing spans is what
+ * keeps the anchor from being mistaken for an assertion.
  *
  * `about` widening to everything is the conservative reading, and the right
  * one for a validator: the alternative is inventing a tolerance (five years?
@@ -206,21 +257,66 @@ export function readEnum<T extends string>(
 function dateRange(
   date: string,
   qualifier: DateQualifier,
+  precision: DatePrecision,
 ): { earliest: string | null; latest: string | null } {
+  const { start, end } = precisionSpan(date, precision);
+
   switch (qualifier) {
     case "exact":
-      return { earliest: date, latest: date };
+      return { earliest: start, latest: end };
     case "before":
-      return { earliest: null, latest: date };
+      return { earliest: null, latest: end };
     case "after":
-      return { earliest: date, latest: null };
+      return { earliest: start, latest: null };
     case "about":
       return { earliest: null, latest: null };
   }
 }
 
-/** A date column read together with its `date_qualifier` sibling. */
-export type QualifiedDate = { date: string; qualifier: DateQualifier };
+/**
+ * The first and last day the stored anchor stands for, given its precision.
+ *
+ * A malformed anchor is left alone rather than repaired: `readDate` has
+ * already refused anything that is not a real `YYYY-MM-DD`, so the only way to
+ * arrive here with one is a row written before that check existed, and
+ * inventing a span for it would be worse than treating it as the single day it
+ * claims to be.
+ */
+function precisionSpan(
+  date: string,
+  precision: DatePrecision,
+): { start: string; end: string } {
+  const match = ISO_DATE_PATTERN.exec(date);
+  if (!match || precision === "day") return { start: date, end: date };
+
+  const [, year, month] = match;
+  if (precision === "year") {
+    return { start: `${year}-01-01`, end: `${year}-12-31` };
+  }
+
+  // Day 0 of the *next* month is the last day of this one, which is how the
+  // length of February gets decided by the calendar rather than by a table.
+  const lastDay = new Date(
+    Date.UTC(Number(year), Number(month), 0),
+  ).getUTCDate();
+  return {
+    start: `${year}-${month}-01`,
+    end: `${year}-${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+/**
+ * A date column read together with its `date_qualifier` and `date_precision`
+ * siblings.
+ *
+ * `precision` is optional and defaults to `day`, which is both the column
+ * default and the only thing a caller that predates E4-T2 could have meant.
+ */
+export type QualifiedDate = {
+  date: string;
+  qualifier: DateQualifier;
+  precision?: DatePrecision;
+};
 
 /**
  * Whether `later` could not possibly have come at or after `first`.
@@ -242,8 +338,16 @@ export function isImpossibleOrder(
   first: QualifiedDate,
   later: QualifiedDate,
 ): boolean {
-  const firstEarliest = dateRange(first.date, first.qualifier).earliest;
-  const laterLatest = dateRange(later.date, later.qualifier).latest;
+  const firstEarliest = dateRange(
+    first.date,
+    first.qualifier,
+    first.precision ?? "day",
+  ).earliest;
+  const laterLatest = dateRange(
+    later.date,
+    later.qualifier,
+    later.precision ?? "day",
+  ).latest;
 
   if (firstEarliest === null || laterLatest === null) return false;
   return laterLatest < firstEarliest;

@@ -75,9 +75,11 @@ describe("createIndividual", () => {
       sex: "female",
       birthDate: "1815-12-10",
       birthDateQualifier: "about",
+      birthDatePrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "before",
+      deathDatePrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });
@@ -90,9 +92,11 @@ describe("createIndividual", () => {
       sex: "female",
       birthDate: "1815-12-10",
       birthDateQualifier: "about",
+      birthDatePrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "before",
+      deathDatePrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });
@@ -124,9 +128,11 @@ describe("createIndividual", () => {
       sex: "unknown",
       birthDate: null,
       birthDateQualifier: "exact",
+      birthDatePrecision: "day",
       birthPlace: null,
       deathDate: null,
       deathDateQualifier: "exact",
+      deathDatePrecision: "day",
       deathPlace: null,
       notes: null,
     });
@@ -162,6 +168,7 @@ describe("updateIndividual", () => {
       surname: "New",
       birthDate: "1900-01-01",
       birthDateQualifier: "about",
+      birthDatePrecision: "day",
     });
 
     expect(result).toEqual({ status: "updated", id });
@@ -170,6 +177,7 @@ describe("updateIndividual", () => {
       surname: "New",
       birthDate: "1900-01-01",
       birthDateQualifier: "about",
+      birthDatePrecision: "day",
     });
   });
 
