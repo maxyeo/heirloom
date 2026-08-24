@@ -61,6 +61,17 @@ dense article read as an encyclopedia entry rather than a blog post.
 | `--color-link` | `#3366cc` | unvisited |
 | `--color-link-visited` | `#795cb2` | visited |
 | `--color-link-new` | `#d33` | a red link (E11-T6) |
+| `--color-diff-added` | `#eaf3ff` | a block a revision added |
+| `--color-diff-added-rule` | `#a3d3ff` | its left border |
+| `--color-diff-removed` | `#fef6e7` | a block a revision removed |
+| `--color-diff-removed-rule` | `#ffe49c` | its left border |
+
+**On the diff pair.** Blue and yellow, not green and red. That is
+MediaWiki's choice and the reason for it is worth keeping: red and green
+are the pair the most common colour blindness collapses. The compare view
+does not lean on colour alone anyway — every changed block is labelled in
+words and marked in the gutter — but the default should still be legible
+to everyone who reads it at a glance.
 
 ### Layout
 
