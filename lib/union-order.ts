@@ -27,10 +27,12 @@ import { MAX_UNION_SEQUENCE } from "./union-input";
  * instead is keep the disturbance as small as it can possibly be:
  *
  * - **Only the person's own unions are written.** Nobody else's rows move.
- * - **Only the numbers those rows already hold between them are used.** The
- *   set of `sequence` values in the table is unchanged; the unions permute
- *   among them. A partner's other unions therefore keep every gap they had,
- *   and can only be re-sorted against the *shared* union.
+ * - **Only the numbers those rows already hold between them are used.** Where
+ *   those numbers already differ, the unions simply permute among them and
+ *   the set of `sequence` values in the table is unchanged — so a partner's
+ *   other unions keep every gap they had, and can only be re-sorted against
+ *   the *shared* union. (Where two of them are equal the set does change, by
+ *   necessity; see the next section.)
  *
  * That second rule is why this is not simply "write 0, 1, 2…". `nextSequence`
  * in `lib/save-union.ts` numbers a new union one past the highest either
@@ -46,6 +48,17 @@ import { MAX_UNION_SEQUENCE } from "./union-input";
  * expresses nothing. `resequenceUnions` therefore returns a *strictly*
  * increasing run, pushing duplicates upward — which is also what makes the
  * order the author was already looking at durable rather than incidental.
+ *
+ * This is the one place the "no new numbers" rule has to give, and it is worth
+ * being plain about the cost: a lifted duplicate can land on a number the
+ * shared union's *other* partner was already using, making an order that was
+ * unambiguous for them ambiguous again. Nudging past their occupied values
+ * too was considered and rejected — it would mean reading and reasoning about
+ * every partner's unions to place one person's, and each nudge could collide
+ * with a third person in turn. The bounded version is preferred: a tie that
+ * was already being settled by `start_date` and id goes on being settled by
+ * them, for one person, rather than a reorder walking the graph. Two equal
+ * numbers were never an order in the first place.
  *
  * ## Purity
  *

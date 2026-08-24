@@ -1,4 +1,4 @@
-import { eq, like, or } from "drizzle-orm";
+import { eq, like, or, TransactionRollbackError } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
@@ -319,5 +319,62 @@ describe("reorderUnions", () => {
     }
 
     expect(await orderInTree(rose)).toEqual([c, a, b]);
+  });
+});
+
+/**
+ * The transaction semantics `reorderUnions` depends on, pinned against the
+ * real driver.
+ *
+ * These do not exercise the module at all, and they are here rather than
+ * nowhere because getting them wrong is what the first version of it did.
+ * `db.transaction` is postgres.js's `begin`, which issues `commit` when its
+ * callback resolves and `rollback` only when it *throws* — so an early
+ * `return { status: "stale" }` after a write reports a refusal and commits it
+ * anyway. That is a property of the driver, invisible in TypeScript, and
+ * shared by every module here that writes more than one row inside a
+ * transaction.
+ *
+ * The reorder's own vanished-row branch cannot be driven from a test without
+ * interleaving a second connection inside an open transaction, which nothing
+ * in this repo has a fixture for. What is asserted instead is the mechanism
+ * that branch relies on, which is where the bug actually lived.
+ */
+describe("the transaction semantics reorderUnions relies on", () => {
+  it("commits a write that the callback returns normally after", async () => {
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+    const union = await marry(rose, thomas);
+
+    const result = await db.transaction(async (tx) => {
+      await tx
+        .update(schema.unions)
+        .set({ sequence: 99 })
+        .where(eq(schema.unions.id, union));
+      // Exactly the shape the broken version used to refuse with.
+      return "refused";
+    });
+
+    expect(result).toBe("refused");
+    expect(await sequenceOf(union)).toBe(99);
+  });
+
+  it("unwinds a write when the callback asks to roll back", async () => {
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+    const union = await marry(rose, thomas);
+    const before = await sequenceOf(union);
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx
+          .update(schema.unions)
+          .set({ sequence: 99 })
+          .where(eq(schema.unions.id, union));
+        tx.rollback();
+      }),
+    ).rejects.toBeInstanceOf(TransactionRollbackError);
+
+    expect(await sequenceOf(union)).toBe(before);
   });
 });

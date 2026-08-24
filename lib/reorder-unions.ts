@@ -1,4 +1,4 @@
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql, TransactionRollbackError } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { isRowId } from "@/lib/row-id";
@@ -27,10 +27,11 @@ import {
  * ## What one transaction buys, and what it does not
  *
  * A reorder is a multi-row write: moving the second marriage above the first
- * renumbers both, and half of that is an order nobody asked for. So every
- * update runs in one `db.transaction`, exactly as `lib/remove-from-tree.ts`
- * does, and the rows are re-read *inside* it rather than trusted from the
- * client's view.
+ * renumbers both, and half of that is an order nobody asked for. So it runs in
+ * one `db.transaction`, exactly as `lib/remove-from-tree.ts` does, the rows
+ * are re-read *inside* it rather than trusted from the client's view, and the
+ * renumbering itself is a single `update` rather than one per union — which is
+ * what leaves no window between writes to lose a row in.
  *
  * What the transaction does not buy is isolation from a concurrent writer.
  * Postgres runs at READ COMMITTED and nothing here takes a row lock — the same
@@ -40,10 +41,15 @@ import {
  * - the submitted order is compared against the unions the transaction
  *   actually read, so a list with a union added or removed since the page was
  *   rendered is refused as `stale` rather than written as a partial order;
- * - every update re-states *whose* union it is in SQL, so a partner detached
- *   in another tab cannot have their former union renumbered by this one;
- * - every update asks for its row back with `returning`, so a union deleted
- *   between the read and the write is reported rather than counted as done.
+ * - the update re-states *whose* unions these are in SQL, so a partner
+ *   detached in another tab cannot have their former union renumbered by this
+ *   one;
+ * - the update asks for its rows back with `returning`, so a union deleted
+ *   between the read and the write is caught — and unwound with
+ *   `tx.rollback()`, because postgres.js commits a callback that merely
+ *   returns. That is not a hypothetical: it is the bug the first version of
+ *   this module shipped with, and `lib/reorder-unions.db.test.ts` now pins
+ *   both halves of the semantics.
  *
  * Two people reordering the same person's unions in the same second is still
  * last-write-wins. That is what a lock would order rather than resolve, and it
@@ -155,68 +161,100 @@ export async function reorderUnions(
   const move = readMove(input.move);
   if (submitted === null || move === null) return { status: "stale" };
 
-  return db.transaction(async (tx): Promise<ReorderUnionsResult> => {
-    const [person] = await tx
-      .select({ id: schema.individuals.id })
-      .from(schema.individuals)
-      .where(eq(schema.individuals.id, personId));
-    if (person === undefined) return { status: "person-not-found" };
+  try {
+    return await db.transaction(async (tx): Promise<ReorderUnionsResult> => {
+      const [person] = await tx
+        .select({ id: schema.individuals.id })
+        .from(schema.individuals)
+        .where(eq(schema.individuals.id, personId));
+      if (person === undefined) return { status: "person-not-found" };
 
-    const current = await ownUnions(tx, personId);
+      const current = await ownUnions(tx, personId);
 
-    /**
-     * The client's list has to describe the same unions the transaction just
-     * read. When it does not, a union was added or removed — or a partner
-     * detached — since the page was rendered, and the author is looking at a
-     * list that no longer exists. Writing their move into it would silently
-     * place the union they could not see.
-     *
-     * Membership rather than exact order: a *reordering* by somebody else in
-     * the meantime is the last-write-wins case this module's header accepts,
-     * and refusing it would mean two people tidying the same family both being
-     * told to reload, forever.
-     */
-    if (!sameMembers(submitted, current.map((union) => union.id))) {
-      return { status: "stale" };
-    }
+      /**
+       * The client's list has to describe the same unions the transaction just
+       * read. When it does not, a union was added or removed — or a partner
+       * detached — since the page was rendered, and the author is looking at a
+       * list that no longer exists. Writing their move into it would silently
+       * place the union they could not see.
+       *
+       * Membership rather than exact order: a *reordering* by somebody else in
+       * the meantime is the last-write-wins case this module's header accepts,
+       * and refusing it would mean two people tidying the same family both being
+       * told to reload, forever.
+       */
+      if (!sameMembers(submitted, current.map((union) => union.id))) {
+        return { status: "stale" };
+      }
 
-    const desired = applyMove(submitted, move);
-    if (desired === null) return { status: "unchanged" };
+      const desired = applyMove(submitted, move);
+      if (desired === null) return { status: "unchanged" };
 
-    const sequences = resequenceUnions(current.map((union) => union.sequence));
-    const held = new Map(current.map((union) => [union.id, union.sequence]));
+      const sequences = resequenceUnions(current.map((union) => union.sequence));
+      const held = new Map(current.map((union) => [union.id, union.sequence]));
 
-    /**
-     * Which rows actually move. Usually two on a tree that has been ordered
-     * before, and most of them on one where every union still sits at the
-     * column's default — the first reorder is also what turns a table full of
-     * zeroes into an order that survives.
-     */
-    const moving = desired
-      .map((unionId, index) => ({ unionId, sequence: sequences[index] }))
-      .filter(({ unionId, sequence }) => held.get(unionId) !== sequence);
+      /**
+       * Which rows actually move. Usually two on a tree that has been ordered
+       * before, and most of them on one where every union still sits at the
+       * column's default — the first reorder is also what turns a table full of
+       * zeroes into an order that survives.
+       */
+      const moving = desired
+        .map((unionId, index) => ({ unionId, sequence: sequences[index] }))
+        .filter(({ unionId, sequence }) => held.get(unionId) !== sequence);
 
-    /**
-     * Nothing differs: the author asked for the order the rows were already
-     * in. Reported rather than dressed up as success, so that
-     * `app/tree/actions.ts` can skip discarding a good cache entry for a
-     * diagram that did not change — and so that no statement runs at all.
-     */
-    if (moving.length === 0) return { status: "unchanged" };
+      /**
+       * Nothing differs: the author asked for the order the rows were already
+       * in. Reported rather than dressed up as success, so that
+       * `app/tree/actions.ts` can skip discarding a good cache entry for a
+       * diagram that did not change — and so that no statement runs at all.
+       */
+      if (moving.length === 0) return { status: "unchanged" };
 
-    for (const { unionId, sequence } of moving) {
-      const [written] = await tx
+      /**
+       * One statement, not one per union.
+       *
+       * The first version of this was a loop, and it was wrong in a way worth
+       * recording. `db.transaction` is postgres.js's `begin`, which rolls back
+       * only when its callback *throws*: a `return { status: "stale" }` from
+       * inside the loop resolves normally, so Postgres commits whatever earlier
+       * iterations had already written. The function reported a refusal and left
+       * the tree half-reordered — the exact state the paragraph above promises
+       * cannot happen. `lib/remove-from-tree.ts` is safe from the same trap only
+       * because every one of its early returns happens before its single write.
+       *
+       * A `case` over the ids collapses the whole reorder into one `update`, so
+       * there is no window between writes to lose a row in and nothing to
+       * unwind by hand. What is left is the `returning` count, and the one
+       * honest way out of a transaction that has already written is
+       * `tx.rollback()` — which throws, which is what actually rolls back.
+       */
+      const assignment = sql.join(
+        moving.map(
+          ({ unionId, sequence }) =>
+            sql`when ${eq(schema.unions.id, unionId)} then ${sequence}::integer`,
+        ),
+        sql` `,
+      );
+
+      const written = await tx
         .update(schema.unions)
-        .set({ sequence })
+        .set({
+          sequence: sql`case ${assignment} else ${schema.unions.sequence} end`,
+        })
         .where(
           and(
-            eq(schema.unions.id, unionId),
+            inArray(
+              schema.unions.id,
+              moving.map(({ unionId }) => unionId),
+            ),
             /**
              * Re-stated rather than trusted from the read above, the way
-             * `deleteEmptyUnion` re-states its own condition: between the two
-             * statements another tab may have detached this person from the
-             * union, and renumbering a union that is no longer theirs would
-             * move a row on the strength of a relationship that has gone.
+             * `deleteEmptyUnion` re-states its own condition: between the select
+             * and this update another tab may have detached this person from
+             * one of these unions, and renumbering a union that is no longer
+             * theirs would move a row on the strength of a relationship that
+             * has gone.
              */
             or(
               eq(schema.unions.partnerAId, personId),
@@ -226,11 +264,27 @@ export async function reorderUnions(
         )
         .returning({ id: schema.unions.id });
 
-      // The row was deleted or detached under us. The whole reorder rolls
-      // back, because a half-applied order is one nobody asked for.
-      if (written === undefined) return { status: "stale" };
-    }
+      /**
+       * Fewer rows than the order named: one was deleted or detached between the
+       * select above and this update, which READ COMMITTED allows within a
+       * single transaction because every statement takes a fresh snapshot.
+       *
+       * `tx.rollback()` rather than a plain return, because a plain return is
+       * what commits. It throws `TransactionRollbackError`, which is caught
+       * below and turned back into a status; any other error is a genuine fault
+       * and keeps propagating, exactly as it would from `lib/save-page.ts`.
+       */
+      if (written.length !== moving.length) tx.rollback();
 
-    return { status: "reordered", unionIds: desired };
-  });
+      return { status: "reordered", unionIds: desired };
+    });
+  } catch (error) {
+    /**
+     * The only rollback this module asks for, and the only one it catches.
+     * Anything else — the database unreachable, a constraint violated — is a
+     * fault rather than a state the panel renders, and is left to throw.
+     */
+    if (error instanceof TransactionRollbackError) return { status: "stale" };
+    throw error;
+  }
 }

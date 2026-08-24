@@ -141,10 +141,27 @@ describe("UnionOrder", () => {
     expect(host.textContent).toContain("Unknown partner");
   });
 
+  it("gives two unrecorded partners buttons a reader can tell apart", async () => {
+    // The name cannot distinguish these rows, so the accessible name carries
+    // the position too. Without it both pairs read "Move an unrecorded
+    // partner earlier" and a screen-reader user cannot say which they pressed.
+    const first = spouse({ unionId: unionId(4) });
+    const second = spouse({ unionId: unionId(5) });
+    const { host, submissions } = mount([first, second]);
+
+    await press(
+      findButton(host, "Move an unrecorded partner from position 2 earlier"),
+    );
+
+    expect(reorderInputFromFormData(submissions[0]).move).toBe(
+      formatMove("up", second.unionId),
+    );
+  });
+
   it("posts the whole order and the button that was pressed", async () => {
     const { host, submissions } = mount([THOMAS, WALTER]);
 
-    await press(findButton(host, "Move Walter Byrne earlier"));
+    await press(findButton(host, "Move Walter Byrne from position 2 earlier"));
 
     expect(submissions).toHaveLength(1);
     expect(reorderInputFromFormData(submissions[0])).toEqual({
@@ -161,7 +178,7 @@ describe("UnionOrder", () => {
     // would make every arrow on the panel do whatever the last one rendered.
     const { host, submissions } = mount([THOMAS, WALTER]);
 
-    await press(findButton(host, "Move Thomas Hale later"));
+    await press(findButton(host, "Move Thomas Hale from position 1 later"));
 
     expect(reorderInputFromFormData(submissions[0]).move).toBe(
       formatMove("down", THOMAS.unionId),
@@ -171,10 +188,10 @@ describe("UnionOrder", () => {
   it("does not offer a move that would run off either end", () => {
     const { host } = mount([THOMAS, WALTER]);
 
-    expect(findButton(host, "Move Thomas Hale earlier").disabled).toBe(true);
-    expect(findButton(host, "Move Thomas Hale later").disabled).toBe(false);
-    expect(findButton(host, "Move Walter Byrne earlier").disabled).toBe(false);
-    expect(findButton(host, "Move Walter Byrne later").disabled).toBe(true);
+    expect(findButton(host, "Move Thomas Hale from position 1 earlier").disabled).toBe(true);
+    expect(findButton(host, "Move Thomas Hale from position 1 later").disabled).toBe(false);
+    expect(findButton(host, "Move Walter Byrne from position 2 earlier").disabled).toBe(false);
+    expect(findButton(host, "Move Walter Byrne from position 2 later").disabled).toBe(true);
   });
 
   it("shows the new order when the revalidated graph arrives", async () => {
@@ -183,7 +200,7 @@ describe("UnionOrder", () => {
     // canvas, and this list re-renders from the new `spouses` prop.
     const { host, action } = mount([THOMAS, WALTER]);
 
-    await press(findButton(host, "Move Walter Byrne earlier"));
+    await press(findButton(host, "Move Walter Byrne from position 2 earlier"));
 
     rerender(
       host,
@@ -206,7 +223,7 @@ describe("UnionOrder", () => {
       reply: failedUnionOrderState("The unions have changed."),
     });
 
-    await press(findButton(host, "Move Walter Byrne earlier"));
+    await press(findButton(host, "Move Walter Byrne from position 2 earlier"));
 
     expect(host.querySelector("[role='alert']")?.textContent).toBe(
       "The unions have changed.",

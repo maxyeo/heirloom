@@ -153,14 +153,14 @@ export function UnionOrder({
                   <MoveButton
                     direction="up"
                     unionId={spouse.unionId}
-                    label={`Move ${name} earlier`}
+                    label={`Move ${name} from position ${index + 1} earlier`}
                     glyph="↑"
                     disabled={pending || index === 0}
                   />
                   <MoveButton
                     direction="down"
                     unionId={spouse.unionId}
-                    label={`Move ${name} later`}
+                    label={`Move ${name} from position ${index + 1} later`}
                     glyph="↓"
                     disabled={pending || index === last}
                   />
@@ -205,9 +205,18 @@ function MoveButton({
       value={formatMove(direction, unionId)}
       disabled={disabled}
       /*
-        The arrow is decoration; the accessible name says which union moves and
-        which way. Without it a screen reader reads a column of "up, down, up,
-        down" with nothing to distinguish one row's pair from the next.
+        The arrow is decoration; the accessible name says which union moves,
+        where it is now, and which way it goes. Without it a screen reader
+        reads a column of "up, down, up, down" with nothing to distinguish one
+        row's pair from the next.
+
+        The position is in there rather than only the partner's name because
+        the name does not always distinguish them: both partner columns are
+        nullable, and a person with two unrecorded partners would otherwise
+        get two buttons called "Move an unrecorded partner earlier". It is
+        also the thing a reader most needs from a reorder control — where the
+        row currently sits — and the visible list numbers each row for the
+        same reason.
       */
       aria-label={label}
       className="rounded-panel border border-rule px-2 py-0.5 text-note hover:bg-wash disabled:opacity-40"
