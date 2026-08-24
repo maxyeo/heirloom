@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import type { EntryLink } from "@/lib/entry-link";
@@ -60,6 +60,55 @@ export async function getPageBySlug(
     .limit(1);
 
   return entry;
+}
+
+/**
+ * Which of these slugs exist — the whole of red-link resolution (E11-T6,
+ * `YEO-76`), in one query.
+ *
+ * ## Why it takes a set and not a slug
+ *
+ * Because the acceptance criterion is "one query per page render, not one per
+ * link", and a `slugExists(slug)` would make the wrong thing the easy thing:
+ * every caller would sit in a loop, the page would still render correctly,
+ * and nothing on screen would show that an entry with thirty links now costs
+ * thirty round trips. There is no single-slug entry point here on purpose.
+ * `resolveEntryLinks` collects a body's slugs in one pass and calls this once.
+ *
+ * ## Why the whole row set comes back rather than a count
+ *
+ * A count answers "do all of these exist", which is not the question — the
+ * caller needs to know *which* ones do, and asking Postgres for the matching
+ * slugs is the same index scan either way.
+ *
+ * An empty request issues no query at all. That is not a micro-optimisation:
+ * `inArray` with an empty list generates SQL that Drizzle has to special-case,
+ * and a body with no links — the common case in a young wiki — should not
+ * reach the database to be told nothing is missing.
+ *
+ * The slugs come out of stored HTML, so they are untrusted input. They reach
+ * Postgres through `inArray`, which parameterises them; nothing is
+ * interpolated into SQL text. That matters here for the reason it matters in
+ * `getPageBySlug`: there is no RLS under this database and one role for
+ * everyone.
+ *
+ * @param slugs the slugs to check, in any order, duplicates allowed
+ * @returns the subset that exists, as a set
+ */
+export async function findExistingSlugs(
+  slugs: Iterable<string>,
+): Promise<Set<string>> {
+  // Distinct before asking: an entry linked nine times in one article is one
+  // value in the `IN` list, not nine.
+  const wanted = [...new Set(slugs)];
+  if (wanted.length === 0) return new Set();
+
+  const rows = await db
+    .select({ slug: schema.pages.slug })
+    .from(schema.pages)
+    .where(inArray(schema.pages.slug, wanted));
+
+  return new Set(rows.map((row) => row.slug));
 }
 
 /**

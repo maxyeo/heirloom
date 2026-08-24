@@ -89,6 +89,28 @@ Two things follow, and both are deliberate:
   the same hrefs back the same way (`lib/entry-links.ts`, E2-T5), so an author
   who opens a broken link is told it is broken rather than shown an address.
 
+`lib/red-links.ts` is that resolution (E11-T6). It scans a body **once** for
+internal links, asks `findExistingSlugs` **once** which of them exist, and
+rewrites only the anchors that lead nowhere — red, tooltipped, and pointing at
+the create flow pre-titled with the link's own text. The query count is a
+property of the shape rather than a rule to remember: the scan is separate
+from the lookup, the lookup takes a set, and the rewrite is synchronous, so
+there is no `await` inside it for a per-link query to hide in. A body with no
+internal links reaches the database not at all.
+
+Three consequences worth stating, because each is load-bearing:
+
+- **It runs after the sanitiser, never before.** The rewrite adds `class` and
+  `title`, which the allowlist strips. Sanitising afterwards would undo the
+  feature silently, so `lib/red-links.test.ts` asserts it.
+- **Nothing is stored.** An entry that gets written turns every link to it
+  blue on the next render, with no sweep over stored HTML and no edit to the
+  linking entry. Renames and deletions run the same way in reverse.
+- **`entryLinkProps` is the shared decision.** Callers that render links as
+  React elements rather than as a chunk of HTML — the person infobox (E11-T5)
+  — go through it too, and collect their slugs into the same one query. What a
+  red link _is_ has one description.
+
 ### Secrets
 
 `DATABASE_URL`, `AUTH_SECRET`, and `AUTH_GOOGLE_SECRET` live in Vercel's

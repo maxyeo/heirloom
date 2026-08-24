@@ -21,6 +21,11 @@ import { createPageAction, type NewEntryFormState } from "@/app/wiki/actions";
  * form's job ends the moment the entry exists and the author is standing in
  * it.
  *
+ * The one field can arrive pre-filled. A red link (E11-T6) is a link to an
+ * entry nobody has written, and following one lands here with the link's text
+ * already in the box — so "someone should write about Walter" and "start
+ * writing about Walter" are the same click. See `suggestedTitle` below.
+ *
  * ## Why a Client Component
  *
  * `useActionState` gives two things a plain server-rendered form cannot: the
@@ -37,7 +42,21 @@ import { createPageAction, type NewEntryFormState } from "@/app/wiki/actions";
  * message — which is why `required` is on the input as well, so the one
  * refusal the author can actually cause is caught by the browser first.
  */
-export function NewEntryForm() {
+export type NewEntryFormProps = {
+  /**
+   * What to pre-fill the field with — the text of the red link that led here
+   * (E11-T6), or the empty string when the author came to `/wiki/new`
+   * themselves.
+   *
+   * A `defaultValue` rather than a `value`: the field stays uncontrolled, so
+   * the author types over the suggestion the way they would over anything
+   * else, and a re-render after a refused submission does not throw their
+   * edit away.
+   */
+  suggestedTitle?: string;
+};
+
+export function NewEntryForm({ suggestedTitle = "" }: NewEntryFormProps) {
   const titleId = useId();
   const errorId = useId();
 
@@ -56,6 +75,7 @@ export function NewEntryForm() {
         id={titleId}
         name="title"
         type="text"
+        defaultValue={suggestedTitle}
         // The only field, on a page the author navigated to in order to fill
         // it in. Anywhere else this would be presumptuous.
         autoFocus
