@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import type { EntryLink } from "@/lib/entry-link";
 import { compareEntriesByTitle } from "@/lib/page-index";
 
 /**
@@ -124,6 +125,48 @@ export async function listPages(): Promise<WikiEntrySummary[]> {
       slug: schema.pages.slug,
       title: schema.pages.title,
       updatedAt: schema.pages.updatedAt,
+    })
+    .from(schema.pages);
+
+  // Sorting in place is safe: `entries` is an array Drizzle built for this
+  // call, and nothing else holds a reference to it.
+  return entries.sort(compareEntriesByTitle);
+}
+
+/**
+ * Every entry, as something a person can be linked to (E2-T2).
+ *
+ * ## Why not `listPages`
+ *
+ * Because the two lists answer different questions and carry different
+ * columns. The index renders titles and dates; this renders a link on a panel
+ * and fills a picker, so it needs the `id` — which is what
+ * `individuals.page_id` holds — and has no use for `updated_at`. Widening
+ * `WikiEntrySummary` to serve both would put a date on a list nobody dates and
+ * an id on a list that links by slug, which is the drift the narrow-select
+ * note above exists to prevent.
+ *
+ * ## Why the whole table again
+ *
+ * The same judgement `listPages` makes, and `getFamilyGraph` before it: the
+ * corpus is a family's entries, a few hundred at the outside. `/tree` reads
+ * this once per load and hands it to the canvas, where `lib/entry-link.ts`
+ * matches it against the people already in the browser — so opening one
+ * person's panel after another costs no further request, which is the property
+ * the whole canvas is built on.
+ *
+ * Ordered by the same comparator and for the same reason: "alphabetical" is a
+ * question about language rather than about collation, and the answer has to
+ * be the application's rather than the database's. See `lib/page-index.ts`.
+ *
+ * @returns every entry, alphabetically by title
+ */
+export async function listEntryLinks(): Promise<EntryLink[]> {
+  const entries = await db
+    .select({
+      id: schema.pages.id,
+      slug: schema.pages.slug,
+      title: schema.pages.title,
     })
     .from(schema.pages);
 
