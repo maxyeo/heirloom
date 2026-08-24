@@ -277,6 +277,43 @@
       scroll-margin-top: calc(var(--header-height) + 0.5rem);
     }
 
+    /*
+     * The section `[edit]` beside a heading (E11-T4).
+     *
+     * MediaWiki's own declaration set, which is the point: this is the one
+     * piece of Wikipedia furniture a reader recognises without reading it, and
+     * it recognises as small sans-serif brackets at the end of the heading
+     * line. `--text-note` exists for exactly this — docs/design-tokens.md
+     * names `[edit]` links as what that size is *for* — and the face and the
+     * weight are reset because `h2` is serif at 400 while `h3` and below are
+     * bold sans, so an inherited `[edit]` would be three different things down
+     * one page.
+     *
+     * Floated rather than laid out, so it reaches the end of the heading's
+     * line without the heading becoming a flex container: `h1, h2` carry the
+     * bottom rule (docs/design-tokens.md), and that rule has to stay the width
+     * of the column rather than the width of the heading's text. A float sits
+     * above it, exactly as it does on Wikipedia. `right` rather than
+     * `inline-end` follows `figure` below — the two floats in this file should
+     * not be spelled two different ways.
+     *
+     * `user-select: none` keeps the word "edit" out of a reader's selection
+     * when they drag across a section to copy it. It is furniture rather than
+     * prose, and it is the only thing inside the body that is.
+     *
+     * No colour is declared. The anchor takes the palette's one blue from the
+     * base `a` rule, and hovers, visits and focuses like every other link.
+     */
+    .wiki-editsection {
+      float: right;
+      margin-inline-start: 1em;
+      font-family: var(--font-sans);
+      font-size: var(--text-note);
+      font-style: normal;
+      font-weight: 400;
+      user-select: none;
+    }
+
     p {
       margin-block: 0 0.75rem;
     }

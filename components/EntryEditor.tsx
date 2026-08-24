@@ -23,6 +23,7 @@ import {
 } from "@/lib/editor-extensions";
 import { entryHref, entrySlugFromHref, searchEntries } from "@/lib/entry-links";
 import type { TitledEntry } from "@/lib/page-index";
+import { headingNodePosition } from "@/lib/section-edit";
 
 /**
  * The WYSIWYG editor for an entry body (E1-T2, `YEO-16`).
@@ -96,6 +97,23 @@ export interface EntryEditorProps {
    * reads without a `LIMIT`. See `lib/entry-links.ts`.
    */
   entries?: readonly TitledEntry[];
+  /**
+   * Which heading to put the cursor in when the editor mounts, in document
+   * order — E11-T4's section `[edit]` links (`YEO-74`), which open the whole
+   * editor rather than a fragment of the document and make up for it by
+   * landing the author in the section they clicked.
+   *
+   * An index rather than a heading id because this document has no ids in it:
+   * `lib/sanitize-html.ts` allows none through, so the ids in the article are
+   * minted at render time by `lib/article-outline.ts` and exist only there.
+   * The nth heading is the same heading in both, which is all this needs. The
+   * route resolves the one for the other; see `lib/section-edit.ts`.
+   *
+   * Read once, when the editor is created. Nothing re-reads it, because
+   * moving an author's cursor for them is only ever defensible as an answer
+   * to the click that brought them here.
+   */
+  initialHeadingIndex?: number | null;
 }
 
 /**
@@ -112,6 +130,7 @@ export function EntryEditor({
   onChange,
   label = "Entry body",
   entries = NO_ENTRIES,
+  initialHeadingIndex = null,
 }: EntryEditorProps) {
   const bodyFieldRef = useRef<HTMLInputElement>(null);
 
@@ -164,6 +183,44 @@ export function EntryEditor({
       bodyFieldRef.current.value = editor.getHTML();
     }
   }, [editor]);
+
+  /**
+   * Open on the section the author pressed `[edit]` on (E11-T4, `YEO-74`).
+   *
+   * Two steps rather than one, and the split is the point:
+   *
+   *   - `focus(position, { scrollIntoView: false })` puts the cursor at the
+   *     start of the heading — the author can retitle the section, or press
+   *     Down and be in its first paragraph. ProseMirror's own scrolling is
+   *     switched off here because it computes its margins itself and knows
+   *     nothing about the sticky header, so it would land the heading
+   *     underneath it.
+   *   - `scrollIntoView` on the heading element is the browser's own, and it
+   *     honours the `scroll-margin-top` that `.wiki-body h2, h3, h4` carries
+   *     for exactly this (`app/globals.css`). The editing surface wears
+   *     `wiki-body`, so a section reached in the editor stops in the same
+   *     place a section reached from the contents panel does.
+   *
+   * Every way this can fail is a way it does nothing: no section asked for,
+   * an index the document has no heading for, a node whose DOM is not an
+   * element. The author gets an editor open at the top of the entry, which is
+   * where the Edit tab would have put them anyway.
+   */
+  useEffect(() => {
+    if (!editor || initialHeadingIndex === null) return;
+
+    const position = headingNodePosition(editor.state.doc, initialHeadingIndex);
+    if (position === null) return;
+
+    // Inside the heading rather than before it: a position between two blocks
+    // is a gap selection, and typing there would start a new paragraph above
+    // the section instead of editing it.
+    editor.commands.focus(position + 1, { scrollIntoView: false });
+
+    const heading = editor.view.nodeDOM(position);
+    if (heading instanceof HTMLElement)
+      heading.scrollIntoView({ block: "start" });
+  }, [editor, initialHeadingIndex]);
 
   return (
     <div className="rounded-panel border border-rule bg-paper">

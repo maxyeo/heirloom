@@ -10,6 +10,7 @@ import { getEntryPerson } from "@/lib/entry-person";
 import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
 import { resolveEntryLinks } from "@/lib/red-links";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { insertSectionEditLinks } from "@/lib/section-edit";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -122,7 +123,28 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    * one would undo the red links. It splices opening tags by byte offset, so
    * the heading ids written above survive untouched.
    */
-  const articleHtml = await resolveEntryLinks(outline.html, findExistingSlugs);
+  /**
+   * The section `[edit]` links (E11-T4): one inside every heading, pointing at
+   * the editor opened on that section, built from the ids the outline above
+   * just wrote. See `lib/section-edit.ts`.
+   *
+   * **Between the outline and the red links, and that is the whole of the
+   * ordering.** It is not a sanitiser pass — it copies the document and
+   * inserts a fixed shape of markup before each closing heading tag — so it
+   * cannot strip the `class` and `title` the rewrite below adds. Running it
+   * here rather than after keeps that rewrite the last thing to touch the
+   * document, which is the invariant `lib/red-links.test.ts` guards.
+   */
+  const bodyWithEditLinks = insertSectionEditLinks(
+    outline.html,
+    outline.headings,
+    entry.slug,
+  );
+
+  const articleHtml = await resolveEntryLinks(
+    bodyWithEditLinks,
+    findExistingSlugs,
+  );
 
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile

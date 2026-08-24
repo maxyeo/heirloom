@@ -3,8 +3,14 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { EntryEditForm } from "@/components/EntryEditForm";
+import { readArticleOutline } from "@/lib/article-outline";
 import { getPageBySlug, listPages } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import {
+  SECTION_PARAM,
+  sectionHeadingIndex,
+  sectionParam,
+} from "@/lib/section-edit";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -30,6 +36,12 @@ export const dynamic = "force-dynamic";
  */
 type EntryEditPageProps = {
   params: Promise<{ slug: string }>;
+  /**
+   * `?section=<heading id>` — which section the author pressed `[edit]` on
+   * (E11-T4, `YEO-74`). Absent when they opened the editor from the tab row,
+   * which is the ordinary case.
+   */
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 /**
@@ -54,7 +66,10 @@ export async function generateMetadata({
   return { title: entry ? `Editing ${entry.title}` : "Not found" };
 }
 
-export default async function EntryEditPage({ params }: EntryEditPageProps) {
+export default async function EntryEditPage({
+  params,
+  searchParams,
+}: EntryEditPageProps) {
   const { slug } = await params;
   const entry = await loadEntry(slug);
 
@@ -83,19 +98,48 @@ export default async function EntryEditPage({ params }: EntryEditPageProps) {
     title,
   }));
 
+  /**
+   * Sanitised on the way out, as the read route does. The editor sets this as
+   * its starting document, so it is markup heading for a browser — and a row
+   * written before E1-T4, by `db:seed`, or by hand in a SQL console has never
+   * been through the sanitiser on write.
+   */
+  const initialHtml = sanitizeHtml(entry.bodyHtml);
+
+  /**
+   * Which heading the author pressed `[edit]` on, as a position in the
+   * document (E11-T4, `YEO-74`).
+   *
+   * Resolved here rather than in the browser, and handed down as an *index*
+   * rather than as the id it arrived as. The editor's document has no ids in
+   * it — the sanitiser allows none — so the client would otherwise need
+   * `readArticleOutline`, and behind it `sanitize-html` and its parser, in the
+   * bundle to answer a question this render can answer for free. The nth
+   * heading of the outline is the nth heading of the editor's document; see
+   * `lib/section-edit.ts`.
+   *
+   * The outline is only read when a section was actually asked for, which is
+   * the minority of visits: the tab row's Edit link carries no parameter.
+   *
+   * A heading id that matches nothing resolves to `null` and the editor opens
+   * normally, at the top, saying nothing about it. That is the common case
+   * rather than a corner — ids are derived from heading text, so renaming a
+   * section invalidates every `[edit]` link an open tab is still showing.
+   */
+  const section = sectionParam((await searchParams)[SECTION_PARAM]);
+  const headingIndex =
+    section === null
+      ? null
+      : sectionHeadingIndex(readArticleOutline(initialHtml).headings, section);
+
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
       <EntryEditForm
         slug={entry.slug}
         title={entry.title}
         entries={entries}
-        /**
-         * Sanitised on the way out, as the read route does. The editor sets
-         * this as its starting document, so it is markup heading for a
-         * browser — and a row written before E1-T4, by `db:seed`, or by hand
-         * in a SQL console has never been through the sanitiser on write.
-         */
-        initialHtml={sanitizeHtml(entry.bodyHtml)}
+        initialHtml={initialHtml}
+        initialHeadingIndex={headingIndex}
       />
     </main>
   );
