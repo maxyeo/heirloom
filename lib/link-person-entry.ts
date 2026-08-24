@@ -43,6 +43,14 @@ import type { Transaction } from "@/lib/save-page";
  * for its no-op check, and it matters more here because the duplicate is not a
  * redundant history row but a whole second entry with its own address.
  *
+ * ## Two locks, two different races
+ *
+ * The person's row orders two writes to the *same person*; the entry's row
+ * orders two people reaching for the *same entry*. Both are needed and
+ * neither substitutes for the other — see `setPersonEntry`, where the second
+ * is taken. They are always acquired in that order, so nothing here can
+ * deadlock against itself.
+ *
  * ## Why unlinking is not a delete
  *
  * The ticket is explicit, and the schema already models it: `page_id` is
@@ -217,23 +225,48 @@ export async function setPersonEntry(
       return { status: "unlinked" };
     }
 
+    /**
+     * `for("update")` on the *entry*, and this is the lock that makes the
+     * one-entry-one-person check below mean anything.
+     *
+     * `lockPerson` above holds the acting person's row, which orders two
+     * writes to the same person and nothing else. The race that matters here
+     * is a different shape: Rose's panel and Thomas's panel, each linking to
+     * the same entry at the same moment. Those are two transactions holding
+     * two *different* individual rows, so without a lock on something they
+     * share they both read "nobody has this entry" and both write it —
+     * producing exactly the state this check exists to prevent. Postgres runs
+     * at READ COMMITTED, so a plain `SELECT` is no defence: neither
+     * transaction can see the other's uncommitted row.
+     *
+     * The entry is the thing they share, so it is the thing to lock. The
+     * second transaction blocks here, then re-reads after the lock is granted
+     * (READ COMMITTED re-evaluates once the lock is held) and correctly finds
+     * the entry taken. Locks are always taken person-first then entry, in both
+     * of this module's functions, so there is no cycle to deadlock on.
+     */
     const [entry] = await tx
       .select({ slug: schema.pages.slug, title: schema.pages.title })
       .from(schema.pages)
-      .where(eq(schema.pages.id, input.pageId));
+      .where(eq(schema.pages.id, input.pageId))
+      .for("update");
 
     if (!entry) return { status: "entry-not-found" };
 
     /**
-     * One entry, one person. `individuals.page_id` has no unique index — the
-     * column predates this ticket and adding one would be a migration that
-     * fails on any data already in the state it forbids — so the rule lives
-     * here, in the only code that writes the column.
+     * One entry, one person — the rule lives here, in the only code that
+     * writes the column, rather than in `db/schema.ts`.
      *
-     * It is worth having rather than pedantry: E2-T3 reads this link from the
-     * other end, and an entry two people claim has no single answer to "view
-     * in tree". Read inside the same transaction as the write, so a second
-     * person cannot claim the entry between the check and the update.
+     * A unique index on `individuals.page_id` would express it in the database
+     * and would apply cleanly: Postgres treats every `NULL` as distinct, so a
+     * column that is null on every existing row cannot violate it. It is not
+     * in this ticket because a migration is a deploy-ordering commitment
+     * (docs/architecture.md) and the lock above already closes the race — but
+     * it is the right home for the rule, and E2-T3 is the ticket that reads
+     * this link from the other end and will care most.
+     *
+     * It is worth having rather than pedantry: an entry two people claim has
+     * no single answer to "view in tree".
      */
     const [taken] = await tx
       .select({

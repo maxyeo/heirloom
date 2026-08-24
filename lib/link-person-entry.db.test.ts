@@ -251,6 +251,33 @@ describe("setPersonEntry", () => {
     expect((await readPerson(THOMAS)).pageId).toBeNull();
   });
 
+  it("lets only one of two people win a race for the same entry", async () => {
+    /**
+     * Rose's panel and Thomas's panel, linking to the same entry in the same
+     * moment. These are two transactions holding two *different* individual
+     * rows, so the person lock orders neither of them — what serialises them
+     * is `for("update")` on the entry itself. Without it both read "nobody has
+     * this entry" (READ COMMITTED hides the other's uncommitted row) and both
+     * write it, which is the state the check exists to prevent.
+     */
+    await warmPool();
+
+    const [first, second] = await Promise.all([
+      setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE }),
+      setPersonEntry({ personId: THOMAS, pageId: LOOSE_PAGE }),
+    ]);
+
+    const outcomes = [first.status, second.status].sort();
+    expect(outcomes).toEqual(["entry-taken", "linked"]);
+
+    const claimants = await db
+      .select()
+      .from(schema.individuals)
+      .where(eq(schema.individuals.pageId, LOOSE_PAGE));
+
+    expect(claimants).toHaveLength(1);
+  });
+
   it("says nothing changed when the link is already what was asked for", async () => {
     await setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE });
 
