@@ -447,6 +447,91 @@ describe("stepchildren", () => {
     expect(box.stepchildren).toEqual([]);
   });
 
+  it("keeps two spouses' earlier families apart rather than interleaving them", () => {
+    // Both of the subject's spouses brought children from an earlier
+    // marriage. Grouped by the spouse they come through, in spouse order —
+    // the same rule the Children row follows one hop closer in. A flat sort
+    // by birth date would read as one blended family that never existed.
+    const graph: FamilyGraph = {
+      people: [
+        person("subject", "Rose", "Bennett"),
+        person("first", "Thomas", "Hale"),
+        person("second", "Walter", "Shaw"),
+        person("earlier-a", "Mary", "Ellis"),
+        person("earlier-b", "Ada", "Quill"),
+        person("edward", "Edward", "Hale", { birthDate: "1929-01-01" }),
+        person("nell", "Nell", "Shaw", { birthDate: "1927-01-01" }),
+      ],
+      unions: [
+        union("own-1", "subject", "first", { sequence: 2 }),
+        union("own-2", "subject", "second", { sequence: 3 }),
+        union("his-earlier", "earlier-a", "first", { sequence: 1 }),
+        union("her-earlier", "earlier-b", "second", { sequence: 1 }),
+      ],
+      childLinks: [
+        childOf("his-earlier", "edward"),
+        childOf("her-earlier", "nell"),
+      ],
+    };
+
+    // Nell is the older of the two, so birth order alone would put her first.
+    expect(names(boxFor("subject", graph).stepchildren)).toEqual([
+      "Edward Hale",
+      "Nell Shaw",
+    ]);
+  });
+
+  it("orders one spouse's earlier families by when they happened", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person("subject", "Rose", "Bennett"),
+        person("spouse", "Thomas", "Hale"),
+        person("first-wife", "Mary", "Ellis"),
+        person("second-wife", "Ada", "Quill"),
+        person("older", "Edward", "Hale", { birthDate: "1929-01-01" }),
+        person("younger", "Nell", "Hale", { birthDate: "1925-01-01" }),
+      ],
+      unions: [
+        union("own", "subject", "spouse", { sequence: 3 }),
+        union("his-first", "first-wife", "spouse", { sequence: 1 }),
+        union("his-second", "second-wife", "spouse", { sequence: 2 }),
+      ],
+      childLinks: [
+        childOf("his-second", "younger"),
+        childOf("his-first", "older"),
+      ],
+    };
+
+    // Nell was born first, but she belongs to the later marriage.
+    expect(names(boxFor("subject", graph).stepchildren)).toEqual([
+      "Edward Hale",
+      "Nell Hale",
+    ]);
+  });
+
+  it("names a stepchild once when two of a spouse's unions reach them", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person("subject", "Rose", "Bennett"),
+        person("spouse", "Thomas", "Hale"),
+        person("edward", "Edward", "Hale", { birthDate: "1929-01-01" }),
+      ],
+      unions: [
+        union("own", "subject", "spouse", { sequence: 2 }),
+        union("his-first", null, "spouse", { sequence: 1 }),
+        union("his-third", null, "spouse", { sequence: 3 }),
+      ],
+      childLinks: [
+        childOf("his-first", "edward"),
+        childOf("his-third", "edward", "adopted"),
+      ],
+    };
+
+    expect(names(boxFor("subject", graph).stepchildren)).toEqual([
+      "Edward Hale",
+    ]);
+  });
+
   it("takes a child link recorded as `step` at its word", () => {
     // The author said so on the link itself, so it belongs in the same row as
     // the derived ones rather than in a second idea spelled the same way.

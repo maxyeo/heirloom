@@ -57,6 +57,10 @@ export async function readEntryInfobox(
   const subject = await getEntryPerson(pageId);
   if (!subject) return null;
 
+  // Deliberately sequential, not a `Promise.all`. Most entries in a family
+  // wiki are about a place, an heirloom or a story, and starting the graph
+  // read beside this one would load the whole family on every one of them to
+  // save a round trip on the few that need it.
   const graph = await getFamilyGraph();
 
   return derivePersonInfobox(graph, subject.id, await readPageSlugs(graph));

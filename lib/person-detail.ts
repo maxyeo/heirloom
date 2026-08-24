@@ -268,8 +268,14 @@ function appendTo<T>(map: Map<string, T[]>, key: string, value: T): void {
  * remarried after he died"), so sorting on dates alone would scramble the
  * story every time a year is missing. Ties break on id so the list is stable
  * rather than dependent on how the rows happened to arrive.
+ *
+ * Exported alongside `compareByBirth` for E11-T5's infobox, which walks one
+ * hop further out — a spouse's *other* marriages — and has to put those
+ * families in the order they happened too. Sorting rather than trusting the
+ * order the rows arrived in is the point of the function, so a second caller
+ * that re-derived it would be a second answer to the same question.
  */
-function compareUnions(a: GraphUnion, b: GraphUnion): number {
+export function compareUnions(a: GraphUnion, b: GraphUnion): number {
   if (a.sequence !== b.sequence) return a.sequence - b.sequence;
   const byDate = compareNullableDates(a.startDate, b.startDate);
   return byDate !== 0 ? byDate : a.id.localeCompare(b.id);

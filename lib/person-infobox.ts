@@ -2,6 +2,7 @@ import type { FamilyGraph, GraphPerson, GraphUnion } from "./family-graph";
 import { formatQualifiedYear } from "./format-date";
 import {
   compareByBirth,
+  compareUnions,
   derivePersonDetail,
   type SpouseLink,
 } from "./person-detail";
@@ -118,7 +119,15 @@ export type PersonInfobox = {
    * makes half-siblings read as the separate families they are.
    */
   children: InfoboxPerson[];
-  /** Derived, never stored — see the header. */
+  /**
+   * Derived, never stored — see the header.
+   *
+   * Ordered the way the Children row is, one level further out: by the spouse
+   * they come through, then by that spouse's earlier families in the order
+   * those happened, then by birth. A person with two spouses who each brought
+   * children from an earlier marriage has two families here, not one list
+   * interleaved by birthday.
+   */
   stepchildren: InfoboxPerson[];
   parents: InfoboxPerson[];
 };
@@ -284,38 +293,49 @@ function namedPeople(infobox: PersonInfobox): InfoboxPerson[] {
  *
  * Unions the subject belongs to are skipped: those hold their own children,
  * which the Children row already has.
+ *
+ * ## Why it walks spouse by spouse rather than gathering and sorting
+ *
+ * A flat sort by birth date would be shorter, and it would interleave two
+ * unrelated families for anyone who married twice and whose *both* spouses
+ * brought children. That is the same mistake the Children row exists not to
+ * make — half-siblings read as the separate families they are because they are
+ * grouped by the union they arrived through. One hop further out the grouping
+ * is the spouse, then that spouse's earlier families in the order they
+ * happened, then birth order inside each. `dedupe` at the call site handles
+ * the child who is reachable twice.
  */
 function derivedStepchildren(
   graph: FamilyGraph,
   spouses: readonly SpouseLink[],
   byId: ReadonlyMap<string, GraphPerson>,
 ): GraphPerson[] {
-  const spouseIds = new Set(
-    spouses.flatMap((spouse) => (spouse.person ? [spouse.person.id] : [])),
-  );
-  if (spouseIds.size === 0) return [];
-
   const ownUnionIds = new Set(spouses.map((spouse) => spouse.unionId));
 
-  const stepUnionIds = new Set(
-    graph.unions
+  const childrenOfUnion = new Map<string, GraphPerson[]>();
+  for (const link of graph.childLinks) {
+    const child = byId.get(link.childId);
+    if (!child) continue;
+    const existing = childrenOfUnion.get(link.unionId);
+    if (existing) existing.push(child);
+    else childrenOfUnion.set(link.unionId, [child]);
+  }
+
+  return spouses.flatMap((spouse) => {
+    if (!spouse.person) return [];
+    const spouseId = spouse.person.id;
+
+    return graph.unions
       .filter(
         (union) =>
           !ownUnionIds.has(union.id) &&
-          ((union.partnerAId !== null && spouseIds.has(union.partnerAId)) ||
-            (union.partnerBId !== null && spouseIds.has(union.partnerBId))),
+          (union.partnerAId === spouseId || union.partnerBId === spouseId),
       )
-      .map((union) => union.id),
-  );
-  if (stepUnionIds.size === 0) return [];
-
-  return graph.childLinks
-    .flatMap((link) => {
-      if (!stepUnionIds.has(link.unionId)) return [];
-      const child = byId.get(link.childId);
-      return child ? [child] : [];
-    })
-    .sort(compareByBirth);
+      .sort(compareUnions)
+      .flatMap((union) =>
+        [...(childrenOfUnion.get(union.id) ?? [])].sort(compareByBirth),
+      );
+  });
 }
 
 /**
