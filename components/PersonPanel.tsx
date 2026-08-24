@@ -1,0 +1,347 @@
+"use client";
+
+import { useEffect, useRef, type Ref } from "react";
+
+import type {
+  ChildLink,
+  ParentLink,
+  PersonDetail,
+  PersonSummary,
+  SpouseLink,
+} from "@/lib/person-detail";
+
+/**
+ * The read-only detail panel for one person (E2-T1).
+ *
+ * ## What it is not
+ *
+ * It does no reasoning. `derivePersonDetail` turns the graph into the value
+ * this renders, so "who are Rose's children" is answered and tested in a file
+ * with no DOM in it, and the component below is a list of rows. Editing is
+ * E3-T3 and an "open entry" link is E2-T2 — the panel deliberately stops at
+ * showing what is recorded, so that neither of those has to unpick a form
+ * that was guessed at here first.
+ *
+ * ## Where the dismissal logic lives
+ *
+ * Escape is handled here rather than by the canvas, because "the panel closes
+ * on Escape" is a property of the panel and testable as one. The other two
+ * routes in are the canvas's business and stay there: React Flow deselects a
+ * node when the pane is clicked, and the tree turns that into a close.
+ *
+ * `onClose` is also what returns focus to the node — the caller knows which
+ * DOM node that is and this does not.
+ */
+export interface PersonPanelProps {
+  detail: PersonDetail;
+  /** Follow a relative's link. The panel stays open, showing them instead. */
+  onSelectPerson: (personId: string) => void;
+  onClose: () => void;
+  /** So the canvas can measure the panel and pan out from under it. */
+  ref?: Ref<HTMLElement>;
+}
+
+export function PersonPanel({
+  detail,
+  onSelectPerson,
+  onClose,
+  ref,
+}: PersonPanelProps) {
+  const headingRef = useRef<HTMLDivElement>(null);
+
+  // Escape closes from wherever focus happens to be — on the node that opened
+  // the panel, or on a link inside it. A listener on the document is what
+  // covers both; a handler on the panel would only catch the second.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  // Move focus into the panel when it opens, and again when it swaps to a
+  // different person. Without this a keyboard user selects a node and their
+  // focus is still on the canvas behind a panel they cannot reach; with it,
+  // Tab walks the record and Escape puts them back where they started —
+  // which is what makes "focus returns to the node" mean anything.
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [detail.id]);
+
+  return (
+    <aside
+      ref={ref}
+      aria-label={`Details for ${detail.name}`}
+      className="absolute inset-x-0 bottom-0 z-10 flex max-h-[60%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
+    >
+      <div className="flex items-start justify-between gap-2 border-b border-rule-soft px-4 py-3">
+        {/*
+          `tabIndex={-1}` rather than a heading that is naturally focusable:
+          the panel is not a modal dialog and should not trap anything, it
+          just needs one place to put focus that reads out who this is.
+        */}
+        <div ref={headingRef} tabIndex={-1} className="min-w-0">
+          <h2 className="truncate border-0 pb-0 text-h2">{detail.name}</h2>
+          {detail.lifespan ? (
+            <p className="text-caption text-ink-muted">{detail.lifespan}</p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="shrink-0 rounded-panel border border-rule px-2 py-1 text-note hover:bg-wash"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-caption">
+          <Fact term="Born" event={detail.birth} />
+          <Fact term="Died" event={detail.death} />
+          {detail.sex === "unknown" ? null : (
+            <>
+              <dt className="text-ink-muted">Sex</dt>
+              <dd className="capitalize">{detail.sex}</dd>
+            </>
+          )}
+        </dl>
+
+        <Section title="Parents" count={detail.parents.length}>
+          {detail.parents.map((parent) => (
+            <ParentRow
+              key={`${parent.unionId}-${parent.person.id}`}
+              parent={parent}
+              onSelectPerson={onSelectPerson}
+            />
+          ))}
+        </Section>
+
+        <Section
+          title={detail.spouses.length === 1 ? "Spouse" : "Spouses"}
+          count={detail.spouses.length}
+        >
+          {detail.spouses.map((spouse) => (
+            <SpouseRow
+              key={spouse.unionId}
+              spouse={spouse}
+              onSelectPerson={onSelectPerson}
+            />
+          ))}
+        </Section>
+
+        <Section title="Children" count={detail.children.length}>
+          {detail.children.map((child) => (
+            <ChildRow
+              key={`${child.unionId}-${child.person.id}`}
+              child={child}
+              onSelectPerson={onSelectPerson}
+            />
+          ))}
+        </Section>
+
+        {detail.notes ? (
+          <section>
+            <h3>Notes</h3>
+            {/*
+              Plain text, rendered as text. `individuals.notes` is a `text`
+              column that no editor and no sanitiser has ever been near — it is
+              not a wiki body, and treating it like one would be the one place
+              in the app where unsanitised markup reaches the browser.
+              `whitespace-pre-line` keeps the line breaks somebody typed.
+            */}
+            <p className="text-caption whitespace-pre-line">{detail.notes}</p>
+          </section>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function Fact({
+  term,
+  event,
+}: {
+  term: string;
+  event: PersonDetail["birth"];
+}) {
+  if (!event) return null;
+
+  return (
+    <>
+      <dt className="text-ink-muted">{term}</dt>
+      <dd>
+        {event.date}
+        {event.date && event.place ? ", " : null}
+        {event.place}
+      </dd>
+    </>
+  );
+}
+
+/**
+ * A relatives list, or the honest statement that there is not one.
+ *
+ * "No children recorded" rather than an omitted heading, because the two mean
+ * different things in genealogy and the difference is the whole point: an
+ * absent section reads as "this panel does not show children", and what is
+ * true is "nobody has entered any".
+ */
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <h3>{title}</h3>
+      {count === 0 ? (
+        <p className="text-caption text-ink-muted">
+          None recorded
+        </p>
+      ) : (
+        <ul className="space-y-1">{children}</ul>
+      )}
+    </section>
+  );
+}
+
+function ParentRow({
+  parent,
+  onSelectPerson,
+}: {
+  parent: ParentLink;
+  onSelectPerson: (personId: string) => void;
+}) {
+  return (
+    <li>
+      <PersonLink person={parent.person} onSelectPerson={onSelectPerson} />
+      {parent.relation === "biological" ? null : (
+        <Qualifier text={parent.relation} />
+      )}
+    </li>
+  );
+}
+
+function SpouseRow({
+  spouse,
+  onSelectPerson,
+}: {
+  spouse: SpouseLink;
+  onSelectPerson: (personId: string) => void;
+}) {
+  return (
+    <li>
+      {spouse.person ? (
+        <PersonLink person={spouse.person} onSelectPerson={onSelectPerson} />
+      ) : (
+        // Both partner columns are nullable so that an unrecorded parent
+        // never has to be invented as a placeholder person. Saying so is
+        // more useful than dropping the union from the list.
+        <span className="text-ink-muted">Unknown partner</span>
+      )}
+      <p className="text-note text-ink-muted">{describeUnion(spouse)}</p>
+    </li>
+  );
+}
+
+function ChildRow({
+  child,
+  onSelectPerson,
+}: {
+  child: ChildLink;
+  onSelectPerson: (personId: string) => void;
+}) {
+  return (
+    <li>
+      <PersonLink person={child.person} onSelectPerson={onSelectPerson} />
+      {child.relation === "biological" ? null : (
+        <Qualifier text={child.relation} />
+      )}
+      {/*
+        Which union a child came through is what makes half-siblings legible:
+        two children by Thomas and eight by Walter is a different family from
+        ten children, and this line is the only thing that says which.
+      */}
+      <p className="text-note text-ink-muted">
+        {child.otherParent
+          ? `with ${child.otherParent.name}`
+          : "other parent unknown"}
+      </p>
+    </li>
+  );
+}
+
+/**
+ * A relative, as something you can click to move the tree onto them.
+ *
+ * A button rather than an anchor, and deliberately: this changes which node is
+ * selected on a canvas that is already open, and navigates nowhere. E2-T4 adds
+ * `/tree?person=<id>`, and *that* is the ticket where these become real links
+ * with an href worth copying.
+ */
+function PersonLink({
+  person,
+  onSelectPerson,
+}: {
+  person: PersonSummary;
+  onSelectPerson: (personId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectPerson(person.id)}
+      className="text-left text-link hover:underline"
+    >
+      {person.name}
+      {person.lifespan ? (
+        <span className="text-ink-muted"> ({person.lifespan})</span>
+      ) : null}
+    </button>
+  );
+}
+
+function Qualifier({ text }: { text: string }) {
+  return <span className="text-note text-ink-muted"> ({text})</span>;
+}
+
+const UNION_NOUN: Record<SpouseLink["type"], string> = {
+  marriage: "Married",
+  partnership: "Partnered",
+  unknown: "Together",
+};
+
+const END_NOUN: Record<SpouseLink["endReason"], string> = {
+  ongoing: "",
+  death: "ended by death",
+  divorce: "divorced",
+  separation: "separated",
+  unknown: "ended",
+};
+
+/**
+ * One line for a union: when it began, when it ended, and why.
+ *
+ * Assembled from the parts that are actually recorded rather than from a
+ * template with gaps in it — a union with no dates at all still has a type and
+ * an end reason, and "Married, divorced" is a true and useful sentence where
+ * "Married – " is neither.
+ */
+function describeUnion(spouse: SpouseLink): string {
+  const span =
+    spouse.start && spouse.end
+      ? `${spouse.start} – ${spouse.end}`
+      : // "until 1947" rather than a bare year, which on its own would read
+        // as the date they married.
+        (spouse.start ?? (spouse.end && `until ${spouse.end}`));
+
+  return [UNION_NOUN[spouse.type], span, END_NOUN[spouse.endReason]]
+    .filter(Boolean)
+    .join(", ");
+}

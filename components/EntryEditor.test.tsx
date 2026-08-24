@@ -2,14 +2,14 @@
 import { Editor } from "@tiptap/core";
 import { StarterKit } from "@tiptap/starter-kit";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { EntryEditor } from "@/components/EntryEditor";
 import {
   EDITOR_INPUT_OPTIONS,
   createEntryExtensions,
 } from "@/lib/editor-extensions";
+import { render } from "@/test/render";
 
 /**
  * The first test in this project that needs a DOM, which docs/testing.md
@@ -25,22 +25,6 @@ import {
  * below needs a live editor. The decisions those extensions encode are checked
  * without one, next to the module that makes them.
  */
-
-const roots: (() => void)[] = [];
-
-afterEach(() => {
-  while (roots.length > 0) roots.pop()?.();
-  document.body.innerHTML = "";
-});
-
-function render(ui: React.ReactElement): HTMLElement {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  act(() => root.render(ui));
-  roots.push(() => act(() => root.unmount()));
-  return host;
-}
 
 /**
  * Type into an editor the way a keyboard does.

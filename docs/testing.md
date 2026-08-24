@@ -135,7 +135,7 @@ Vitest do not support it yet — so treat those as end-to-end territory.
 
 ## Tests that need a DOM
 
-`components/EntryEditor.test.tsx` is the worked example.
+`components/PersonPanel.test.tsx` is the worked example.
 
 There is no third Vitest project for these and no `@testing-library/react`.
 A file that needs a document says so on its first line:
@@ -150,9 +150,31 @@ needs it". The editor was that first test. Everything else still runs in plain
 Node and pays nothing for a DOM it does not use, and `npm test` picks these up
 like any other file — no new script, no CI change.
 
-Rendering is eight lines of `react-dom/client` and React's own `act`, at the
-top of that file. Copy it rather than reaching for a library; if a third
-component wants it, that is the moment to extract a helper, not before.
+Rendering is `test/render.tsx`:
+
+```tsx
+import { render, rerender, unmount } from "@/test/render";
+```
+
+`render(ui)` mounts into a fresh host and returns it; `rerender(host, ui)` is a
+prop change rather than a remount, and `unmount(host)` is for the assertions
+that are *about* unmounting, such as whether a component removed a
+document-level listener. Everything mounted is torn down after each test, by an
+`afterEach` the module registers when a test file imports it.
+
+That helper is eight lines of `react-dom/client` and React's own `act`, and it
+stays that way on purpose — no queries, no `user-event`, no auto-wrapping.
+Tests reach into the returned host with plain DOM calls, which is what keeps
+"prefer no DOM" below an easy rule to follow: nothing here is *nicer* than
+testing a plain module, so nothing here tempts anyone into mounting a component
+to check a decision that could have been a function.
+
+**Third-party canvases need their browser APIs stubbed.**
+`components/FamilyTree.test.tsx` mounts a real React Flow canvas, and React
+Flow measures nodes with a `ResizeObserver` and reads the zoom out of a
+`DOMMatrixReadOnly` — neither of which jsdom implements. Two no-op classes in a
+`beforeAll` are enough; nothing in that file depends on a measurement, only on
+clicks landing on the right elements.
 
 **Prefer no DOM.** Most of what looks like component behaviour is a decision
 that can be moved into a plain module and checked in Node —
@@ -160,6 +182,13 @@ that can be moved into a plain module and checked in Node —
 configuration for exactly that reason, and `lib/editor-extensions.test.ts`
 checks it without a document. Reach for jsdom only for what genuinely needs
 one: mounting, and the behaviour of a live editor.
+
+The person detail panel (E2-T1) is the fullest worked example of the split.
+Everything it *says* — who counts as a spouse, which union a child arrived
+through, how a qualified date reads — is derived in `lib/person-detail.ts` and
+asserted against a literal `FamilyGraph` with no document in sight. What is
+left for jsdom is only what cannot exist without one: Escape closing the panel,
+focus returning to the node, and a click on a canvas node opening it at all.
 
 ## Why `test:db` is not in CI
 

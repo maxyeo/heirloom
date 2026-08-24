@@ -17,26 +17,38 @@ export type GraphPerson = {
   sex: "male" | "female" | "other" | "unknown";
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
+  birthPlace: string | null;
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
+  deathPlace: string | null;
+  notes: string | null;
   pageId: string | null;
 };
 
 /**
- * `endDate` is deliberately absent — the tree draws a union by its start, and
- * nothing client-side reads the end date yet. Its qualifier is therefore
- * absent too: carrying a qualifier for a date the client cannot see would be
- * a field with no possible reader. The column exists in the schema, so
- * whichever view first needs it adds the pair together.
+ * `endDate` used to be absent here, on the grounds that the tree draws a union
+ * by its start and nothing client-side read the end. The detail panel (E2-T1)
+ * is the view that changed that: it lists a person's spouses, and a marriage
+ * is a span rather than a moment — "1912–1938, divorced" is most of what the
+ * row has to say. It arrives with its qualifier, as that earlier note said it
+ * should, because a date and its `date_qualifier` sibling are only ever
+ * meaningful as a pair.
+ *
+ * `type` comes along for the same reason: the panel has to head the row with
+ * a word, and "Marriage" and "Partnership" are recorded facts rather than a
+ * choice this component gets to make.
  */
 export type GraphUnion = {
   id: string;
   partnerAId: string | null;
   partnerBId: string | null;
+  type: "marriage" | "partnership" | "unknown";
   endReason: "ongoing" | "death" | "divorce" | "separation" | "unknown";
   sequence: number;
   startDate: string | null;
   startDateQualifier: DateQualifier;
+  endDate: string | null;
+  endDateQualifier: DateQualifier;
 };
 
 export type GraphChildLink = {
@@ -75,18 +87,24 @@ export async function getFamilyGraph(): Promise<FamilyGraph> {
       sex: p.sex,
       birthDate: p.birthDate,
       birthDateQualifier: p.birthDateQualifier,
+      birthPlace: p.birthPlace,
       deathDate: p.deathDate,
       deathDateQualifier: p.deathDateQualifier,
+      deathPlace: p.deathPlace,
+      notes: p.notes,
       pageId: p.pageId,
     })),
     unions: unions.map((u) => ({
       id: u.id,
       partnerAId: u.partnerAId,
       partnerBId: u.partnerBId,
+      type: u.type,
       endReason: u.endReason,
       sequence: u.sequence,
       startDate: u.startDate,
       startDateQualifier: u.startDateQualifier,
+      endDate: u.endDate,
+      endDateQualifier: u.endDateQualifier,
     })),
     childLinks,
   };
