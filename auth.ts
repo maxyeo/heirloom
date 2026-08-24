@@ -1,17 +1,7 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
-/**
- * Google sign-in proves *who* someone is. It has no opinion on whether they
- * are allowed in — anyone with a Google account can complete the handshake.
- * This allowlist is the entire membership model.
- */
-function allowedEmails(): string[] {
-  return (process.env.ALLOWED_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-}
+import { isAllowedSignIn } from "@/lib/allowed-emails";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
@@ -23,12 +13,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/signin",
   },
   callbacks: {
+    /**
+     * The membership check itself is `lib/allowed-emails.ts`, not this
+     * callback. This module calls `NextAuth()` at import time and so cannot
+     * be loaded outside the Next.js runtime — including by Vitest — which
+     * would leave the one decision that separates "has a Google account" from
+     * "may read this family's private wiki" as the only untested rule in the
+     * codebase. See `lib/allowed-emails.test.ts`.
+     */
     signIn({ user, profile }) {
-      const email = user.email?.toLowerCase();
-      if (!email) return false;
-      // Google sets email_verified on consumer accounts; refuse anything else.
-      if (profile && profile.email_verified === false) return false;
-      return allowedEmails().includes(email);
+      return isAllowedSignIn({
+        email: user.email,
+        emailVerified: profile?.email_verified,
+      });
     },
     authorized({ auth }) {
       return Boolean(auth?.user);

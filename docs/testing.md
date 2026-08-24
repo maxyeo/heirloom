@@ -125,12 +125,11 @@ which a local `createdb heirloom_test` already gives you.
 
 The harness is deliberately small, and one thing is simply not set up:
 
-- **No conventions for exercising a server action.** `vi.mock` now has exactly
-  one use — see "Mocking" below — but it stands in for a module Vitest cannot
-  load, not for behaviour worth driving. Nothing yet calls an action and
-  checks what it did. Route-handler and server-action tests (E10-T2) will be
-  the first to decide whether to mock `@/lib/session` or drive real sessions,
-  and whichever way that goes belongs back in this document.
+- **Nothing calls an action and checks what it _did_.** E10-T2 settled how an
+  action is driven at all — see "The auth boundary" below — but it drives them
+  to prove they refuse an anonymous caller, which needs no database. Asserting
+  what a signed-in call _wrote_ is still open, and would need the `db` project
+  rather than the `unit` one.
 
   E3-T4 met the same wall from the component side and went around it rather
   than through it. A Client Component that _imports_ a server action pulls
@@ -258,6 +257,155 @@ through, how a qualified date reads — is derived in `lib/person-detail.ts` and
 asserted against a literal `FamilyGraph` with no document in sight. What is
 left for jsdom is only what cannot exist without one: Escape closing the panel,
 focus returning to the node, and a click on a canvas node opening it at all.
+
+## The auth boundary
+
+`app/auth-boundary.test.ts` is the one test in here that is not about a
+feature. `docs/architecture.md`: _"a route handler that forgets
+`requireSession()` has nothing underneath it to fail safe."_ The app connects
+to Postgres as a single role rather than as the signed-in person, so there is
+no row-level security beneath a missing guard. The guard is the whole of it.
+
+**Why it enumerates the filesystem.** A test that lists the routes it checks
+covers exactly the routes somebody remembered to add to the list — which is
+the same act of remembering that calling `requireSession()` needs in the first
+place. It would be green on the day it mattered. So the routes come from
+`test/route-inventory.ts`, which walks the same `app/` tree Next routes from:
+a new route is in the test the moment the file exists, whether or not anyone
+thinks about the test.
+
+The one hand-written list is `PUBLIC_ROUTES`, and it is the safe polarity of
+one. Forgetting to add a route to it turns the suite red; it can only ever be
+used to _widen_ what is public, which is an edit that shows up in a diff.
+
+**What it checks.**
+
+1. Every route file calls `requireSession()` or `requireSessionOr401()`, and
+   imports it from `@/lib/session`. Pages are `async` Server Components, which
+   cannot be rendered under Vitest, so this half is checked statically — but
+   from the **syntax tree**, not the source text.
+
+   That distinction is the difference between a guard and a tripwire. This
+   repository explains itself in long docblocks, several of which name
+   `requireSession()` in prose, and `// await requireSession();` is exactly
+   what a half-finished edit leaves behind — a regex counts both as a guard.
+   `typescript` is already a devDependency, so `test/route-inventory.ts` uses
+   the compiler's own scanner and counts neither.
+
+   Three things have to line up, and no two of them are enough: the **import**
+   (so a bare call is not an unresolved name), the **call** (an import with no
+   call is what a guard leaves behind when someone deletes the line but not
+   the line above it), and **no shadowing**. The last is the subtle one.
+   Matching a call by name cannot see scope, so a local
+   `async function requireSession() {}` _inside_ the component satisfies the
+   first two while never reaching `@/lib/session` — the import is right there,
+   the call is right there, and neither is the boundary. Resolving scopes
+   properly means building a whole `ts.Program` and a type checker to answer
+   one question, so instead the name is simply not available to be
+   redeclared: there is no legitimate reason to call a local binding
+   `requireSession`, and forbidding it closes the hole outright.
+
+   Aliases and namespace imports both resolve, so
+   `import { requireSession as guard }` and `session.requireSession()` are
+   guards. Reporting either as unguarded would be a baffling failure.
+
+   This is the one place the auth boundary goes further than the tripwire
+   idiom of `lib/sanitize-html.call-sites.test.ts` and `app/globals.test.ts`,
+   and the reason is what is underneath it — nothing.
+
+2. Every server action is imported and **called** with no session in place,
+   and has to throw `UnauthorizedError`. These can be driven, so they are.
+3. No action hides from (2) by being declared inline, where it would have no
+   importable name. The two exemptions are `signIn` and `signOut` — the
+   session-lifecycle pair, which cannot require a session without
+   contradicting themselves.
+4. `proxy.ts`'s matcher does not exempt a private route.
+
+**Mocking, and where the line is.** `@/auth` is mocked, and nothing else is.
+It qualifies under the rule in "Mocking" above — `auth.ts` calls `NextAuth()`
+at module scope and next-auth does not load outside the Next.js runtime, so
+the import fails outright. `@/lib/session` is deliberately **not** mocked: it
+is the thing under test, so `requireSession` runs for real and throws the real
+error. Stubbing it would leave the suite asserting that actions call a
+function a test told to throw.
+
+That is the answer to the question this document used to leave open. Drive the
+real boundary; mock only the module underneath it that cannot load.
+
+The assertion is `rejects.toBeInstanceOf(UnauthorizedError)` rather than a
+message match, and the distinction earns its keep: the actions are called with
+junk arguments, and an action that validated its input _before_ checking the
+session throws a `TypeError`, which would satisfy "it threw" while proving the
+opposite of what is claimed. Reaching the boundary first is part of what is
+being asserted.
+
+**`ALLOWED_EMAILS` is the other half.** A boundary that faithfully rejects
+everyone without a session, and then hands one to anybody who can click
+"Continue with Google", is not a boundary. Google sign-in establishes identity,
+not authorisation. That decision lives in `lib/allowed-emails.ts` rather than
+in `auth.ts`, for the same import reason as above — a rule inside `auth.ts`
+cannot be tested at all — and `lib/allowed-emails.test.ts` covers it,
+including the case that matters: a real, verified Google identity that is not
+on the list is refused.
+
+**`proxy.ts` is read, not imported.** It re-exports Auth.js's `auth`, so
+importing it loads next-auth. The matcher patterns are extracted from its
+source text and then handed to `unstable_doesMiddlewareMatch`, Next's own
+testing helper for exactly this question — so the patterns come from the file
+that ships, but what they _mean_ is decided by Next rather than approximated
+here. Next cannot be given the patterns from a shared module either: it reads
+them statically at build time and ignores variables.
+
+This is where the interesting failure lives. The exemptions are **prefixes,
+not whole segments**, so `/signin` being public also makes `/signin-help`
+public, and `.*\.svg$` is not anchored to the top level, so `/wiki/anything.svg`
+is waved straight past the proxy. Neither is a live bug — no such route
+exists, and no slug can contain a dot — but neither would be noticed, either.
+The enumeration is what catches it: a route named that way fails "runs on
+%s". The `.svg` case is left as a passing test with a comment, because what
+stops it in production is the page's own `requireSession()`, which is the
+defence in depth architecture.md describes, demonstrated rather than asserted.
+
+**If you change it, break it first.** The suite was validated by mutation
+rather than by inspection. Each of these turns it red, naming the specific
+route or action at fault:
+
+| Mutation                                          | Caught by                              |
+| ------------------------------------------------- | -------------------------------------- |
+| A new unguarded page                              | `every route demands a session`        |
+| A new unguarded `route.ts` handler                | `every route demands a session`        |
+| A page in a route group, unguarded                | `every route demands a session`        |
+| A guard that is commented out                     | `every route demands a session`        |
+| A guard named only in a docblock                  | `every route demands a session`        |
+| A local declaration shadowing the guard           | `every route demands a session`        |
+| The guard's name imported from elsewhere          | `every route demands a session`        |
+| A page named `/signin-help`                       | `the proxy matcher …`                  |
+| An action with its `requireSession()` removed     | `every server action rejects …`        |
+| A new unguarded `actions.ts`, in `app/` or `lib/` | `every server action rejects …`        |
+| A new inline `"use server"` action                | `no action hides from the check above` |
+
+And two that must _not_ fail, checked as deliberately as the rest: a guard
+reached through an alias, and one reached through a namespace import. A test
+that is merely stricter is not the same as a test that is correct.
+
+The shadowing rows are why this reads the syntax tree rather than the source.
+A boundary test that cannot fail is worse than none, because it is also
+reassuring.
+
+**The checker has its own test.** `test/route-inventory.boundary-usage.test.ts`
+runs `boundaryUsageOfSource` over literal fixtures, because the suite over the
+real tree cannot reach every branch: no route aliases the guard or imports it
+as a namespace, so those paths would otherwise be code only a mutation run had
+ever executed — and they exist to _prevent_ a false failure, which is the kind
+of bug that gets an assertion deleted rather than the code fixed. The
+`shadowed` fixtures pin the other direction: each was a real false green at
+some point while this was being written.
+
+**Where it looks.** Routes come from `app/`, because that is where Next routes
+from. `"use server"` modules are looked for across `app`, `components` and
+`lib` — the directories `lib/sanitize-html.call-sites.test.ts` already scans —
+because the directive is legal in any module, and an action module outside
+`app/` would otherwise be invisible to every check above it.
 
 ## Fixtures carry the awkward value
 

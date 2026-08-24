@@ -2,11 +2,28 @@ import Link from "next/link";
 
 import { SiteChrome } from "@/app/site-chrome";
 import { ArticleHeading } from "@/components/ArticleHeading";
+import { requireSession } from "@/lib/session";
 import { siteName } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  /*
+    This page reaches no database and names nobody, so the guard is not
+    protecting the content below — `proxy.ts` already turns an anonymous
+    visitor away at the edge, and would have to be misconfigured for anything
+    here to render for a stranger.
+
+    It is here because "the proxy is the only thing standing in front of this
+    route" is a sentence that should not be true of any route
+    (docs/architecture.md: a route with nothing underneath it has nothing to
+    fail safe). The matcher is one negative lookahead, and its exemptions are
+    prefixes rather than whole segments — `app/auth-boundary.test.ts` shows
+    what that lets through. Defence in depth costs one already-cached `auth()`
+    call here, and it means every route in the app answers the same way.
+  */
+  await requireSession();
+
   const title = siteName();
 
   return (
