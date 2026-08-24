@@ -1,4 +1,4 @@
-import { createIndividualAction } from "@/app/tree/actions";
+import { addSpouseAction, createIndividualAction } from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
 import { getFamilyGraph } from "@/lib/family-graph";
@@ -30,7 +30,12 @@ export default async function TreePage() {
         <AddPersonPanel action={createIndividualAction} />
       </header>
       <div className="min-h-0 flex-1">
-        <FamilyTree graph={graph} />
+        {/*
+          The add-spouse action (E3-T4) is handed down for the same reason, and
+          one more: the canvas renders the form, so importing the action inside
+          `FamilyTree` would take `components/FamilyTree.test.tsx` down with it.
+        */}
+        <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />
       </div>
     </main>
   );

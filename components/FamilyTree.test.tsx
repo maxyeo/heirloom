@@ -4,7 +4,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { FamilyTree } from "@/components/FamilyTree";
 import type { FamilyGraph } from "@/lib/family-graph";
-import { render as mount } from "@/test/render";
+import {
+  type AddSpouseFormAction,
+  emptySpouseFormState,
+  spouseSavedState,
+} from "@/lib/spouse-form-state";
+import { render as mount, rerender } from "@/test/render";
 
 /**
  * The one thing in E2-T1 that cannot be checked without a document: that
@@ -46,9 +51,24 @@ beforeAll(() => {
   } as unknown as typeof DOMMatrixReadOnly;
 });
 
-function render(graph: FamilyGraph): HTMLElement {
-  return mount(<FamilyTree graph={graph} />);
+function render(
+  graph: FamilyGraph,
+  addSpouseAction?: AddSpouseFormAction,
+): HTMLElement {
+  return mount(<FamilyTree graph={graph} addSpouseAction={addSpouseAction} />);
 }
+
+/** Hand the canvas a new graph, as a write that revalidated `/tree` would. */
+function reseed(
+  host: HTMLElement,
+  graph: FamilyGraph,
+  addSpouseAction?: AddSpouseFormAction,
+): void {
+  rerender(host, <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />);
+}
+
+/** An add-spouse action that records nothing and refuses nothing. */
+const inertAction: AddSpouseFormAction = async () => emptySpouseFormState;
 
 function person(
   overrides: Partial<FamilyGraph["people"][number]> & {
@@ -213,5 +233,141 @@ describe("closing the panel", () => {
 
     expect(panelLabel(host)).toBeNull();
     expect(document.activeElement).toBe(nodeWrapper(host, "rose"));
+  });
+});
+
+/**
+ * The E3-T4 wiring (`YEO-32`). Everything the add-spouse form *does* is
+ * asserted in `components/AddSpouseForm.test.tsx` against a stub action; what
+ * is left for the canvas is the joins — which are exactly the kind of thing
+ * that looks right and silently does nothing.
+ */
+describe("starting the add-spouse flow", () => {
+  it("offers nothing when the canvas was given no action", () => {
+    // `/tree` always passes one, but the prop is optional so that this file
+    // and anything else can mount the canvas without reaching Auth.js.
+    const host = render(graph());
+    open(host, "rose");
+
+    expect(
+      [...host.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("Add a spouse"),
+      ),
+    ).toBe(false);
+  });
+
+  it("swaps the panel for the form, headed with the right person", () => {
+    const host = render(graph(), inertAction);
+    open(host, "rose");
+
+    click(buttonLabelled(host, "Add a spouse"));
+
+    expect(panelLabel(host)).toBe("Add a spouse for Rose Hale");
+  });
+
+  it("comes back to the panel on cancel", () => {
+    const host = render(graph(), inertAction);
+    open(host, "rose");
+    click(buttonLabelled(host, "Add a spouse"));
+
+    click(buttonLabelled(host, "Cancel"));
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+  });
+
+  it("comes back to the panel once a union has been written", async () => {
+    const host = render(graph(), async () => spouseSavedState("u2"));
+    open(host, "rose");
+    click(buttonLabelled(host, "Add a spouse"));
+
+    // The picker offers Walter even though Rose is already married to him:
+    // a couple who divorced and remarried each other is a real record.
+    click(buttonLabelled(host, "Walter Hale"));
+    // Awaited: the action is async, and the form only closes on the state it
+    // answers with.
+    await act(async () => {
+      host.querySelector("form")?.requestSubmit();
+    });
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+  });
+
+  /**
+   * The form is keyed to the person it was opened for, not to a boolean. A
+   * form headed "Add a spouse for Rose" must never be submitted against
+   * whoever the reader clicked next.
+   */
+  it("closes when the reader selects somebody else", () => {
+    const host = render(graph(), inertAction);
+    open(host, "rose");
+    click(buttonLabelled(host, "Add a spouse"));
+
+    open(host, "dora");
+
+    expect(panelLabel(host)).toBe("Details for Dora Hale");
+  });
+});
+
+/**
+ * Every E3 write calls `revalidatePath("/tree")`, so a fresh graph arrives as
+ * a prop the moment anything is saved. Dropping the selection then would close
+ * the panel of the person you just added a spouse to, at the exact moment you
+ * wanted to look at the result — which is what makes remarriage-in-place feel
+ * like it worked rather than like the canvas reset.
+ */
+describe("a fresh graph arriving after a write", () => {
+  it("keeps the panel open on the person it was open on", () => {
+    const host = render(graph());
+    open(host, "rose");
+
+    reseed(host, graph());
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(true);
+  });
+
+  it("shows what the write added", () => {
+    const host = render(graph());
+    open(host, "rose");
+    expect(host.textContent).not.toContain("Ada Hale");
+
+    // Rose gains a second union, exactly as an add-spouse save would leave it.
+    const grown = graph();
+    grown.people.push(person({ id: "ada", givenName: "Ada" }));
+    grown.unions.push({
+      id: "u2",
+      partnerAId: "rose",
+      partnerBId: "ada",
+      type: "marriage",
+      endReason: "ongoing",
+      sequence: 2,
+      startDate: null,
+      startDateQualifier: "exact",
+      endDate: null,
+      endDateQualifier: "exact",
+    });
+    reseed(host, grown);
+
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+    expect(host.textContent).toContain("Ada Hale");
+    // Rose is one node with two unions hanging off her, not two Roses.
+    expect(
+      [...host.querySelectorAll<HTMLElement>(".react-flow__node")].filter(
+        (wrapper) => wrapper.dataset.id === "rose",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("closes the panel when the person is no longer in the graph", () => {
+    const host = render(graph());
+    open(host, "dora");
+
+    // Deleted in another tab, or by E3-T8. There is no node left to select.
+    const without = graph();
+    without.people = without.people.filter((p) => p.id !== "dora");
+    without.childLinks = [];
+    reseed(host, without);
+
+    expect(panelLabel(host)).toBeNull();
   });
 });

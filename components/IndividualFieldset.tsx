@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 
+import { FormSelect } from "@/components/FormSelect";
 import {
   DATE_QUALIFIERS,
   MAX_NAME_LENGTH,
@@ -31,6 +32,13 @@ import {
  * here and the database renames anything, so a field added to the record is a
  * field added here and nowhere else.
  *
+ * `namePrefix` is the one exception, and E3-T4 is why it exists. The
+ * add-spouse form submits a person and a *union* in one request, and both
+ * records have a `notes` field — so the partner's inputs are namespaced under
+ * `partner.` and stripped back off on the server by
+ * `addSpouseInputFromFormData`. The prefix only ever moves the whole set at
+ * once, so the names stay written down here and nowhere else.
+ *
  * ## Why the inputs are controlled
  *
  * React resets an uncontrolled form on *every* submission through a form
@@ -44,6 +52,13 @@ import {
  *
  * The cost is that this half of the page needs JavaScript. On `/tree` that is
  * not a cost at all: the tree it adds to is a React Flow canvas.
+ *
+ * Controlled is necessary and, for `<select>`, not sufficient. React makes a
+ * reset harmless for inputs by writing `node.defaultValue` beside the value;
+ * it has no equivalent for a select, whose DOM default lives in each option's
+ * `defaultSelected` flag. So the three selects here are `FormSelect`, which
+ * keeps that flag in step — without it a refused submission quietly reverts
+ * `sex` to `male` and both qualifiers to `exact`. See `components/FormSelect.tsx`.
  */
 
 /**
@@ -118,6 +133,11 @@ const CONTROL_CLASS =
 export interface IndividualFieldsetProps {
   /** The current values, held by the caller. See the note on control above. */
   values: IndividualFormValues;
+  /**
+   * Prepended to every input's `name`, for a form that posts a person
+   * alongside another record. Empty by default, which is the plain case.
+   */
+  namePrefix?: string;
   /** One field changed. The caller merges it into `values`. */
   onChange: (field: IndividualField, value: string) => void;
   /** Messages to show under the inputs they belong to. Empty when all is well. */
@@ -133,6 +153,7 @@ export interface IndividualFieldsetProps {
 
 export function IndividualFieldset({
   values,
+  namePrefix = "",
   onChange,
   fieldErrors,
   disabled = false,
@@ -145,6 +166,7 @@ export function IndividualFieldset({
    * one page — E3-T4 puts an existing partner beside a new one.
    */
   const base = useId();
+  const fieldName = (field: IndividualField) => `${namePrefix}${field}`;
   const fieldId = (field: IndividualField) => `${base}-${field}`;
   const errorId = (field: IndividualField) => `${base}-${field}-error`;
   const describedBy = (field: IndividualField) =>
@@ -166,7 +188,7 @@ export function IndividualFieldset({
         <input
           ref={firstField}
           id={fieldId("givenName")}
-          name="givenName"
+          name={fieldName("givenName")}
           type="text"
           /**
            * The one field a person cannot be recorded without, so the browser
@@ -191,7 +213,7 @@ export function IndividualFieldset({
         <Label htmlFor={fieldId("surname")}>Surname</Label>
         <input
           id={fieldId("surname")}
-          name="surname"
+          name={fieldName("surname")}
           type="text"
           maxLength={MAX_NAME_LENGTH}
           autoComplete="off"
@@ -207,9 +229,9 @@ export function IndividualFieldset({
 
       <div>
         <Label htmlFor={fieldId("sex")}>Sex</Label>
-        <select
+        <FormSelect
           id={fieldId("sex")}
-          name="sex"
+          name={fieldName("sex")}
           disabled={disabled}
           value={values.sex}
           onChange={(event) => onChange("sex", event.target.value)}
@@ -222,7 +244,7 @@ export function IndividualFieldset({
               {SEX_LABELS[sex]}
             </option>
           ))}
-        </select>
+        </FormSelect>
         <FieldError id={errorId("sex")} message={fieldErrors.sex} />
       </div>
 
@@ -231,6 +253,7 @@ export function IndividualFieldset({
         dateField="birthDate"
         qualifierField="birthDateQualifier"
         qualifierLabel="How exact the birth date is"
+        fieldName={fieldName}
         values={values}
         onChange={onChange}
         fieldErrors={fieldErrors}
@@ -243,7 +266,7 @@ export function IndividualFieldset({
         <Label htmlFor={fieldId("birthPlace")}>Birth place</Label>
         <input
           id={fieldId("birthPlace")}
-          name="birthPlace"
+          name={fieldName("birthPlace")}
           type="text"
           maxLength={MAX_NAME_LENGTH}
           autoComplete="off"
@@ -265,6 +288,7 @@ export function IndividualFieldset({
         dateField="deathDate"
         qualifierField="deathDateQualifier"
         qualifierLabel="How exact the death date is"
+        fieldName={fieldName}
         values={values}
         onChange={onChange}
         fieldErrors={fieldErrors}
@@ -277,7 +301,7 @@ export function IndividualFieldset({
         <Label htmlFor={fieldId("deathPlace")}>Death place</Label>
         <input
           id={fieldId("deathPlace")}
-          name="deathPlace"
+          name={fieldName("deathPlace")}
           type="text"
           maxLength={MAX_NAME_LENGTH}
           autoComplete="off"
@@ -298,7 +322,7 @@ export function IndividualFieldset({
         <Label htmlFor={fieldId("notes")}>Notes</Label>
         <textarea
           id={fieldId("notes")}
-          name="notes"
+          name={fieldName("notes")}
           rows={3}
           maxLength={MAX_NOTES_LENGTH}
           disabled={disabled}
@@ -337,6 +361,7 @@ function DateRow({
   dateField,
   qualifierField,
   qualifierLabel,
+  fieldName,
   values,
   onChange,
   fieldErrors,
@@ -348,6 +373,7 @@ function DateRow({
   dateField: "birthDate" | "deathDate";
   qualifierField: "birthDateQualifier" | "deathDateQualifier";
   qualifierLabel: string;
+  fieldName: (field: IndividualField) => string;
   values: IndividualFormValues;
   onChange: (field: IndividualField, value: string) => void;
   fieldErrors: IndividualFieldErrors;
@@ -362,9 +388,9 @@ function DateRow({
         <label htmlFor={fieldId(qualifierField)} className="sr-only">
           {qualifierLabel}
         </label>
-        <select
+        <FormSelect
           id={fieldId(qualifierField)}
-          name={qualifierField}
+          name={fieldName(qualifierField)}
           disabled={disabled}
           value={values[qualifierField]}
           onChange={(event) => onChange(qualifierField, event.target.value)}
@@ -381,10 +407,10 @@ function DateRow({
               {QUALIFIER_LABELS[qualifier]}
             </option>
           ))}
-        </select>
+        </FormSelect>
         <input
           id={fieldId(dateField)}
-          name={dateField}
+          name={fieldName(dateField)}
           type="date"
           disabled={disabled}
           value={values[dateField]}
