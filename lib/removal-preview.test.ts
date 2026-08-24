@@ -40,10 +40,19 @@ function seedGraph(): FamilyGraph {
     people: [
       person({ id: "mary", givenName: "Mary", surname: "Ellis" }),
       person({
+        // Thomas's birth is the fixture's awkward date, and deliberately so
+        // (`YEO-85`). It is known only as "about 1898" — so it is stored on
+        // the year's anchor, with the qualifier and the precision that say so
+        // beside it. Every other person here carries `exact`/`day`, which is
+        // what left `formatLifespan`'s qualifier and `formatQualifiedDate`'s
+        // precision unexercised from this file: this dialogue is one of the
+        // two surfaces that rendered a year off a headstone as "1 January".
         id: "thomas",
         givenName: "Thomas",
         sex: "male",
-        birthDate: "1898-11-20",
+        birthDate: "1898-01-01",
+        birthDateQualifier: "about",
+        birthDatePrecision: "year",
         deathDate: "1974-02-01",
       }),
       person({ id: "rose", givenName: "Rose", birthDate: "1910-05-05" }),
@@ -390,6 +399,24 @@ describe("detaching a partner", () => {
       "Brian Hale",
       "Clara Hale",
     ]);
+  });
+
+  /**
+   * The lifespan a summary carries, which nothing in this file used to assert.
+   *
+   * `PersonSummary.lifespan` is the label beside every name in the deletion
+   * dialogue, and it is built from the two qualifiers. With every fixture at
+   * `exact` a summary that silently dropped them would have read exactly the
+   * same, which is the bug `YEO-40` found encoded as a passing expectation in
+   * `lib/person-detail.test.ts`: `"1898–1974"` is a different claim from
+   * `"about 1898–1974"`, and the shorter one states a fact nobody recorded.
+   */
+  it("keeps the qualifier on a summary's lifespan", () => {
+    const preview = previewPartnerDetachment(seedGraph(), "u2", "thomas");
+
+    expect(preview?.person.lifespan).toBe("about 1898–1974");
+    // Rose's dates are unqualified, so hers reads as the plain span it is.
+    expect(preview?.partner?.lifespan).toBe("b. 1910");
   });
 
   it("keeps the union, because the children still need the other parent", () => {
