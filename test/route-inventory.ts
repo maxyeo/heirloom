@@ -278,50 +278,71 @@ const BOUNDARY_CALLS = new Set(["requireSession", "requireSessionOr401"]);
 const BOUNDARY_MODULE = "@/lib/session";
 
 export type BoundaryUsage = {
-  /** Whether the file imports the guard from `@/lib/session`. */
+  /** Whether the file imports a guard from `@/lib/session`. */
   imported: boolean;
-  /** The guards actually *called*, in source order. Comments do not count. */
+  /**
+   * The guards actually *called*, by their canonical name and in source
+   * order. A commented-out call is not a call, and a local function that
+   * happens to share the name is not a guard.
+   */
   called: string[];
 };
 
 /**
  * How a route file uses the auth boundary.
  *
- * Both halves matter. A call with no import is an unresolved name; an import
- * with no call is the shape a half-finished edit leaves behind.
+ * Both halves matter, and neither is sufficient alone. A call with no import
+ * is an unresolved name — or worse, a local decoy: `async function
+ * requireSession() {}` above the component satisfies any check that only
+ * looks for the call. An import with no call is the shape a guard leaves
+ * behind when somebody deletes the line but not the line above it.
+ *
+ * So the import is resolved first, and the calls are matched against what it
+ * actually bound. That also makes `import { requireSession as guard }` work,
+ * which a name-matching check would have rejected — safe direction, but wrong
+ * for the wrong reason, and confusing to whoever hit it.
  */
 export function boundaryUsage(file: string): BoundaryUsage {
   const source = parse(file);
-  const called: string[] = [];
-  let imported = false;
 
-  const visit = (node: ts.Node): boolean => {
+  /** Local name in this file → the guard it refers to. */
+  const bound = new Map<string, string>();
+
+  // ESM import declarations are always top level, so there is no need to walk
+  // the tree for them.
+  for (const statement of source.statements) {
     if (
-      ts.isImportDeclaration(node) &&
-      ts.isStringLiteral(node.moduleSpecifier) &&
-      node.moduleSpecifier.text === BOUNDARY_MODULE
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== BOUNDARY_MODULE
     ) {
-      const named = node.importClause?.namedBindings;
-      if (named && ts.isNamedImports(named)) {
-        for (const element of named.elements) {
-          if (BOUNDARY_CALLS.has(element.name.text)) imported = true;
-        }
+      continue;
+    }
+
+    const named = statement.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) continue;
+
+    for (const element of named.elements) {
+      // `propertyName` is set only for `{ a as b }`, where it holds `a`.
+      const canonical = (element.propertyName ?? element.name).text;
+      if (BOUNDARY_CALLS.has(canonical)) {
+        bound.set(element.name.text, canonical);
       }
     }
+  }
 
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      BOUNDARY_CALLS.has(node.expression.text)
-    ) {
-      called.push(node.expression.text);
+  const called: string[] = [];
+  // The visitor never short-circuits: every call is wanted, not just the
+  // first, so `some` here is being used to walk the whole tree.
+  some(source, (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const canonical = bound.get(node.expression.text);
+      if (canonical) called.push(canonical);
     }
-
     return false;
-  };
+  });
 
-  some(source, visit);
-  return { imported, called };
+  return { imported: bound.size > 0, called };
 }
 
 /**
