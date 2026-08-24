@@ -136,6 +136,34 @@ What this exercises:
 
 If the tree renders this correctly, the hard part works.
 
+### The one invariant the model does not enforce
+
+Three tables and two nullable columns express every family shape without a
+special case — but nothing in the schema stops `union_children` from being
+given a row that makes somebody their own ancestor. There is no constraint
+that could: the check is a walk over `unions` and `union_children` together,
+and Postgres has no cheap way to state it.
+
+That matters more than a normal data-quality rule, because the graph is walked
+as though it were acyclic. `lib/tree-layout.ts` hands it to dagre, which ranks
+a cycle by giving up on it, and `lib/person-detail.ts` and `lib/ancestry.ts`
+walk it directly. So a single bad row is not a wrong-looking panel; it is
+`/tree` failing to render, for everybody, with no way back through the
+application.
+
+The rule therefore lives in the application, in exactly one place:
+`lib/save-child.ts`, which is the only code that writes a `union_children`
+row. It runs `ancestryCycle` against a read taken **inside its own
+transaction** rather than trusting whatever the browser last loaded — the same
+re-read-and-re-check pattern `lib/remove-from-tree.ts` and `lib/save-union.ts`
+follow. The forms filter their own pickers with the same function so the
+impossible options never appear, but that is a courtesy and not the boundary.
+
+The walk itself is pure — `FamilyGraph` in, a set of ids out — which is what
+lets the cases that matter (a direct loop, a multi-generation one, and the
+diamond where cousins marry and two lines of descent legitimately rejoin) be
+asserted with no database at all.
+
 ### Date precision
 
 A `date` column can only hold an exact day, and genealogical sources routinely

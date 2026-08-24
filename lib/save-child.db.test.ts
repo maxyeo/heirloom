@@ -314,3 +314,58 @@ describe("half-siblings", () => {
     );
   });
 });
+
+/**
+ * The ancestor guard (E3-T6, `YEO-34`), reached through this door.
+ *
+ * It lives in `lib/save-child.ts` rather than in the set-parents flow that
+ * needed it, because both forms and E6-T2's import write the same
+ * `union_children` row and a rule fitted to one door is a rule somebody
+ * forgets to fit to the next. This is the assertion that the add-child form
+ * cannot be used to put a cycle in the graph either.
+ *
+ * The walk itself is pure and is tested exhaustively without a database in
+ * `lib/ancestry.test.ts`; what is checked here is only that the transaction
+ * actually consults it, against rows it read for itself.
+ */
+describe("nobody becomes their own ancestor", () => {
+  it("refuses a grandmother recorded as a child of her descendants' union", async () => {
+    const gran = await makePerson("Gran");
+    const rose = await makePerson("Rose");
+    const walter = await makePerson("Walter");
+
+    const granUnion = await makeUnion(gran, null);
+    await add(
+      submission({ childId: rose, link: { unionId: granUnion } }),
+    );
+    const roseUnion = await makeUnion(rose, walter);
+
+    // Neither partner of `roseUnion` is Gran, so the `child-is-partner` check
+    // that predates this ticket sees nothing wrong. The walk is what finds
+    // Rose one rank below her.
+    expect(
+      await addChild(submission({ childId: gran, link: { unionId: roseUnion } })),
+    ).toEqual({ status: "child-is-ancestor" });
+
+    expect(await childrenOf(roseUnion)).toEqual([]);
+  });
+
+  it("still allows a descendant to be recorded under an ancestor's union", async () => {
+    // Downwards is the direction families run in, and a guard that refused it
+    // would refuse every tree where two lines of descent rejoin.
+    const gran = await makePerson("Gran");
+    const rose = await makePerson("Rose");
+    const dora = await makePerson("Dora");
+
+    const granUnion = await makeUnion(gran, null);
+    await add(submission({ childId: rose, link: { unionId: granUnion } }));
+    const roseUnion = await makeUnion(rose, null);
+    await add(submission({ childId: dora, link: { unionId: roseUnion } }));
+
+    const result = await add(
+      submission({ childId: dora, link: { unionId: granUnion } }),
+    );
+
+    expect(result.status).toBe("added");
+  });
+});

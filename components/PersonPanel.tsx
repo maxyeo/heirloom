@@ -71,6 +71,16 @@ export interface PersonPanelProps {
    * question, not this panel's — the panel only knows whose record is open.
    */
   onAddChild?: () => void;
+  /**
+   * Start saying who this person's parents are (E3-T6).
+   *
+   * The third of the same kind of prop, and the one that answers "I added them
+   * standalone and now want to connect them". Which family — chosen from the
+   * tree, or created from two people who were never recorded as a couple — is
+   * the set-parents form's question, and so is whether this is a correction to
+   * a family they are already in. The panel only knows whose record is open.
+   */
+  onSetParents?: () => void;
   /** So the canvas can measure the panel and pan out from under it. */
   ref?: Ref<HTMLElement>;
 }
@@ -82,6 +92,7 @@ export function PersonPanel({
   footer,
   onAddSpouse,
   onAddChild,
+  onSetParents,
   ref,
 }: PersonPanelProps) {
   const headingRef = useRef<HTMLDivElement>(null);
@@ -155,6 +166,26 @@ export function PersonPanel({
             />
           ))}
         </Section>
+
+        {/*
+          Under the list, matching "Add a spouse" and "Add a child" below it,
+          and offered whether or not parents are already recorded: correcting
+          which family somebody belongs to is the same flow as naming one for
+          the first time, and it is a move rather than a removal followed by an
+          addition. The wording follows the list, because "Set parents" beside
+          two names already on screen reads as though it would replace them.
+        */}
+        {onSetParents ? (
+          <button
+            type="button"
+            onClick={onSetParents}
+            className="mt-1 text-note text-link hover:underline"
+          >
+            {detail.parents.length === 0
+              ? "Set parents"
+              : "Change which family they belong to"}
+          </button>
+        ) : null}
 
         <Section
           title={detail.spouses.length === 1 ? "Spouse" : "Spouses"}

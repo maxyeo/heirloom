@@ -90,9 +90,14 @@ export type AddSpouseResult =
  * the *partner* has been married before, this one is their second as well, and
  * a sequence chosen from only one person's history would collide with theirs.
  *
+ * Exported for E3-T6's set-parents flow (`YEO-34`), which creates a union from
+ * the *child's* end when the parents have never been recorded as a couple. The
+ * rule about where that union sorts is the same rule, and a second copy of it
+ * would be a second thing to keep in step.
+ *
  * @returns one past the highest sequence either partner already has, or 0
  */
-async function nextSequence(
+export async function nextSequence(
   tx: Transaction,
   partnerIds: readonly string[],
 ): Promise<number> {
