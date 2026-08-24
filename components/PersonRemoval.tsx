@@ -67,6 +67,7 @@ export function PersonRemoval({
 }) {
   const [open, setOpen] = useState(false);
   const [choice, setChoice] = useState<Choice | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   // One pass over the graph, and only when the graph or the person changes.
   // The panel re-renders on every selection and on every keystroke elsewhere
@@ -80,14 +81,29 @@ export function PersonRemoval({
   // revalidated into this one. There is nothing left to remove.
   if (preview === null) return null;
 
+  /**
+   * Dismissing the dialogue, from any of its four exits — Cancel, Escape, the
+   * backdrop, or the close of a stage that had nothing to confirm.
+   *
+   * Focus goes back to the button that opened it, which is the pattern
+   * `components/PersonPanel.tsx` sets for itself ("`onClose` is also what
+   * returns focus to the node"). Without it a keyboard user dismisses the
+   * dialogue and lands on `<body>`, behind the very panel they were reading,
+   * with no way back but tabbing in from the top of the document.
+   *
+   * The trigger is always mounted — it sits behind the overlay rather than
+   * being replaced by it — so there is nothing to wait for here.
+   */
   function close() {
     setOpen(false);
     setChoice(null);
+    triggerRef.current?.focus();
   }
 
   return (
     <section className="border-t border-rule-soft pt-3">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
         className="rounded-panel border border-rule px-2 py-1 text-note hover:bg-wash"
@@ -457,16 +473,16 @@ function PartnerDetachmentCopy({
             {preview.children.length === 1 ? "child" : "children"}.
             {preview.partner ? (
               <span className="block text-note text-ink-muted">
-                {preview.children.length === 1 ? "They keep" : "They keep"}{" "}
-                {preview.partner.name} as a parent, and stay in the tree.
+                They keep {preview.partner.name} as a parent, and stay in
+                the tree.
               </span>
             ) : null}
           </li>
         ) : null}
         {preview.removesUnion ? (
           <li>
-            The union record itself goes, because nothing would be left in it —
-            no other partner and no children.
+            The union record itself goes, because nobody at all would be
+            left in it — no partners and no children.
           </li>
         ) : null}
       </ul>
@@ -514,8 +530,8 @@ function ChildDetachmentCopy({ preview }: { preview: ChildDetachmentPreview }) {
         </li>
         {preview.removesUnion ? (
           <li>
-            The union record itself goes, because nothing would be left in it —
-            no children and no pair of partners.
+            The union record itself goes, because nobody at all would be
+            left in it — no partners and no children.
           </li>
         ) : null}
       </ul>
@@ -666,24 +682,69 @@ function RemovalDialog({
   children: React.ReactNode;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      event.stopPropagation();
-      onClose();
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+
+      /**
+       * The focus trap, which `aria-modal="true"` below is otherwise a
+       * promise this dialogue does not keep. Assistive tech reads that
+       * attribute as "everything outside is inert"; a Tab that walks out to
+       * the panel behind the backdrop makes it a lie, and on a confirmation
+       * for something irreversible that is worth more than the fifteen lines
+       * it costs.
+       *
+       * The order is read from the DOM on each Tab rather than cached,
+       * because the dialogue's contents change under it — picking a removal
+       * swaps the whole body, and a submitting form disables its own confirm
+       * button.
+       */
+      const focusable = surfaceRef.current?.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+      );
+      if (!focusable || focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      // Wrapping in either direction, and also pulling focus back in when it
+      // is on the heading — which is not in the tab order, so neither branch
+      // below would otherwise fire on the first Tab after the dialogue opens.
+      if (event.shiftKey && (active === first || active === headingRef.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
 
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [onClose]);
 
-  // Focus lands on the heading, which reads out what is being confirmed
-  // before anything else. `tabIndex={-1}` for the same reason the panel's
-  // header has it: somewhere to put focus, not somewhere to tab to.
+  /**
+   * Focus lands on the heading, which reads out what is being confirmed
+   * before anything else. `tabIndex={-1}` for the same reason the panel's
+   * header has it: somewhere to put focus, not somewhere to tab to.
+   *
+   * Keyed on the title so it fires again when the dialogue moves from its
+   * list of removals to a confirmation. The heading is the only thing that
+   * says which stage this is, and without the re-focus a screen-reader user
+   * picks a removal and is told nothing at all about what replaced it.
+   */
   useEffect(() => {
     headingRef.current?.focus();
-  }, []);
+  }, [title]);
 
   return (
     <div
@@ -696,6 +757,7 @@ function RemovalDialog({
       }}
     >
       <div
+        ref={surfaceRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="removal-dialog-title"

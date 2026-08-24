@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, isNull, notExists, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { db, schema } from "@/db";
@@ -27,16 +27,33 @@ import { isRowId } from "@/lib/row-id";
  * three copies of `withRemoval` below, which is exactly the drift the note in
  * `lib/row-id.ts` argues against.
  *
- * ## Why the reads happen inside the transaction
+ * ## What the transaction does and does not guarantee
  *
- * Every operation here reads the graph and then writes based on what it read.
- * Doing that outside a transaction leaves a window: a child inserted into a
- * union between the read and the write turns "this union has nothing left in
- * it, remove it" into a delete of a union that has just acquired a child, and
- * the cascade would take that child's link with it. Inside one transaction
- * the read and the write see one consistent snapshot.
+ * Every operation here reads the graph and then writes based on what it read,
+ * and all of it runs in one `db.transaction`. What that buys is **atomicity**:
+ * a detach and the cleanup that follows it either both land or neither does,
+ * so no removal can half-happen.
  *
- * It also makes the returned preview *true*. The browser rendered its
+ * What it does *not* buy is isolation from a concurrent writer. Postgres runs
+ * at READ COMMITTED by default and nothing here takes a row lock, so another
+ * transaction can commit between the read and the write. Two things cover
+ * that gap, deliberately, instead of a lock:
+ *
+ * - every write asks for its rows back with `returning`, so acting on a row
+ *   that has vanished is reported as `not-found` rather than as success;
+ * - the orphan cleanup re-states its condition in SQL (`deleteEmptyUnion`),
+ *   so it cannot delete a union that stopped being empty in the meantime.
+ *
+ * Deliberately no `FOR UPDATE`, unlike `lib/save-page.ts`. That lock exists
+ * there to stop two identical saves from both appending to an append-only
+ * history. There is no history table under the tree, so the only race left is
+ * last-write-wins between two people editing one family at once — which a
+ * lock would order rather than resolve, at the cost of a lock on every
+ * removal.
+ *
+ * ## Why the reads happen inside the transaction anyway
+ *
+ * Because it makes the returned preview *true*. The browser rendered its
  * confirmation from the graph the page was built with, which may be minutes
  * old; what comes back from here was computed from the rows the delete
  * actually operated on. When the two differ, the one from here is the one to
@@ -128,10 +145,8 @@ export async function removePerson(
        * again. `previewPersonRemoval` named it above, from this same
        * snapshot, so the dialogue has already said it was coming.
        */
-      if (preview.orphanedUnionIds.length > 0) {
-        await tx
-          .delete(schema.unions)
-          .where(inArray(schema.unions.id, preview.orphanedUnionIds));
+      for (const unionId of preview.orphanedUnionIds) {
+        await deleteEmptyUnion(tx, unionId);
       }
 
       return true;
@@ -165,15 +180,6 @@ export async function detachPartner(
   return withRemoval(
     (graph) => previewPartnerDetachment(graph, unionId, personId),
     async (tx, preview) => {
-      if (preview.removesUnion) {
-        const [removed] = await tx
-          .delete(schema.unions)
-          .where(eq(schema.unions.id, unionId))
-          .returning({ id: schema.unions.id });
-
-        return removed !== undefined;
-      }
-
       /**
        * Clearing whichever slots hold this person, said in SQL rather than
        * read back off the snapshot. The statement then means exactly what it
@@ -195,7 +201,14 @@ export async function detachPartner(
         .where(eq(schema.unions.id, unionId))
         .returning({ id: schema.unions.id });
 
-      return updated !== undefined;
+      if (updated === undefined) return false;
+
+      // The union may now hold nobody at all — it recorded this person and an
+      // unknown partner, and had no children. `deleteEmptyUnion` re-checks
+      // that against the row rather than trusting the preview.
+      if (preview.removesUnion) await deleteEmptyUnion(tx, unionId);
+
+      return true;
     },
   );
 }
@@ -246,9 +259,7 @@ export async function detachChild(
        * side effect of an unrelated detach would be a surprise rather than a
        * cleanup.
        */
-      if (preview.removesUnion) {
-        await tx.delete(schema.unions).where(eq(schema.unions.id, unionId));
-      }
+      if (preview.removesUnion) await deleteEmptyUnion(tx, unionId);
 
       return true;
     },
@@ -256,7 +267,51 @@ export async function detachChild(
 }
 
 /**
+ * Delete a union, but only if it is genuinely holding nothing when the
+ * statement runs.
+ *
+ * The predicate is repeated in SQL rather than trusted from the preview, and
+ * that is what makes the cleanup safe without taking a lock. The preview was
+ * computed from a read taken earlier in this transaction, and Postgres runs
+ * at READ COMMITTED here — so a concurrent commit could add a child to this
+ * union in the window between the two. An unconditional delete would then
+ * cascade that brand-new child link away, and the author who wrote it would
+ * simply never see it again.
+ *
+ * Expressed as `where` clauses, the statement matches no rows in that case
+ * and the union stays. The cleanup can therefore only ever remove a union
+ * that is empty *at the moment it is removed*, which is the only claim worth
+ * making about it.
+ *
+ * No `returning`, and nothing checks the result: "the union was not empty
+ * after all, so it stays" is a success, not a failure. The operation the
+ * author actually asked for has already happened.
+ */
+async function deleteEmptyUnion(
+  tx: Transaction,
+  unionId: string,
+): Promise<void> {
+  await tx.delete(schema.unions).where(
+    and(
+      eq(schema.unions.id, unionId),
+      isNull(schema.unions.partnerAId),
+      isNull(schema.unions.partnerBId),
+      notExists(
+        tx
+          .select({ present: sql`1` })
+          .from(schema.unionChildren)
+          .where(eq(schema.unionChildren.unionId, unionId)),
+      ),
+    ),
+  );
+}
+
+/**
  * The shape all three share: read, preview, write, report.
+ *
+ * The snapshot the preview reads is a snapshot of the *read*, not a lock on
+ * the rows; see the note at the top of this file for what that does and does
+ * not rule out.
  *
  * `preview` returning null and `write` returning false are the same outcome —
  * the rows this was asked about are not there — and both land on

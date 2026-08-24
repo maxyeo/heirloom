@@ -288,6 +288,21 @@ describe("deleting a person", () => {
     expect(removalOf("only", graph).orphanedUnionIds).toEqual(["u0"]);
   });
 
+  it("leaves a union that still holds one real parent", () => {
+    // The same third-party rule, reached the other way: deleting the child
+    // must not delete the surviving parent's union along with them.
+    const graph: FamilyGraph = {
+      people: [
+        person({ id: "mother", givenName: "Ada" }),
+        person({ id: "only", givenName: "Ivy" }),
+      ],
+      unions: [union({ id: "u0", partnerAId: "mother" })],
+      childLinks: [{ unionId: "u0", childId: "only", relation: "biological" }],
+    };
+
+    expect(removalOf("only", graph).orphanedUnionIds).toEqual([]);
+  });
+
   it("leaves a union that still holds another child", () => {
     const graph: FamilyGraph = {
       people: [
@@ -362,11 +377,12 @@ describe("detaching a partner", () => {
     expect(previewPartnerDetachment(graph, "u9", "a")?.removesUnion).toBe(true);
   });
 
-  it("removes the union when a childless pair is reduced to one partner", () => {
-    // One partner and no children records nothing — not that they were
-    // together, and not that anybody was born. Keeping the row would leave
-    // the surviving partner's panel claiming an "Unknown partner" that was
-    // never unknown, only deleted.
+  it("keeps the union when a real partner is still in it", () => {
+    // Ben is a third party here: the author said something about Ada, and
+    // nothing whatsoever about him. `unions` carries dates, an end reason and
+    // notes as well as a pair of ids, and there is no history under the tree
+    // to restore any of it from — so his row stays, and he can remove it from
+    // his own panel if he wants to.
     const graph: FamilyGraph = {
       people: [
         person({ id: "a", givenName: "Ada" }),
@@ -376,7 +392,9 @@ describe("detaching a partner", () => {
       childLinks: [],
     };
 
-    expect(previewPartnerDetachment(graph, "u9", "a")?.removesUnion).toBe(true);
+    expect(previewPartnerDetachment(graph, "u9", "a")?.removesUnion).toBe(
+      false,
+    );
   });
 
   it("keeps a childless union nobody has been detached from", () => {
@@ -436,6 +454,26 @@ describe("detaching a child", () => {
     );
   });
 
+  it("keeps a union whose last child leaves one real parent behind", () => {
+    // "Known mother, unknown father" — the shape `db/schema.ts` made the
+    // partner columns nullable for. Detaching Ivy is billed as the narrowest
+    // removal there is, and Ada is a third party the author said nothing
+    // about; taking her union away as a side effect would be exactly the
+    // surprise this ticket exists to prevent.
+    const graph: FamilyGraph = {
+      people: [
+        person({ id: "mother", givenName: "Ada" }),
+        person({ id: "child", givenName: "Ivy" }),
+      ],
+      unions: [union({ id: "u0", partnerAId: "mother" })],
+      childLinks: [{ unionId: "u0", childId: "child", relation: "biological" }],
+    };
+
+    expect(previewChildDetachment(graph, "u0", "child")?.removesUnion).toBe(
+      false,
+    );
+  });
+
   it("keeps a union that has another child left", () => {
     const graph: FamilyGraph = {
       people: [
@@ -468,16 +506,21 @@ describe("when a union has stopped recording anything", () => {
     expect(isUnionOrphaned(["a", "b"], 2)).toBe(false);
   });
 
-  it("keeps a childless union that still records a pair", () => {
-    // A marriage with no children is a fact about a family. It stays.
+  it("keeps a childless union that still records anybody at all", () => {
+    // A marriage with no children is a fact about a family, and so is a
+    // single recorded partner: `unions` holds dates, an end reason and notes
+    // beside the two ids, and whoever is still named can see the row on their
+    // own panel and remove it themselves. Only the row nobody can reach is
+    // this function's business.
     expect(isUnionOrphaned(["a", "b"], 0)).toBe(false);
+    expect(isUnionOrphaned(["a", null], 0)).toBe(false);
+    expect(isUnionOrphaned([null, "b"], 0)).toBe(false);
   });
 
-  it("removes a childless union with fewer than two partners", () => {
-    // Covers the acceptance criterion's case (both partners gone, no
-    // children) and the one-partner case, which states nothing either.
+  it("removes only the union with nobody in it at all", () => {
+    // The acceptance criterion word for word: both partners gone, no
+    // children. Such a row appears on no panel and could never be removed
+    // through the application again.
     expect(isUnionOrphaned([null, null], 0)).toBe(true);
-    expect(isUnionOrphaned(["a", null], 0)).toBe(true);
-    expect(isUnionOrphaned([null, "b"], 0)).toBe(true);
   });
 });

@@ -186,28 +186,45 @@ export type RemovalPreview =
   | ChildDetachmentPreview;
 
 /**
- * Whether a union has stopped recording anything and should go with the
- * operation that emptied it.
+ * Whether a union has stopped recording anything at all, and should go with
+ * the operation that emptied it.
  *
- * A `unions` row earns its place by recording one of exactly two facts: that
- * two people were partners, or that somebody's children belong together under
- * a parent. So it is worth keeping when it still holds **two partners** or
- * **at least one child**, and worth nothing when it holds neither.
+ * True only when **nothing is attached**: no partners and no children. That
+ * is the acceptance criterion word for word ("both partners gone, no
+ * children"), and the reason to hold to it exactly is that such a row is
+ * *unreachable*. Every other union in the database is listed on the panel of
+ * somebody who is in it, so a person who thinks it is junk can remove it
+ * themselves. A union with nobody in it appears on no panel, can never be
+ * selected, and would sit in the table forever.
  *
- * That is a shade broader than the acceptance criterion's "both partners
- * gone, no children", and deliberately. A union left holding one partner and
- * no children states that somebody was in a relationship with nobody and had
- * no children by them, which is not a fact about a family — and it is worse
- * than merely useless, because the detail panel renders it as "Unknown
- * partner" and so quietly turns a deleted record into a claim that there was
- * once somebody there. The stricter rule covers the criterion's case as well:
- * zero partners is fewer than two.
+ * ## Why a lone remaining partner is not enough
+ *
+ * It is tempting to sweep the union left holding one partner and no children,
+ * on the grounds that it states nothing useful — and an earlier draft of this
+ * function did. That is wrong, and dangerously so, because of *who* the lone
+ * partner is at each of the three call sites:
+ *
+ * - detaching a partner: the survivor is the subject's own ex-partner;
+ * - detaching a **child**: the survivor is an untouched third party;
+ * - deleting a person: likewise.
+ *
+ * In the last two the author said nothing whatsoever about that person, and
+ * `unions` carries more than a pair of ids — a start date, an end date, an
+ * end reason, a type, notes. Taking all of it away as a side effect of
+ * removing somebody else, with no revision history under the tree to restore
+ * it from, is the exact class of surprise this whole ticket exists to
+ * prevent. "Known mother, unknown father" (`db/schema.ts`) is a shape the
+ * model deliberately supports, so a union holding one real partner is a
+ * record, not debris.
+ *
+ * The rule is therefore the same at all three sites rather than tuned per
+ * caller. One predicate is one thing to reason about, and it keeps the
+ * dialogue's sentence — "left with nobody in it, no partners and no children"
+ * — true wherever it appears.
  *
  * **This is only ever asked about a union an operation has just emptied.**
- * There is no sweep over the whole table. Rows that were already like this —
- * from a seed script, or from E6-T2's import — are left exactly where they
- * are, because deleting somebody's data as a side effect of them detaching an
- * unrelated child is not a cleanup, it is a surprise.
+ * There is no sweep over the table. Rows that were already like this — from a
+ * seed script, or from E6-T2's import — are left exactly where they are.
  *
  * @param partnerIds the union's two partner columns *after* the operation
  * @param childCount how many children remain in the union afterwards
@@ -217,7 +234,7 @@ export function isUnionOrphaned(
   childCount: number,
 ): boolean {
   if (childCount > 0) return false;
-  return partnerIds.filter((id) => id !== null).length < 2;
+  return partnerIds.every((id) => id === null);
 }
 
 /**

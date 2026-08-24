@@ -44,17 +44,30 @@ const BRIAN = id("06");
 const CLARA = id("07");
 const DORA = id("08");
 const IVY = id("09");
+const JUNE = id("0a");
 
 const U1 = id("11"); // Mary ══ Thomas, child Alice
 const U2 = id("12"); // Thomas ══ Rose, children Brian and Clara
 const U3 = id("13"); // Rose ══ Walter, child Dora
 const U4 = id("14"); // Mary ══ Walter, no children
 const U0 = id("10"); // no partners at all, child Ivy
+const U5 = id("15"); // Walter and an unrecorded partner, child June
 
 const ROSE_PAGE = id("21");
 
-const PEOPLE = [MARY, THOMAS, ROSE, WALTER, ALICE, BRIAN, CLARA, DORA, IVY];
-const UNIONS = [U0, U1, U2, U3, U4];
+const PEOPLE = [
+  MARY,
+  THOMAS,
+  ROSE,
+  WALTER,
+  ALICE,
+  BRIAN,
+  CLARA,
+  DORA,
+  IVY,
+  JUNE,
+];
+const UNIONS = [U0, U1, U2, U3, U4, U5];
 
 /**
  * The seed tree from docs/architecture.md, plus two unions that exist to be
@@ -66,6 +79,9 @@ const UNIONS = [U0, U1, U2, U3, U4];
  *
  *   [Mary]══(u4)══[Walter]        (u0) ── Ivy
  *      no children            no partners recorded
+ *
+ *   [Walter]══(u5) ── June
+ *      the other partner is unrecorded
  */
 async function seed() {
   await removeFixture();
@@ -87,6 +103,7 @@ async function seed() {
     { id: CLARA, givenName: "Clara", surname: "Hale" },
     { id: DORA, givenName: "Dora", surname: "Doyle" },
     { id: IVY, givenName: "Ivy", surname: "Unknown" },
+    { id: JUNE, givenName: "June", surname: "Doyle" },
   ]);
 
   await db.insert(schema.unions).values([
@@ -95,6 +112,7 @@ async function seed() {
     { id: U3, partnerAId: ROSE, partnerBId: WALTER, sequence: 3 },
     { id: U4, partnerAId: MARY, partnerBId: WALTER, sequence: 4 },
     { id: U0, sequence: 5 },
+    { id: U5, partnerAId: WALTER, sequence: 6 },
   ]);
 
   await db.insert(schema.unionChildren).values([
@@ -103,6 +121,7 @@ async function seed() {
     { unionId: U2, childId: CLARA, relation: "adopted" },
     { unionId: U3, childId: DORA },
     { unionId: U0, childId: IVY },
+    { unionId: U5, childId: JUNE },
   ]);
 }
 
@@ -167,7 +186,7 @@ describe("removePerson", () => {
     const result = await removePerson(THOMAS);
 
     expect(result.status).toBe("removed");
-    expect(await livingUnions()).toEqual([U0, U3, U4].sort());
+    expect(await livingUnions()).toEqual([U0, U3, U4, U5].sort());
   });
 
   it("takes the child links of those unions with them", async () => {
@@ -177,7 +196,7 @@ describe("removePerson", () => {
     await removePerson(THOMAS);
 
     expect(await livingChildLinks()).toEqual(
-      [`${U3}/${DORA}`, `${U0}/${IVY}`].sort(),
+      [`${U3}/${DORA}`, `${U0}/${IVY}`, `${U5}/${JUNE}`].sort(),
     );
   });
 
@@ -237,6 +256,17 @@ describe("removePerson", () => {
     expect(await livingUnions()).not.toContain(U0);
   });
 
+  it("leaves a union holding one real parent when their only child is deleted", async () => {
+    // The same third-party rule reached by deleting the child instead of
+    // detaching them. June's link cascades away; Walter's union does not.
+    const result = await removePerson(JUNE);
+    if (result.status !== "removed") throw new Error("expected a removal");
+
+    expect(result.preview.orphanedUnionIds).toEqual([]);
+    expect(await livingUnions()).toContain(U5);
+    expect((await readUnion(U5)).partnerAId).toBe(WALTER);
+  });
+
   it("leaves the union that recorded their parents when it still records them", async () => {
     // Alice is U1's only child, but Mary and Thomas are still a pair — so U1
     // goes on being a fact about them.
@@ -283,17 +313,34 @@ describe("detachPartner", () => {
     expect((await readUnion(U1)).partnerBId).toBe(THOMAS);
   });
 
-  it("removes a childless union rather than leaving half of one", async () => {
-    // U4 records Mary and Walter and no children. With Mary out of it the row
-    // would state that Walter was in a relationship with nobody and had no
-    // children by them — which is not a fact, and which the detail panel
-    // would render as an "Unknown partner" who was never unknown.
+  it("leaves the union standing when a real partner is still in it", async () => {
+    // U4 records Mary and Walter and no children. Walter is a third party
+    // here — the author said something about Mary and nothing about him — and
+    // the row carries dates and an end reason as well as the two ids, with no
+    // history under the tree to restore them from. So it stays, holding him.
     const result = await detachPartner(U4, MARY);
 
     expect(result.status).toBe("removed");
     if (result.status !== "removed") throw new Error("expected a removal");
+    expect(result.preview.removesUnion).toBe(false);
+
+    const union = await readUnion(U4);
+    expect(union.partnerAId).toBeNull();
+    expect(union.partnerBId).toBe(WALTER);
+    expect(await livingPeople()).toEqual([...PEOPLE].sort());
+  });
+
+  it("removes the union when the last person in it leaves", async () => {
+    // U5 records Walter and an unrecorded partner. Detach Walter and, once
+    // June's link is gone too, nobody is left — but June is still there, so
+    // the row survives this operation.
+    await detachChild(U5, JUNE);
+    const result = await detachPartner(U5, WALTER);
+
+    expect(result.status).toBe("removed");
+    if (result.status !== "removed") throw new Error("expected a removal");
     expect(result.preview.removesUnion).toBe(true);
-    expect(await livingUnions()).not.toContain(U4);
+    expect(await livingUnions()).not.toContain(U5);
     expect(await livingPeople()).toEqual([...PEOPLE].sort());
   });
 
@@ -334,6 +381,18 @@ describe("detachChild", () => {
     expect(result.preview.removesUnion).toBe(true);
     expect(await livingUnions()).not.toContain(U0);
     expect(await livingPeople()).toContain(IVY);
+  });
+
+  it("keeps a union whose last child leaves one real parent behind", async () => {
+    // U5 is the "known parent, unknown partner" case. Detaching June must not
+    // take Walter's union with her — he is a third party the author said
+    // nothing about, and this is billed as the narrowest removal there is.
+    const result = await detachChild(U5, JUNE);
+    if (result.status !== "removed") throw new Error("expected a removal");
+
+    expect(result.preview.removesUnion).toBe(false);
+    expect(await livingUnions()).toContain(U5);
+    expect((await readUnion(U5)).partnerAId).toBe(WALTER);
   });
 
   it("keeps a union whose partners are still recorded", async () => {

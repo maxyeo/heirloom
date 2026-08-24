@@ -305,6 +305,24 @@ describe("what the detach confirmations say", () => {
   });
 
   it("warns when the union itself will go with the detach", () => {
+    // Ada is the only person recorded in u9 and it has no children, so
+    // detaching her leaves a row nobody could ever reach again.
+    const lone: FamilyGraph = {
+      people: [person({ id: "a", givenName: "Ada" })],
+      unions: [union({ id: "u9", partnerAId: "a" })],
+      childLinks: [],
+    };
+    const host = render(<PersonRemoval graph={lone} personId="a" />);
+    click(buttonLabelled(host, "Remove…"));
+    click(buttonLabelled(host, "Ada Hale and an unrecorded partner"));
+
+    expect(dialogText()).toContain("The union record itself goes");
+    expect(dialogText()).toContain("no partners and no children");
+  });
+
+  it("does not threaten a union a real partner is still in", () => {
+    // The third-party rule, seen from the dialogue: Ben keeps his row, so
+    // nothing may say otherwise.
     const pair: FamilyGraph = {
       people: [
         person({ id: "a", givenName: "Ada" }),
@@ -317,7 +335,7 @@ describe("what the detach confirmations say", () => {
     click(buttonLabelled(host, "Remove…"));
     click(buttonLabelled(host, "Ada Hale and Ben Hale were not partners"));
 
-    expect(dialogText()).toContain("The union record itself goes");
+    expect(dialogText()).not.toContain("The union record itself goes");
   });
 });
 
@@ -382,6 +400,50 @@ describe("what the buttons do", () => {
 
     expect(dialog()).toBeNull();
     expect(removePersonAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("where focus goes", () => {
+  it("puts focus on the heading, which says what is being confirmed", () => {
+    openRemoval("thomas");
+
+    expect(document.activeElement?.textContent).toContain(
+      "Remove something about Thomas Hale",
+    );
+  });
+
+  it("moves focus again when the dialogue changes stage", () => {
+    // The heading is the only thing that says which stage this is. Without a
+    // second focus a screen-reader user picks a removal and is told nothing
+    // at all about what replaced the list.
+    openRemoval("thomas", "Delete Thomas Hale from the tree");
+
+    expect(document.activeElement?.textContent).toContain("Check this first");
+  });
+
+  it("returns focus to the button that opened it", () => {
+    // `components/PersonPanel.tsx` sets this pattern for itself. Without it a
+    // keyboard user dismisses the dialogue and lands on `<body>`, behind the
+    // panel they were reading.
+    const host = openRemoval("thomas", "Delete Thomas Hale from the tree");
+
+    click(buttonLabelled(host, "Cancel"));
+
+    expect(document.activeElement).toBe(buttonLabelled(host, "Remove…"));
+  });
+
+  it("returns focus to the trigger on Escape too", () => {
+    const host = openRemoval("thomas");
+
+    act(() => {
+      document
+        .querySelector("[role='dialog'] button")
+        ?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+    });
+
+    expect(document.activeElement).toBe(buttonLabelled(host, "Remove…"));
   });
 });
 
