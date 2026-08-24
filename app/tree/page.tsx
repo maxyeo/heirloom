@@ -1,3 +1,5 @@
+import { createIndividualAction } from "@/app/tree/actions";
+import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
 import { getFamilyGraph } from "@/lib/family-graph";
 import { requireSession } from "@/lib/session";
@@ -12,11 +14,20 @@ export default async function TreePage() {
     <main className="flex h-dvh flex-col">
       {/* The h1 carries its own rule (globals.css), so the header needs no
           border of its own. */}
-      <header className="px-4 py-3">
-        <h1>Family tree</h1>
-        <p className="text-caption text-ink-muted">
-          {graph.people.length} people · {graph.unions.length} unions
-        </p>
+      <header className="flex items-start justify-between gap-3 px-4 py-3">
+        <div className="min-w-0">
+          <h1>Family tree</h1>
+          <p className="text-caption text-ink-muted">
+            {graph.people.length} people · {graph.unions.length} unions
+          </p>
+        </div>
+        {/*
+          The action is handed to the panel rather than imported by it: a
+          Client Component that imports a `"use server"` module pulls the
+          database and the session layer in behind it. See the note in
+          `AddPersonPanel`.
+        */}
+        <AddPersonPanel action={createIndividualAction} />
       </header>
       <div className="min-h-0 flex-1">
         <FamilyTree graph={graph} />
