@@ -132,7 +132,19 @@ describe("escapeHtmlAttribute", () => {
     expect(decodeHtmlEscapes(escapeHtmlAttribute("&amp;"))).toBe("&amp;");
   });
 
-  it("round-trips through the decoder", () => {
+  it("closes a single-quoted attribute too", () => {
+    // Not reachable from today's caller, which writes into `attr="…"`. It is
+    // covered so the function is safe by construction rather than safe as
+    // long as every future caller remembers which quote it chose.
+    expect(escapeHtmlAttribute("a' onmouseover='x")).toBe(
+      "a&#39; onmouseover=&#39;x",
+    );
+  });
+
+  it("round-trips through the decoder, over what the sanitiser emits", () => {
+    // Deliberately scoped: the escaper is *wider* than the decoder, because
+    // it has to cover everything dangerous while the decoder only has to read
+    // back what `sanitizeHtml` actually writes. `'` is the difference.
     const value = 'Rose & <Walter> said "hi"';
 
     expect(decodeHtmlEscapes(escapeHtmlAttribute(value))).toBe(value);

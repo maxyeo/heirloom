@@ -119,17 +119,39 @@ export function collapseWhitespace(text: string): string {
  * assumed: the assumption is invisible, and one call site that stops holding
  * it is a script tag in a reader's session.
  *
- * `&` is escaped first, and by being part of the same alternation rather than
- * a separate pass, so an already-escaped `&amp;` cannot be double-escaped.
+ * ## Why both quote characters
  *
- * @param value the raw value to place inside double quotes
- * @returns the value, safe to interpolate into `attr="…"`
+ * Today's only caller writes into `attr="…"`, so escaping `'` changes
+ * nothing. It is escaped anyway because the alternative is a function that is
+ * safe *by convention* — correct only as long as every future caller
+ * remembers which quote it chose — and the convention is exactly the kind
+ * that is invisible when it breaks. Covering both makes it safe by
+ * construction, at the cost of one character in a character class.
+ *
+ * This is deliberately **not** the exact inverse of `decodeHtmlEscapes`,
+ * which decodes only the four escapes `sanitizeHtml` emits. An escaper being
+ * wider than its decoder is the safe direction for the pair to differ in:
+ * this one has to cover everything dangerous, that one only has to read back
+ * what the sanitiser actually writes.
+ *
+ * `&` is escaped by being part of the same alternation rather than a separate
+ * pass, so an already-escaped `&amp;` cannot be double-escaped.
+ *
+ * @param value the raw value to place inside an attribute's quotes
+ * @returns the value, safe to interpolate into `attr="…"` or `attr='…'`
  */
 export function escapeHtmlAttribute(value: string): string {
   return value.replace(
-    /[&<>"]/g,
+    /[&<>"']/g,
     (character) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character] ??
-      character,
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        // Numeric rather than `&apos;`, which predates HTML5 as an HTML
+        // entity and is not decoded by every consumer of a stored string.
+        "'": "&#39;",
+      })[character] ?? character,
   );
 }
