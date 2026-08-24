@@ -156,6 +156,11 @@ describe("layoutFamilyGraph, over the seeded family", () => {
         const edge = edges.find(
           (e) => e.source === partnerId && e.target === union.id,
         );
+        // Before the style, the edge. `edge?.style` is `undefined` both when
+        // an ongoing union is correctly drawn solid and when its edge was
+        // never drawn at all, so without this line half of the loop below
+        // would pass on an edge that does not exist.
+        expect(edge).toBeDefined();
         // Widowhood and divorce are visible on the canvas rather than buried
         // in a detail panel, which is what makes the styling behaviour and
         // not decoration.
@@ -182,6 +187,9 @@ describe("layoutFamilyGraph, over the seeded family", () => {
       const edge = edges.find(
         (e) => e.source === link.unionId && e.target === link.childId,
       );
+      // As above: a biological child and a child with no edge at all are the
+      // same `undefined` to the assertion underneath.
+      expect(edge).toBeDefined();
       expect(edge?.style).toEqual(
         link.relation === "biological" ? undefined : dashed,
       );
@@ -201,6 +209,16 @@ describe("layoutFamilyGraph, over the seeded family", () => {
       expect(laidOut.has(edge.source)).toBe(true);
       expect(laidOut.has(edge.target)).toBe(true);
     }
+
+    // One edge per recorded partner and one per child link, counted off the
+    // fixture rather than written down: an edge quietly dropped is otherwise
+    // invisible to a test that only ever iterates the edges that survived.
+    const partnerEdges = seedFamily.unions.flatMap((union) =>
+      [union.partnerAId, union.partnerBId].filter((id) => id !== null),
+    );
+    expect(edges).toHaveLength(
+      partnerEdges.length + seedFamily.childLinks.length,
+    );
 
     expect(seedUnion.u0.partnerBId).toBeNull();
     expect(edges.filter((e) => e.target === seedUnion.u0.id)).toHaveLength(1);
