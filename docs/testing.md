@@ -259,6 +259,110 @@ asserted against a literal `FamilyGraph` with no document in sight. What is
 left for jsdom is only what cannot exist without one: Escape closing the panel,
 focus returning to the node, and a click on a canvas node opening it at all.
 
+## Fixtures carry the awkward value
+
+**A fixture that only ever carries a column's default is not coverage of that
+column.** It is the strongest rule in this document that no tool enforces, and
+it is written down because ignoring it shipped three bugs through a green CI in
+a single run (`YEO-85`).
+
+All three had one shape. A field has a benign default — `date_precision` is
+`day`, `date_qualifier` is `exact`, `page_id` is null — and every fixture in the
+suite carries that default. The branch that handles the other value is then
+unreachable by construction, and no amount of running those tests will say so.
+
+- `formatQualifiedDate` grew a third `precision` argument. Two read-path callers
+  never passed it, and a person recorded as born `1890` read back as **"1
+  January 1890"** — the invented day the column exists to prevent. Every fixture
+  used `precision: "day"`, so nothing disagreed.
+- `lib/person-detail.test.ts` asserted Thomas's lifespan as `"1898–1947"` when
+  his birth is recorded as `about`. The expectation _was_ the bug, and the test
+  defended it. It now reads `"about 1898–1947"`.
+- `setPersonEntry` checked whether another person had already claimed an entry
+  without locking the row, so two people both won it. No test ran two writers,
+  because nothing in the harness could express two writers.
+
+Note what a coverage threshold would have said about all three: green. Every
+one of those lines executed. The problem was never which lines the fixtures
+reach, it is which **values** they carry, and a percentage cannot see the
+difference. That is why there is no coverage gate here and no mutation-testing
+dependency — neither one asks the question this rule asks.
+
+### Prefer making it impossible to adding a test
+
+When the wrong thing can be made unbuildable, do that instead. The reference is
+`formatQualifiedDate`: `precision` briefly had a `day` default, and requiring it
+moved a whole class of omission from something a reviewer has to notice to
+something `tsc` refuses. `QualifiedDate` in `lib/field-input.ts` was the same
+shape and went the same way.
+
+The test is worth adding too, but it is the weaker half. A required parameter
+holds for call sites nobody has written yet.
+
+### The rule for a new column
+
+**A new enum or nullable column needs a fixture for its awkward value in the
+same change that introduces it.** Not a follow-up ticket — the same diff. A
+column's first migration is the only moment when every reader of it is in one
+person's head, and it is also the moment when every existing row is, by
+definition, at the default. That combination is exactly what makes the gap
+invisible later.
+
+"Awkward" means: a nullable column that is not null, an enum member that is not
+the default, a date that is not a full day, a qualifier that is not `exact`.
+
+### Where the awkward values live
+
+Two fixtures carry them deliberately, so most modules inherit the coverage
+rather than each restating it:
+
+- **`db/seed.ts`** — the seeded family includes a year-only birth, a
+  month-precision death, a `before` qualifier, an adopted child, a union with
+  one partner unrecorded and neither its type nor its ending known, and one
+  individual linked to an entry. A developer running `npm run db:seed` sees
+  every one of those branches drawn, which is how two of the three bugs above
+  would have been noticed by eye.
+- **`lib/family-graph.db.test.ts`** — `getFamilyGraph` copies twenty-six columns
+  into the graph by hand, and the four date columns on a person share one type
+  with each other. `birthDatePrecision: p.deathDatePrecision` compiles, and
+  against all-`day` fixtures it also passes. So Maud's four date columns each
+  carry a _different_ value, which is what turns a swapped pair into a failed
+  assertion instead of a coincidence.
+
+Adding a non-default value to a fixture for a module that never reads that field
+is noise, not coverage. Put the awkward value where the branch is.
+
+### Racing two writers
+
+Some bugs no fixture value can express, because they are about two transactions
+rather than one row. `test/db-concurrency.ts` exports the one helper for those:
+
+```ts
+const [first, second] = await raceWriters([
+  () => setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE }),
+  () => setPersonEntry({ personId: THOMAS, pageId: LOOSE_PAGE }),
+]);
+```
+
+It warms the pool before starting — postgres.js opens connections on demand,
+and opening one costs more than a whole transaction against a local Postgres,
+so two calls fired at a cold pool do not overlap at all and the test passes
+whether or not anything is locked. It then holds every writer at a barrier so
+none of them starts before the rest.
+
+It was four private copies of that warm-up, three of them commented "copied
+from" whichever file the author had read first. That is worth naming as the
+reason instance three above was never tested: writing it required knowing about
+lazy connections first, and a test nobody can write without that knowledge is a
+test nobody writes.
+
+**Break the lock on purpose.** A race test demonstrates a lock rather than
+enforcing one — two transactions can interleave in more ways than one run will
+show, so a green race test is evidence, not proof. The way to find out whether
+it is asserting anything is to remove the `for("update")` it is about and watch
+it fail. A race test whose subject nobody has ever broken deliberately may be
+asserting nothing at all.
+
 ## Why `test:db` is not in CI
 
 It could be — a `services: postgres` container in the workflow plus

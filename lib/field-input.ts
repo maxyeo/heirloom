@@ -309,13 +309,26 @@ function precisionSpan(
  * A date column read together with its `date_qualifier` and `date_precision`
  * siblings.
  *
- * `precision` is optional and defaults to `day`, which is both the column
- * default and the only thing a caller that predates E4-T2 could have meant.
+ * `precision` is **required, and deliberately has no default** — the same
+ * decision `formatQualifiedDate` documents in `lib/format-date.ts`, made here
+ * for the same reason and one ticket later (`YEO-85`).
+ *
+ * It was optional, falling back to `day`, on the argument that `day` is the
+ * column default and the only thing a caller predating E4-T2 could have meant.
+ * The trouble is what the fallback does when it is wrong, which is not
+ * "nothing": a death recorded as a bare year is stored on the 1 January anchor,
+ * so defaulting its precision to `day` narrows the whole year down to that one
+ * invented day and `isImpossibleOrder` then refuses somebody born in June 1890
+ * who died in 1890. A false refusal of a true record, in the voice of a
+ * validation rule, from a caller that only forgot a field. Both call sites
+ * (`lib/individual-input.ts`, `lib/union-input.ts`) already pass it, so
+ * requiring it costs nothing and is checked by the compiler rather than by a
+ * reviewer.
  */
 export type QualifiedDate = {
   date: string;
   qualifier: DateQualifier;
-  precision?: DatePrecision;
+  precision: DatePrecision;
 };
 
 /**
@@ -341,12 +354,12 @@ export function isImpossibleOrder(
   const firstEarliest = dateRange(
     first.date,
     first.qualifier,
-    first.precision ?? "day",
+    first.precision,
   ).earliest;
   const laterLatest = dateRange(
     later.date,
     later.qualifier,
-    later.precision ?? "day",
+    later.precision,
   ).latest;
 
   if (firstEarliest === null || laterLatest === null) return false;

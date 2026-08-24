@@ -1,9 +1,10 @@
-import { asc, eq, inArray, like, or, sql } from "drizzle-orm";
+import { asc, eq, inArray, like, or } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { createPage } from "@/lib/create-page";
 import { RESERVED_SLUGS, slugFromTitle } from "@/lib/entry-slug";
+import { raceWriters } from "@/test/db-concurrency";
 
 /**
  * Database tests for the create path (E1-T8). Run with `npm run test:db`; the
@@ -63,19 +64,6 @@ async function readRevisions(pageId: string) {
     .from(schema.revisions)
     .where(eq(schema.revisions.pageId, pageId))
     .orderBy(asc(schema.revisions.createdAt));
-}
-
-/**
- * Force a second pool connection open before the race test needs two at once.
- * Copied from `lib/save-page.db.test.ts`, for the reason spelled out there:
- * postgres.js opens connections on demand, so two calls fired at a cold pool
- * do not actually overlap and the race test would pass either way.
- */
-async function warmPool() {
-  await Promise.all([
-    db.execute(sql`select pg_sleep(0.05)`),
-    db.execute(sql`select pg_sleep(0.05)`),
-  ]);
 }
 
 afterAll(removeFixture);
@@ -251,17 +239,18 @@ describe("createPage", () => {
      * from Postgres: `on conflict` uses a speculative insertion, so the loser
      * of a race waits for the winner to commit and then reliably sees the
      * conflict. This test demonstrates that rather than enforcing it — a
-     * select-then-insert version would usually fail here, given the warmed
-     * pool, but it is two round trips racing rather than one, so failing is a
-     * matter of timing. That makes it a weaker guarantee than the `for update`
-     * race test in `lib/save-page.db.test.ts`, where the row lock forces the
-     * interleaving no matter how the two calls line up.
+     * select-then-insert version would usually fail here, given the overlap
+     * `raceWriters` arranges, but it is two round trips racing rather than
+     * one, so failing is a matter of timing. That makes it a weaker guarantee
+     * than the `for update` race test in `lib/save-page.db.test.ts`, where the
+     * row lock forces the interleaving no matter how the two calls line up.
      */
     it("gives two racing authors two addresses", async () => {
-      await warmPool();
-
       const same = { title: title("raced"), createdBy: AUTHOR };
-      const results = await Promise.all([createPage(same), createPage(same)]);
+      const results = await raceWriters([
+        () => createPage(same),
+        () => createPage(same),
+      ]);
 
       const slugs = results
         .map((result) => (result.status === "created" ? result.slug : null))
