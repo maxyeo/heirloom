@@ -42,6 +42,16 @@ jobs:
       # silently resolving a different dependency tree than a developer has.
       - run: npm ci
 
+      # First of the checks, because it is the cheapest possible signal:
+      # `prettier --check` reads and re-prints source, nothing more, so it
+      # returns well before `tsc` has to resolve a type graph or ESLint has to
+      # walk the AST rule by rule. Same "fail fast, cheapest signal first"
+      # reasoning `npm test` below documents for its own position ahead of the
+      # build. Formatting drift is also the least informative failure a
+      # developer can hit downstream — better to report it before spending the
+      # runner's time on checks that assume the diff is at least well-formed.
+      - run: npm run format:check
+
       - run: npm run typecheck
 
       - run: npm run lint

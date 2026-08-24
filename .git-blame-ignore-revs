@@ -1,0 +1,8 @@
+# Commits listed here are skipped by `git blame` when it is configured to
+# read this file:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub's blame view honors this file automatically.)
+
+# Reformat repo to match Prettier — whitespace/style only, no semantic
+# change. See the commit message for the file count and rationale.
+ec1ef409f65e23070dad355cb08b05c1c1d5a294
