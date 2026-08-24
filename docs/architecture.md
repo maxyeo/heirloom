@@ -154,9 +154,9 @@ relationship type, because you are not storing relationship types.
 
 ### The worked example
 
-The seed fixture (`db/seed.ts`) is modelled on a real family, because invented
-test data only exercises the easy cases. Names are placeholders; the shape is
-the point.
+The seed fixture (`db/seed-family.ts`, written to the database by
+`db/seed.ts`) is modelled on a real family, because invented test data only
+exercises the easy cases. Names are placeholders; the shape is the point.
 
 ```
 [Mary]══(u1)══[Thomas]══(u2)══[Rose]══(u3)══[Walter]
@@ -177,7 +177,10 @@ What this exercises:
   relations; they are connected only by the chain of remarriages. u2's children
   are the only people related by blood to both ends
 
-If the tree renders this correctly, the hard part works.
+If the tree renders this correctly, the hard part works. That sentence is
+asserted rather than hoped for: the fixture is a plain value with no database
+import, so `lib/tree-layout.seed.test.ts` lays out these very rows and checks
+that nobody is duplicated and that generation still means rank.
 
 ### The one invariant the model does not enforce
 
