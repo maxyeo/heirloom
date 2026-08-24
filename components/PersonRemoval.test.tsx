@@ -82,7 +82,12 @@ function graph(): FamilyGraph {
         sequence: 1,
         startDate: "1920-06-01",
       }),
-      union({ id: "u2", partnerAId: "thomas", partnerBId: "rose", sequence: 2 }),
+      union({
+        id: "u2",
+        partnerAId: "thomas",
+        partnerBId: "rose",
+        sequence: 2,
+      }),
     ],
     childLinks: [
       { unionId: "u1", childId: "alice", relation: "biological" },
@@ -265,7 +270,9 @@ describe("what the delete confirmation says", () => {
     // dialogue that is otherwise entirely bad news.
     openRemoval("rose", "Delete Rose Hale from the tree");
 
-    expect(dialogText()).toContain("Their wiki entry, and all of its revisions");
+    expect(dialogText()).toContain(
+      "Their wiki entry, and all of its revisions",
+    );
   });
 
   it("says nothing about an entry for somebody who has none", () => {

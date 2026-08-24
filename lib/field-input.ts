@@ -271,7 +271,8 @@ export function isImpossibleOrder(
 export function withoutPrefix(form: FormData, prefix: string): FormData {
   const stripped = new FormData();
   for (const [key, value] of form.entries()) {
-    if (key.startsWith(prefix)) stripped.append(key.slice(prefix.length), value);
+    if (key.startsWith(prefix))
+      stripped.append(key.slice(prefix.length), value);
   }
   return stripped;
 }

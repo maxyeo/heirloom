@@ -186,7 +186,9 @@ describe("moving a child from one family to another", () => {
     // The ordinary answer, and the reason this is the one reference in the
     // submission whose absence is not a problem: adopted into one family and
     // born into another is a real record rather than a mistake.
-    expect(valueOf(submission({ fromUnionId: "" })).value.fromUnionId).toBeNull();
+    expect(
+      valueOf(submission({ fromUnionId: "" })).value.fromUnionId,
+    ).toBeNull();
   });
 
   it("refuses a move out of the very family being recorded", () => {
@@ -196,9 +198,9 @@ describe("moving a child from one family to another", () => {
   });
 
   it("refuses a source that could never have come from this application", () => {
-    expect(issuesOf(submission({ fromUnionId: "elsewhere" })).fromUnionId).toMatch(
-      /not a family/i,
-    );
+    expect(
+      issuesOf(submission({ fromUnionId: "elsewhere" })).fromUnionId,
+    ).toMatch(/not a family/i);
   });
 
   it("allows a move while the destination family is being created", () => {

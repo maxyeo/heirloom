@@ -34,7 +34,7 @@ jobs:
       # same major rather than drifting with whatever the runner image ships.
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: "22"
           cache: npm
 
       # `npm ci` rather than `npm install`: the lockfile is committed, and CI

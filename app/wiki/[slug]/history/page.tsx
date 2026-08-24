@@ -193,8 +193,8 @@ export default async function RevisionHistoryPage({
              * restore to.
              */
             <p className="mb-4 text-caption text-ink-muted">
-              This entry has been saved once, with no earlier version to
-              compare with or restore.
+              This entry has been saved once, with no earlier version to compare
+              with or restore.
             </p>
           ) : null}
 

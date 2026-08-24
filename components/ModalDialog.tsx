@@ -102,7 +102,10 @@ export function ModalDialog({ title, onClose, children }: ModalDialogProps) {
       // Wrapping in either direction, and also pulling focus back in when it
       // is on the heading — which is not in the tab order, so neither branch
       // below would otherwise fire on the first Tab after the dialogue opens.
-      if (event.shiftKey && (active === first || active === headingRef.current)) {
+      if (
+        event.shiftKey &&
+        (active === first || active === headingRef.current)
+      ) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && active === last) {

@@ -1,4 +1,12 @@
-import { and, asc, eq, inArray, or, sql, TransactionRollbackError } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  or,
+  sql,
+  TransactionRollbackError,
+} from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { isRowId } from "@/lib/row-id";
@@ -183,14 +191,21 @@ export async function reorderUnions(
        * and refusing it would mean two people tidying the same family both being
        * told to reload, forever.
        */
-      if (!sameMembers(submitted, current.map((union) => union.id))) {
+      if (
+        !sameMembers(
+          submitted,
+          current.map((union) => union.id),
+        )
+      ) {
         return { status: "stale" };
       }
 
       const desired = applyMove(submitted, move);
       if (desired === null) return { status: "unchanged" };
 
-      const sequences = resequenceUnions(current.map((union) => union.sequence));
+      const sequences = resequenceUnions(
+        current.map((union) => union.sequence),
+      );
       const held = new Map(current.map((union) => [union.id, union.sequence]));
 
       /**

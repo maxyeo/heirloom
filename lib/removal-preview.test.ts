@@ -423,10 +423,7 @@ describe("detaching a child", () => {
     const preview = previewChildDetachment(seedGraph(), "u2", "clara");
 
     expect(preview?.child.name).toBe("Clara Hale");
-    expect(names(preview?.parents ?? [])).toEqual([
-      "Thomas Hale",
-      "Rose Hale",
-    ]);
+    expect(names(preview?.parents ?? [])).toEqual(["Thomas Hale", "Rose Hale"]);
     // Adoption is recorded on the link, so it is a property of what is being
     // removed rather than of the person.
     expect(preview?.relation).toBe("adopted");
@@ -434,9 +431,9 @@ describe("detaching a child", () => {
 
   it("keeps a union that still has a pair of partners", () => {
     // Dora is u3's only child, but Rose and Walter are still married.
-    expect(previewChildDetachment(seedGraph(), "u3", "dora")?.removesUnion).toBe(
-      false,
-    );
+    expect(
+      previewChildDetachment(seedGraph(), "u3", "dora")?.removesUnion,
+    ).toBe(false);
   });
 
   it("removes a union whose last child leaves it with nothing", () => {

@@ -3,11 +3,7 @@
 import { useActionState } from "react";
 
 import type { SpouseLink } from "@/lib/person-detail";
-import {
-  formatMove,
-  MOVE_FIELD,
-  ORDER_FIELD,
-} from "@/lib/union-order";
+import { formatMove, MOVE_FIELD, ORDER_FIELD } from "@/lib/union-order";
 import {
   idleUnionOrderState,
   type ReorderUnionsFormAction,
@@ -135,7 +131,10 @@ export function UnionOrder({
               >
                 <div className="min-w-0">
                   <p className="truncate text-caption">
-                    {index + 1}. {spouse.person ? spouse.person.name : (
+                    {index + 1}.{" "}
+                    {spouse.person ? (
+                      spouse.person.name
+                    ) : (
                       // Both partner columns are nullable so that an
                       // unrecorded partner never has to be invented as a
                       // placeholder person. The panel says so too.

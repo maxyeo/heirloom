@@ -280,7 +280,10 @@ export function validateUnion(input: UnionInput): UnionValidation {
 
   const startDate = readDate(input.startDate);
   if (startDate === undefined) {
-    add("startDate", "The start date needs to be a real date, like 1912-06-04.");
+    add(
+      "startDate",
+      "The start date needs to be a real date, like 1912-06-04.",
+    );
   }
 
   const startDateQualifier = readEnum(
@@ -313,7 +316,10 @@ export function validateUnion(input: UnionInput): UnionValidation {
 
   const sequence = readSequence(input.sequence);
   if (sequence === undefined) {
-    add("sequence", "The order needs to be a whole number, counting from zero.");
+    add(
+      "sequence",
+      "The order needs to be a whole number, counting from zero.",
+    );
   } else if (sequence !== null && sequence > MAX_UNION_SEQUENCE) {
     add("sequence", `The order has to be ${MAX_UNION_SEQUENCE} or less.`);
   }

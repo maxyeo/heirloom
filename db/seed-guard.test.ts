@@ -98,7 +98,8 @@ describe("assertSeedTarget", () => {
     const result = assertSeedTarget(
       "postgresql://postgres.project-a:pw@aws-0-us-west-2.pooler.supabase.com:5432/postgres",
       env({
-        SEED_ALLOW_DESTRUCTIVE: "postgres.project-b@aws-0-us-west-2.pooler.supabase.com",
+        SEED_ALLOW_DESTRUCTIVE:
+          "postgres.project-b@aws-0-us-west-2.pooler.supabase.com",
       }),
     );
     expect(result.allowed).toBe(false);
@@ -107,7 +108,9 @@ describe("assertSeedTarget", () => {
   it("refuses when the override names the right user but the wrong host", () => {
     const result = assertSeedTarget(
       "postgresql://postgres.project-a:pw@aws-0-us-west-2.pooler.supabase.com:5432/postgres",
-      env({ SEED_ALLOW_DESTRUCTIVE: "postgres.project-a@some-other-pooler.example" }),
+      env({
+        SEED_ALLOW_DESTRUCTIVE: "postgres.project-a@some-other-pooler.example",
+      }),
     );
     expect(result.allowed).toBe(false);
   });

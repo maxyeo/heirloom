@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 
 // Imported through the `@/*` alias on purpose: this is the test that proves
 // Vitest resolves it the same way `tsc` and Next.js do.
-import { PERSON_HEIGHT, PERSON_WIDTH, layoutFamilyGraph } from "@/lib/tree-layout";
+import {
+  PERSON_HEIGHT,
+  PERSON_WIDTH,
+  layoutFamilyGraph,
+} from "@/lib/tree-layout";
 // `import type` matters here. lib/family-graph.ts imports @/db, which pulls in
 // postgres.js; taking only the type erases the import entirely and keeps this
 // file runnable with no database, which is what lets it run in CI.
@@ -19,10 +23,26 @@ import type { FamilyGraph } from "@/lib/family-graph";
 function seedGraph(): FamilyGraph {
   return {
     people: [
-      person({ id: "mary", givenName: "Mary", birthDate: "1901-03-04", deathDate: "1935-08-09" }),
-      person({ id: "thomas", givenName: "Thomas", sex: "male", birthDate: "1899-01-01", deathDate: "1960-06-06" }),
+      person({
+        id: "mary",
+        givenName: "Mary",
+        birthDate: "1901-03-04",
+        deathDate: "1935-08-09",
+      }),
+      person({
+        id: "thomas",
+        givenName: "Thomas",
+        sex: "male",
+        birthDate: "1899-01-01",
+        deathDate: "1960-06-06",
+      }),
       person({ id: "rose", givenName: "Rose", birthDate: "1910-05-05" }),
-      person({ id: "walter", givenName: "Walter", sex: "male", deathDate: "1988-02-02" }),
+      person({
+        id: "walter",
+        givenName: "Walter",
+        sex: "male",
+        deathDate: "1988-02-02",
+      }),
       person({ id: "alice", givenName: "Alice", surname: null }),
       person({ id: "brian", givenName: "Brian", sex: "male" }),
       person({ id: "clara", givenName: "Clara" }),
@@ -31,9 +51,27 @@ function seedGraph(): FamilyGraph {
     ],
     unions: [
       union({ id: "u0", partnerAId: "grandpa", partnerBId: null, sequence: 1 }),
-      union({ id: "u1", partnerAId: "mary", partnerBId: "thomas", endReason: "death", sequence: 1 }),
-      union({ id: "u2", partnerAId: "rose", partnerBId: "thomas", endReason: "death", sequence: 2 }),
-      union({ id: "u3", partnerAId: "rose", partnerBId: "walter", endReason: "ongoing", sequence: 3 }),
+      union({
+        id: "u1",
+        partnerAId: "mary",
+        partnerBId: "thomas",
+        endReason: "death",
+        sequence: 1,
+      }),
+      union({
+        id: "u2",
+        partnerAId: "rose",
+        partnerBId: "thomas",
+        endReason: "death",
+        sequence: 2,
+      }),
+      union({
+        id: "u3",
+        partnerAId: "rose",
+        partnerBId: "walter",
+        endReason: "ongoing",
+        sequence: 3,
+      }),
     ],
     childLinks: [
       { unionId: "u0", childId: "thomas", relation: "biological" },
@@ -45,7 +83,12 @@ function seedGraph(): FamilyGraph {
   };
 }
 
-function person(overrides: Partial<FamilyGraph["people"][number]> & { id: string; givenName: string }) {
+function person(
+  overrides: Partial<FamilyGraph["people"][number]> & {
+    id: string;
+    givenName: string;
+  },
+) {
   return {
     surname: "Hale",
     sex: "female",
@@ -61,7 +104,9 @@ function person(overrides: Partial<FamilyGraph["people"][number]> & { id: string
   } satisfies FamilyGraph["people"][number];
 }
 
-function union(overrides: Partial<FamilyGraph["unions"][number]> & { id: string }) {
+function union(
+  overrides: Partial<FamilyGraph["unions"][number]> & { id: string },
+) {
   return {
     partnerAId: null,
     partnerBId: null,
@@ -105,9 +150,21 @@ describe("layoutFamilyGraph", () => {
     // The whole reason unions are their own nodes: Thomas and Rose each belong
     // to two unions and must still appear once. Duplicating them is the
     // failure mode this guards.
-    expect(nodes.map((node) => node.id).sort()).toEqual(
-      ["alice", "brian", "clara", "dora", "grandpa", "mary", "rose", "thomas", "u0", "u1", "u2", "u3", "walter"],
-    );
+    expect(nodes.map((node) => node.id).sort()).toEqual([
+      "alice",
+      "brian",
+      "clara",
+      "dora",
+      "grandpa",
+      "mary",
+      "rose",
+      "thomas",
+      "u0",
+      "u1",
+      "u2",
+      "u3",
+      "walter",
+    ]);
     expect(nodes.filter((node) => node.type === "person")).toHaveLength(9);
     expect(nodes.filter((node) => node.type === "union")).toHaveLength(4);
   });
@@ -126,7 +183,9 @@ describe("layoutFamilyGraph", () => {
     ] as const) {
       const unionY = nodeById(nodes, unionId).position.y;
       for (const parent of parents) {
-        expect(nodeById(nodes, parent).position.y + PERSON_HEIGHT).toBeLessThanOrEqual(unionY);
+        expect(
+          nodeById(nodes, parent).position.y + PERSON_HEIGHT,
+        ).toBeLessThanOrEqual(unionY);
       }
       for (const child of children) {
         expect(nodeById(nodes, child).position.y).toBeGreaterThan(unionY);
@@ -156,7 +215,9 @@ describe("layoutFamilyGraph", () => {
       // One recorded partner, so "midway between" is that partner.
       ["u0", ["grandpa"]],
     ] as const) {
-      const centres = partners.map((id) => centreX(nodeById(nodes, id), PERSON_WIDTH));
+      const centres = partners.map((id) =>
+        centreX(nodeById(nodes, id), PERSON_WIDTH),
+      );
       const midpoint = centres.reduce((a, b) => a + b, 0) / centres.length;
 
       expect(centreX(nodeById(nodes, unionId), UNION_SIZE)).toBe(midpoint);
@@ -216,7 +277,9 @@ describe("layoutFamilyGraph", () => {
     // gets one partner edge and no edge dangling from null.
     expect(edges.filter((edge) => edge.target === "u0")).toHaveLength(1);
     expect(edgeById(edges, "p-grandpa-u0").source).toBe("grandpa");
-    expect(edges.filter((edge) => edge.source === null || edge.target === null)).toHaveLength(0);
+    expect(
+      edges.filter((edge) => edge.source === null || edge.target === null),
+    ).toHaveLength(0);
     expect(edges.filter((edge) => edge.id.startsWith("p-"))).toHaveLength(7);
   });
 
@@ -225,15 +288,21 @@ describe("layoutFamilyGraph", () => {
 
     // Widowhood, divorce, and adoption are visible on the canvas rather than
     // buried in a detail panel, which means the styling is behaviour.
-    expect(edgeById(edges, "p-mary-u1").style).toEqual({ strokeDasharray: "4 4" });
+    expect(edgeById(edges, "p-mary-u1").style).toEqual({
+      strokeDasharray: "4 4",
+    });
     expect(edgeById(edges, "p-rose-u3").style).toBeUndefined();
-    expect(edgeById(edges, "c-u2-clara").style).toEqual({ strokeDasharray: "2 3" });
+    expect(edgeById(edges, "c-u2-clara").style).toEqual({
+      strokeDasharray: "2 3",
+    });
     expect(edgeById(edges, "c-u2-brian").style).toBeUndefined();
   });
 
   it("returns an empty layout for an empty family", () => {
     // The tree renders before anyone has been entered.
-    expect(layoutFamilyGraph({ people: [], unions: [], childLinks: [] })).toEqual({
+    expect(
+      layoutFamilyGraph({ people: [], unions: [], childLinks: [] }),
+    ).toEqual({
       nodes: [],
       edges: [],
     });

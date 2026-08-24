@@ -2,7 +2,11 @@ import { eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
-import { detachChild, detachPartner, removePerson } from "@/lib/remove-from-tree";
+import {
+  detachChild,
+  detachPartner,
+  removePerson,
+} from "@/lib/remove-from-tree";
 
 /**
  * Database tests for removal (E3-T8, `YEO-36`). Run with `npm run test:db`;

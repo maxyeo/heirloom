@@ -160,11 +160,13 @@ async function main() {
     .returning();
 
   console.log("Linking children to unions...");
-  await db.insert(schema.unionChildren).values([
-    { unionId: u1.id, childId: edward.id },
-    ...halfHales.map((c) => ({ unionId: u2.id, childId: c.id })),
-    ...shaws.map((c) => ({ unionId: u3.id, childId: c.id })),
-  ]);
+  await db
+    .insert(schema.unionChildren)
+    .values([
+      { unionId: u1.id, childId: edward.id },
+      ...halfHales.map((c) => ({ unionId: u2.id, childId: c.id })),
+      ...shaws.map((c) => ({ unionId: u3.id, childId: c.id })),
+    ]);
 
   console.log(
     `Done. 4 adults, 3 unions, ${1 + halfHales.length + shaws.length} children.`,

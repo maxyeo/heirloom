@@ -46,11 +46,7 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
  * if a tag is added there, it belongs in `BLOCK_TAGS` below too.
  */
 export type ContentBlockKind =
-  | "paragraph"
-  | "heading2"
-  | "heading3"
-  | "heading4"
-  | "listItem";
+  "paragraph" | "heading2" | "heading3" | "heading4" | "listItem";
 
 /**
  * One block of rendered content: what kind of thing it is, and the text a
@@ -73,11 +69,7 @@ export type ContentBlock = {
  * worth distinguishing from a plain removal and a plain addition.
  */
 export type ContentDiffStatus =
-  | "unchanged"
-  | "added"
-  | "removed"
-  | "moved-out"
-  | "moved-in";
+  "unchanged" | "added" | "removed" | "moved-out" | "moved-in";
 
 /** One line of the rendered diff. */
 export type ContentDiffRow = {
@@ -202,7 +194,9 @@ function normaliseWhitespace(text: string): string {
  * @param html an entry or revision body, as stored
  * @returns its blocks in document order; empty blocks are dropped
  */
-export function extractContentBlocks(html: string | null | undefined): ContentBlock[] {
+export function extractContentBlocks(
+  html: string | null | undefined,
+): ContentBlock[] {
   const safe = sanitizeHtml(html);
   if (!safe) return [];
 
@@ -466,7 +460,9 @@ export function diffContent(
  * A move is counted once, off its `moved-in` row, because one block moving is
  * one thing that happened even though it prints twice.
  */
-export function summariseContentDiff(rows: ContentDiffRow[]): ContentDiffSummary {
+export function summariseContentDiff(
+  rows: ContentDiffRow[],
+): ContentDiffSummary {
   const summary: ContentDiffSummary = {
     unchanged: 0,
     added: 0,
@@ -497,7 +493,9 @@ export function summariseContentDiff(rows: ContentDiffRow[]): ContentDiffSummary
  * entry stood still by scrolling; what belongs in one line at the top is what
  * *happened*.
  */
-export function describeContentDiffSummary(summary: ContentDiffSummary): string {
+export function describeContentDiffSummary(
+  summary: ContentDiffSummary,
+): string {
   const parts: string[] = [];
 
   const add = (count: number, singular: string, plural: string) => {

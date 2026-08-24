@@ -69,10 +69,12 @@ beforeAll(async () => {
   // otherwise greet the next one with a duplicate key on a unique slug.
   await removeFixture();
 
-  await db.insert(schema.pages).values([
-    { id: ENTRY_ID, slug: SLUG, title: "Rose Hale", bodyHtml: BODY },
-    ...INDEX_FIXTURE,
-  ]);
+  await db
+    .insert(schema.pages)
+    .values([
+      { id: ENTRY_ID, slug: SLUG, title: "Rose Hale", bodyHtml: BODY },
+      ...INDEX_FIXTURE,
+    ]);
 });
 
 afterAll(removeFixture);

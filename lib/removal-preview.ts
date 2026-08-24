@@ -181,9 +181,7 @@ export type ChildDetachmentPreview = {
 };
 
 export type RemovalPreview =
-  | PersonRemovalPreview
-  | PartnerDetachmentPreview
-  | ChildDetachmentPreview;
+  PersonRemovalPreview | PartnerDetachmentPreview | ChildDetachmentPreview;
 
 /**
  * Whether a union has stopped recording anything at all, and should go with

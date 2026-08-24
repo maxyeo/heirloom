@@ -361,7 +361,7 @@ describe("restoreRevision", () => {
       .values({
         pageId: PAGE,
         title: "Hand written",
-        bodyHtml: '<p>Safe.</p><script>alert(1)</script>',
+        bodyHtml: "<p>Safe.</p><script>alert(1)</script>",
         createdBy: null,
       })
       .returning({ id: schema.revisions.id });
@@ -381,7 +381,7 @@ describe("restoreRevision", () => {
       .select()
       .from(schema.revisions)
       .where(eq(schema.revisions.id, unsafe.id));
-    expect(stored.bodyHtml).toBe('<p>Safe.</p><script>alert(1)</script>');
+    expect(stored.bodyHtml).toBe("<p>Safe.</p><script>alert(1)</script>");
   });
 
   /**

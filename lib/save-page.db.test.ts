@@ -288,10 +288,7 @@ describe("savePage", () => {
 
     const results = await Promise.all([savePage(edit), savePage(edit)]);
 
-    expect(results.map((r) => r.status).sort()).toEqual([
-      "saved",
-      "unchanged",
-    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["saved", "unchanged"]);
     expect(await readRevisions()).toHaveLength(1);
     expect((await readPage()).bodyHtml).toBe("<p>Raced.</p>");
   });

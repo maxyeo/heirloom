@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-
 import {
-  EditPerson,
-  type EditPersonProps,
-} from "@/components/EditPersonForm";
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import { EditPerson, type EditPersonProps } from "@/components/EditPersonForm";
 import type { GraphPerson } from "@/lib/family-graph";
 import {
   emptyIndividualFormState,
@@ -283,7 +288,10 @@ describe("saving", () => {
   });
 
   it("closes and returns focus to the button once the write lands", async () => {
-    const host = mount(rose, stubAction(() => savedFormState(rose.id)));
+    const host = mount(
+      rose,
+      stubAction(() => savedFormState(rose.id)),
+    );
     open(host);
 
     type(host, "surname", "Doyle");
@@ -521,7 +529,9 @@ describe("unsaved changes", () => {
     type(host, "surname", "Doyle");
 
     const backdrop = dialog(host)?.parentElement;
-    act(() => backdrop?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    act(() =>
+      backdrop?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
 
     expect(dialog(host)).not.toBeNull();
     expect(host.textContent).toContain("have not been saved");

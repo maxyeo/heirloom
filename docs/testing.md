@@ -5,11 +5,11 @@ transpile config to keep in sync — the `@/*` alias is read straight out of
 `tsconfig.json`, so the test runner and the compiler cannot disagree about what
 `@/lib/tree-layout` means.
 
-| Script | Runs |
-| --- | --- |
-| `npm test` | Every test that does **not** need a database. This is what CI runs. |
-| `npm run test:watch` | The same suite, in watch mode |
-| `npm run test:db` | Only the tests that **do** need a database |
+| Script               | Runs                                                                |
+| -------------------- | ------------------------------------------------------------------- |
+| `npm test`           | Every test that does **not** need a database. This is what CI runs. |
+| `npm run test:watch` | The same suite, in watch mode                                       |
+| `npm run test:db`    | Only the tests that **do** need a database                          |
 
 ## The rule everything else follows
 
@@ -32,7 +32,7 @@ anyone remembering to tag a test — getting the suffix right is the whole
 mechanism.
 
 Use the npm scripts rather than calling Vitest directly. A bare `npx vitest`
-selects *both* projects, so with no `DATABASE_URL` it fails on the database
+selects _both_ projects, so with no `DATABASE_URL` it fails on the database
 half — including when an editor's Vitest integration runs it for you.
 
 ## Tests that need no database
@@ -46,7 +46,7 @@ hands it a literal and inspects the result. Anything shaped like that needs no
 fixtures and no mocking.
 
 One trap worth knowing. `lib/family-graph.ts` exports both the `FamilyGraph`
-*type* and a function that queries the database. Importing the type with a
+_type_ and a function that queries the database. Importing the type with a
 plain `import` drags `@/db` — and postgres.js — into a test that had no
 business loading it. Use `import type`, which erases entirely:
 
@@ -117,7 +117,7 @@ but a database on the same local server keeps this a one-command setup with
 nothing to run in the background.
 
 Note that these tests use fixed row ids, so two people running `npm run
-test:db` against the *same* `heirloom_test` database at the same time will
+test:db` against the _same_ `heirloom_test` database at the same time will
 collide. A database of your own is the simplest way not to think about it,
 which a local `createdb heirloom_test` already gives you.
 
@@ -133,7 +133,7 @@ The harness is deliberately small, and one thing is simply not set up:
   and whichever way that goes belongs back in this document.
 
   E3-T4 met the same wall from the component side and went around it rather
-  than through it. A Client Component that *imports* a server action pulls
+  than through it. A Client Component that _imports_ a server action pulls
   `app/tree/actions.ts` — and with it Auth.js and `@/db` — into its import
   graph, so it cannot be mounted in a suite that has no `AUTH_*` and no
   `DATABASE_URL`. Worse, the failure spreads: the moment
@@ -180,14 +180,14 @@ import { render, rerender, unmount } from "@/test/render";
 
 `render(ui)` mounts into a fresh host and returns it; `rerender(host, ui)` is a
 prop change rather than a remount, and `unmount(host)` is for the assertions
-that are *about* unmounting, such as whether a component removed a
+that are _about_ unmounting, such as whether a component removed a
 document-level listener. Everything mounted is torn down after each test, by an
 `afterEach` the module registers when a test file imports it.
 
 That helper is eight lines of `react-dom/client` and React's own `act`, and it
 stays that way on purpose — no queries, no `user-event`, no auto-wrapping.
 Tests reach into the returned host with plain DOM calls, which is what keeps
-"prefer no DOM" below an easy rule to follow: nothing here is *nicer* than
+"prefer no DOM" below an easy rule to follow: nothing here is _nicer_ than
 testing a plain module, so nothing here tempts anyone into mounting a component
 to check a decision that could have been a function.
 
@@ -214,14 +214,14 @@ that stands in for logic you could have called is a test that asserts the stub
 returns what the stub was told to return.
 
 The stubs are `vi.fn()`, which makes them do double duty: they are also how
-that file asserts *which* action each removal reaches and *what* it sends —
+that file asserts _which_ action each removal reaches and _what_ it sends —
 the one part of the wiring that could silently invert without any other test
 noticing.
 
 **A form with more than one button needs the submitter asserted.**
 `components/UnionOrder.test.tsx` (E3-T7) is the case: one form carries an up
 and a down button for every union, and which one was pressed travels in that
-button's own `name`/`value` — a pair the browser sends *only* for the
+button's own `name`/`value` — a pair the browser sends _only_ for the
 submitter. React reproduces that for a form with a function action, but
 nothing in the component says so, and a control that lost it would post the
 same move for every arrow on the panel and look entirely correct doing it.
@@ -241,7 +241,7 @@ checks it without a document. Reach for jsdom only for what genuinely needs
 one: mounting, and the behaviour of a live editor.
 
 The person detail panel (E2-T1) is the fullest worked example of the split.
-Everything it *says* — who counts as a spouse, which union a child arrived
+Everything it _says_ — who counts as a spouse, which union a child arrived
 through, how a qualified date reads — is derived in `lib/person-detail.ts` and
 asserted against a literal `FamilyGraph` with no document in sight. What is
 left for jsdom is only what cannot exist without one: Escape closing the panel,

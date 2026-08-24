@@ -316,7 +316,9 @@ describe("when somebody has gone", () => {
   it("reports a partner deleted since the picker was drawn", async () => {
     const rose = await makePerson("Rose");
     const thomas = await makePerson("Thomas");
-    await db.delete(schema.individuals).where(eq(schema.individuals.id, thomas));
+    await db
+      .delete(schema.individuals)
+      .where(eq(schema.individuals.id, thomas));
 
     expect(
       await addSpouse(submission({ personId: rose, partnerId: thomas })),

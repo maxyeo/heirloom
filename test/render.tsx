@@ -54,7 +54,8 @@ export function render(ui: ReactElement): HTMLElement {
  */
 export function rerender(host: HTMLElement, ui: ReactElement): void {
   const root = roots.get(host);
-  if (!root) throw new Error("rerender() was given a host nothing is mounted in");
+  if (!root)
+    throw new Error("rerender() was given a host nothing is mounted in");
   act(() => root.render(ui));
 }
 

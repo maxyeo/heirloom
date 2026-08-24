@@ -13,8 +13,7 @@
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export type SeedGuardResult =
-  | { allowed: true }
-  | { allowed: false; message: string };
+  { allowed: true } | { allowed: false; message: string };
 
 /**
  * Decide whether `db/seed.ts` may run against `databaseUrl`.

@@ -17,8 +17,8 @@ export default function WikiEntryNotFound() {
 
       <div className="wiki-body">
         <p>
-          There is no entry at this address. It may have been renamed, or it
-          may simply not have been written yet.
+          There is no entry at this address. It may have been renamed, or it may
+          simply not have been written yet.
         </p>
         <p>
           <Link href="/">Return to the front page</Link>

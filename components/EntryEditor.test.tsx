@@ -71,7 +71,10 @@ describe("no Markdown", () => {
    * to one with them on, and the real test would pass for the wrong reason.
    */
   it("would convert Markdown if the rules were left on", () => {
-    const control = new Editor({ extensions: [StarterKit], content: "<p></p>" });
+    const control = new Editor({
+      extensions: [StarterKit],
+      content: "<p></p>",
+    });
     control.commands.focus("end");
 
     type(control, "*hello* and **bold**");

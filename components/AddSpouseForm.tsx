@@ -174,10 +174,10 @@ export function AddSpouseForm({
   onSaved,
   onCancel,
 }: AddSpouseFormProps) {
-  const [state, formAction, pending] = useActionState<SpouseFormState, FormData>(
-    action,
-    emptySpouseFormState,
-  );
+  const [state, formAction, pending] = useActionState<
+    SpouseFormState,
+    FormData
+  >(action, emptySpouseFormState);
 
   const [mode, setMode] = useState<PartnerMode>("existing");
   const [selected, setSelected] = useState<PartnerCandidate | null>(null);

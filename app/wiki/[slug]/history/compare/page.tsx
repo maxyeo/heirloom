@@ -297,9 +297,9 @@ export default async function CompareRevisionsPage({
           ) : null}
 
           <p className="mb-4 text-caption text-ink-muted">
-            {describeContentDiffSummary(summariseContentDiff(rows))}{" "}
-            Headings, paragraphs and list items are compared whole, as they
-            read — so a save that only changed the markup shows nothing.
+            {describeContentDiffSummary(summariseContentDiff(rows))} Headings,
+            paragraphs and list items are compared whole, as they read — so a
+            save that only changed the markup shows nothing.
           </p>
 
           {changed ? (

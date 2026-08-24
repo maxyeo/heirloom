@@ -43,8 +43,10 @@ import { useEffect, useRef } from "react";
  * Used by `AddSpouseForm` and by `IndividualFieldset`, whose `sex` and two
  * date-qualifier selects have the same problem.
  */
-export interface FormSelectProps
-  extends Omit<React.ComponentProps<"select">, "defaultValue"> {
+export interface FormSelectProps extends Omit<
+  React.ComponentProps<"select">,
+  "defaultValue"
+> {
   /** The chosen value. Controlled, like every other field in these forms. */
   value: string;
 }

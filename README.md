@@ -34,7 +34,7 @@ That's it — `.env.example`'s `DATABASE_URL` already points at
 user to your OS user, and a local install accepts local connections with no
 password.
 
-Heirloom *deploys* to Supabase. If you're setting up a deployment, create a
+Heirloom _deploys_ to Supabase. If you're setting up a deployment, create a
 project and copy the **pooler** connection string — Connect → Transaction
 pooler, port `6543`. Do not use the direct connection there; serverless
 functions will exhaust its connection limit. See [Reaching production
@@ -44,7 +44,7 @@ machine at it without touching `DATABASE_URL`.
 ### 2. Google OAuth
 
 In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services
-→ Credentials, create an **OAuth client ID** of type *Web application* and add
+→ Credentials, create an **OAuth client ID** of type _Web application_ and add
 these authorised redirect URIs:
 
 ```
@@ -174,21 +174,21 @@ variables are named generically so any Postgres provider works.
 
 ## Scripts
 
-| Script | Does |
-| --- | --- |
-| `npm run dev` | Development server |
-| `npm run build` | Production build |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Tests that need no database — what CI runs |
-| `npm run test:watch` | The same suite, in watch mode |
-| `npm run test:db` | Tests that need a database, against `heirloom_test` |
-| `npm run db:generate` | Generate a migration from schema changes |
-| `npm run db:migrate` | Apply migrations to `DATABASE_URL` |
-| `npm run db:migrate:test` | Apply migrations to `heirloom_test` |
-| `npm run db:migrate:deploy` | Apply migrations the way the deploy does |
-| `npm run db:seed` | Reset and load the example family — refuses on a non-local host without `SEED_ALLOW_DESTRUCTIVE` |
-| `npm run db:keep-alive` | Ping the database so Supabase does not pause it |
-| `npm run db:studio` | Drizzle Studio |
+| Script                      | Does                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `npm run dev`               | Development server                                                                               |
+| `npm run build`             | Production build                                                                                 |
+| `npm run typecheck`         | `tsc --noEmit`                                                                                   |
+| `npm test`                  | Tests that need no database — what CI runs                                                       |
+| `npm run test:watch`        | The same suite, in watch mode                                                                    |
+| `npm run test:db`           | Tests that need a database, against `heirloom_test`                                              |
+| `npm run db:generate`       | Generate a migration from schema changes                                                         |
+| `npm run db:migrate`        | Apply migrations to `DATABASE_URL`                                                               |
+| `npm run db:migrate:test`   | Apply migrations to `heirloom_test`                                                              |
+| `npm run db:migrate:deploy` | Apply migrations the way the deploy does                                                         |
+| `npm run db:seed`           | Reset and load the example family — refuses on a non-local host without `SEED_ALLOW_DESTRUCTIVE` |
+| `npm run db:keep-alive`     | Ping the database so Supabase does not pause it                                                  |
+| `npm run db:studio`         | Drizzle Studio                                                                                   |
 
 ## Licence
 
