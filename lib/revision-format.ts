@@ -10,6 +10,8 @@
  * schema or the query layer to decide how they should look on the page.
  */
 
+import { isRowId } from "@/lib/row-id";
+
 /**
  * A revision's timestamp, rendered as an unambiguous absolute moment.
  *
@@ -71,15 +73,12 @@ export function formatRevisionAuthor(email: string | null): string {
  * 500 for what is really just a bad link. Checking the shape first turns
  * that into an ordinary 404.
  *
- * A regex rather than a package: the format is fixed and well known, and a
- * dependency for it would be one more thing to update for a string this
- * simple. This intentionally accepts any RFC 4122 version/variant rather than
- * only version 4, since `defaultRandom()` (`gen_random_uuid()`) produces v4
- * but nothing here depends on the version bits.
+ * The check itself is `isRowId` (`lib/row-id.ts`), because it is a property
+ * of the schema rather than of this table — `individuals.id` needs the
+ * identical guard (E3-T1). This name stays because it is what the history
+ * routes read as, and because a caller asking "is this a revision id?" should
+ * not have to know that the answer is the same for every table.
  */
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export function isRevisionId(value: string): boolean {
-  return UUID_PATTERN.test(value);
+  return isRowId(value);
 }
