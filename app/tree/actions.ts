@@ -26,6 +26,7 @@ import {
   type RemovalState,
   removedState,
 } from "@/lib/removal-state";
+import { reorderUnions } from "@/lib/reorder-unions";
 import { addChild } from "@/lib/save-child";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
@@ -37,6 +38,12 @@ import {
   spouseSavedState,
 } from "@/lib/spouse-form-state";
 import { addSpouseInputFromFormData } from "@/lib/union-input";
+import { reorderInputFromFormData } from "@/lib/union-order";
+import {
+  failedUnionOrderState,
+  movedUnionOrderState,
+  type UnionOrderState,
+} from "@/lib/union-order-state";
 
 /**
  * Server actions for editing the tree (E3-T1, `YEO-29`).
@@ -417,4 +424,60 @@ export async function detachChildAction(
 
   revalidateTree();
   return removedState;
+}
+
+/**
+ * Change the order of a person's unions (for E3-T7's sequence editor).
+ *
+ * The one action here that writes several rows at once, which is why
+ * everything it does lives in `lib/reorder-unions.ts`: the read of the current
+ * order and the updates that follow it belong in the same transaction, and a
+ * `"use server"` module is the wrong place to own one. What stays here is the
+ * pair of things only a request can do.
+ *
+ * `unchanged` is deliberately not revalidated, matching `updateIndividual`'s
+ * branch above. A second click that lands before the first one's revalidation
+ * repaints the buttons asks to move a union off the end of the list; nothing
+ * moved, so discarding a good cache entry would buy a refetch of the same
+ * diagram.
+ *
+ * @param _previous the last state; unused, since each press stands alone
+ * @param form the submitted fields: `personId`, the `unionIds` order, and the
+ *   `move` naming the button that was pressed
+ * @returns a state to render, or the fact that there was nothing to move
+ */
+export async function reorderUnionsAction(
+  _previous: UnionOrderState,
+  form: FormData,
+): Promise<UnionOrderState> {
+  await requireSession();
+
+  const result = await reorderUnions(reorderInputFromFormData(form));
+
+  switch (result.status) {
+    case "person-not-found":
+      // Said as a fact about the tree rather than as an error, for the reason
+      // the actions above give: the ordinary way to reach it is a panel left
+      // open in one tab while E3-T8 deleted the person in another.
+      return failedUnionOrderState(
+        "That person is no longer in the tree. They may have been deleted.",
+      );
+
+    case "stale":
+      /**
+       * The unions this person has are not the ones the panel was showing, so
+       * the move has nowhere to land. The message asks for the one thing that
+       * fixes it rather than explaining the race.
+       */
+      return failedUnionOrderState(
+        "The unions recorded for this person have changed. Reload the tree and try again.",
+      );
+
+    case "unchanged":
+      return movedUnionOrderState;
+
+    case "reordered":
+      revalidateTree();
+      return movedUnionOrderState;
+  }
 }
