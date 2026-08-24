@@ -122,6 +122,32 @@ function searchBox(host: HTMLElement): HTMLInputElement {
   return input;
 }
 
+function namedControl(
+  host: HTMLElement,
+  name: string,
+): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement {
+  const control = host.querySelector(`[name="${name}"]`);
+  if (
+    !(control instanceof HTMLInputElement) &&
+    !(control instanceof HTMLSelectElement) &&
+    !(control instanceof HTMLTextAreaElement)
+  ) {
+    throw new Error(`no control named ${name}`);
+  }
+  return control;
+}
+
+function selectOption(host: HTMLElement, name: string, value: string): void {
+  const control = namedControl(host, name);
+  act(() => {
+    Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "value",
+    )?.set?.call(control, value);
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 function namedInput(host: HTMLElement, name: string): HTMLInputElement {
   const input = host.querySelector(`[name="${name}"]`);
   if (!(input instanceof HTMLInputElement)) {
@@ -283,6 +309,50 @@ describe("what the form does with the answer", () => {
     await submit(host);
 
     expect(host.textContent).toContain("no longer in the tree");
+  });
+
+  /**
+   * The regression test for the trap E3-T2 documented: React calls
+   * `requestFormReset` on every submission through a form action, *before* the
+   * action runs and without waiting to see what it says. With uncontrolled
+   * inputs this form would come back reporting one bad field and silently
+   * discard everything else the author had typed — the dates, the notes, and a
+   * whole half-entered partner.
+   *
+   * The selects are the half that being controlled does *not* fix, and they
+   * are the ones worth asserting hardest: a reset reverts a select to its
+   * first option, so without `FormSelect` this submission would come back with
+   * the partnership recorded as a marriage, "about" as exact, and the partner
+   * silently male. Nothing would look wrong.
+   */
+  it("keeps everything the author typed when the submission is refused", async () => {
+    const { host } = mount({
+      reply: spouseInvalidState(
+        [{ field: "endReason", message: "Say how it ended." }],
+        [],
+      ),
+    });
+
+    type(searchBox(host), "Ada Byron");
+    click(buttonLabelled(host, "add “Ada Byron” as a new person"));
+    type(namedInput(host, "startDate"), "1912-06-04");
+    selectOption(host, "startDateQualifier", "about");
+    selectOption(host, "type", "partnership");
+    selectOption(host, "partner.sex", "female");
+    await submit(host);
+
+    expect(host.textContent).toContain("Say how it ended");
+
+    // Text: kept because the inputs are controlled.
+    expect(namedControl(host, "startDate").value).toBe("1912-06-04");
+    expect(namedControl(host, "partner.givenName").value).toBe("Ada");
+    expect(namedControl(host, "partner.surname").value).toBe("Byron");
+
+    // Selects: kept because `FormSelect` keeps their DOM default in step.
+    // Each of these reverts to the first option without it.
+    expect(namedControl(host, "type").value).toBe("partnership");
+    expect(namedControl(host, "startDateQualifier").value).toBe("about");
+    expect(namedControl(host, "partner.sex").value).toBe("female");
   });
 
   it("does not close on a refusal", async () => {

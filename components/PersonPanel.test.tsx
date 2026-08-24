@@ -285,3 +285,74 @@ describe("focus", () => {
     );
   });
 });
+
+/**
+ * The panel's one route *out* into an editing flow (E3-T4, `YEO-32`).
+ *
+ * The panel is otherwise read-only by design, and stays that way: it renders a
+ * button when the canvas gives it a callback and knows nothing about what
+ * opening it means. Both halves are worth asserting — an optional prop whose
+ * absent case was never checked is how a read-only surface quietly grows an
+ * edit control nobody meant to ship.
+ */
+describe("starting the add-spouse flow", () => {
+  it("offers nothing when no callback was given", () => {
+    const host = render(
+      <PersonPanel
+        detail={detail()}
+        onSelectPerson={noop}
+        onClose={noop}
+      />,
+    );
+
+    expect(
+      [...host.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("Add a spouse"),
+      ),
+    ).toBe(false);
+  });
+
+  it("calls back when the button is pressed", () => {
+    const onAddSpouse = vi.fn();
+    const host = render(
+      <PersonPanel
+        detail={detail()}
+        onSelectPerson={noop}
+        onClose={noop}
+        onAddSpouse={onAddSpouse}
+      />,
+    );
+
+    act(() => buttonLabelled(host, "Add a spouse").click());
+
+    expect(onAddSpouse).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Remarriage is the ordinary case this data model exists for, so the offer
+   * cannot be conditional on there being no spouse yet.
+   */
+  it("is offered to somebody who already has a spouse", () => {
+    const host = render(
+      <PersonPanel
+        detail={detail({
+          spouses: [
+            {
+              unionId: "u1",
+              person: summary("thomas", "Thomas Hale"),
+              type: "marriage",
+              endReason: "death",
+              start: null,
+              end: null,
+            },
+          ],
+        })}
+        onSelectPerson={noop}
+        onClose={noop}
+        onAddSpouse={noop}
+      />,
+    );
+
+    expect(buttonLabelled(host, "Add a spouse")).toBeTruthy();
+  });
+});
