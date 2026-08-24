@@ -8,6 +8,7 @@ import {
   validateIndividual,
 } from "@/lib/individual-input";
 import { isRowId } from "@/lib/row-id";
+import type { Transaction } from "@/lib/save-page";
 
 /**
  * The write half of tree editing for people (E3-T1, `YEO-29`): raw input
@@ -214,4 +215,34 @@ export async function updateIndividual(
   if (!updated) return { status: "not-found" };
 
   return { status: "updated", id };
+}
+
+/**
+ * Whether a person is on the tree, inside the caller's transaction.
+ *
+ * Here rather than beside either caller because both need it and neither owns
+ * it: `lib/save-union.ts` and `lib/save-child.ts` each check that a person
+ * they were *handed an id for* still exists before writing a row that
+ * references them, and `individuals` is this module's table. Two copies would
+ * be two places for the question "is this person still here" to drift.
+ *
+ * Checked rather than left to the foreign key in both cases, and for the same
+ * reason: the id arrives from a picker built out of a graph the browser loaded
+ * some time ago, so a person deleted since then is an ordinary race. A
+ * constraint violation would surface as a thrown error and an error boundary,
+ * where a `false` here becomes a sentence the form can render.
+ *
+ * Takes the transaction rather than opening its own statement, so the answer
+ * is the one that transaction can see — and cannot go stale between the check
+ * and the insert it guards.
+ */
+export async function individualExists(
+  tx: Transaction,
+  id: string,
+): Promise<boolean> {
+  const [found] = await tx
+    .select({ id: schema.individuals.id })
+    .from(schema.individuals)
+    .where(eq(schema.individuals.id, id));
+  return found !== undefined;
 }

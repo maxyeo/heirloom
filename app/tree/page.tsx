@@ -1,4 +1,8 @@
-import { addSpouseAction, createIndividualAction } from "@/app/tree/actions";
+import {
+  addChildAction,
+  addSpouseAction,
+  createIndividualAction,
+} from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
 import { getFamilyGraph } from "@/lib/family-graph";
@@ -47,6 +51,7 @@ export default async function TreePage() {
         <FamilyTree
           graph={graph}
           addSpouseAction={addSpouseAction}
+          addChildAction={addChildAction}
           /*
             And the add-person action once more (E3-T9): on an empty database
             the canvas is replaced by an invitation that opens the same panel

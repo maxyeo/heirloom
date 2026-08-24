@@ -1,8 +1,9 @@
-import { eq, inArray, max, or } from "drizzle-orm";
+import { inArray, max, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import type { ValidationIssue } from "@/lib/individual-input";
 import { isRowId } from "@/lib/row-id";
+import { individualExists } from "@/lib/save-individual";
 import type { Transaction } from "@/lib/save-page";
 import {
   type AddSpouseInput,
@@ -125,15 +126,6 @@ async function nextSequence(
   return (row?.highest ?? -1) + 1;
 }
 
-/** Whether a person is on the tree, inside the caller's transaction. */
-async function exists(tx: Transaction, id: string): Promise<boolean> {
-  const [found] = await tx
-    .select({ id: schema.individuals.id })
-    .from(schema.individuals)
-    .where(eq(schema.individuals.id, id));
-  return found !== undefined;
-}
-
 /**
  * Record a marriage or a partnership.
  *
@@ -181,7 +173,9 @@ export async function addSpouse(
   const { mode, partner, union } = checked;
 
   return db.transaction(async (tx): Promise<AddSpouseResult> => {
-    if (!(await exists(tx, personId))) return { status: "person-not-found" };
+    if (!(await individualExists(tx, personId))) {
+      return { status: "person-not-found" };
+    }
 
     let partnerId = union.partnerBId;
 
@@ -193,7 +187,7 @@ export async function addSpouse(
        * violation would surface as a thrown error and an error boundary,
        * where this is a sentence the form can render beside the picker.
        */
-      if (partnerId === null || !(await exists(tx, partnerId))) {
+      if (partnerId === null || !(await individualExists(tx, partnerId))) {
         return { status: "partner-not-found" };
       }
     }

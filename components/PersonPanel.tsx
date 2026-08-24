@@ -63,6 +63,14 @@ export interface PersonPanelProps {
    * and so this file did not have to grow a form to gain a button.
    */
   onAddSpouse?: () => void;
+  /**
+   * Start recording a child for this person (E3-T5).
+   *
+   * The same kind of prop as `onAddSpouse` and for the same reasons: a route
+   * in, not a form. Which union the child belongs to is the add-child form's
+   * question, not this panel's — the panel only knows whose record is open.
+   */
+  onAddChild?: () => void;
   /** So the canvas can measure the panel and pan out from under it. */
   ref?: Ref<HTMLElement>;
 }
@@ -73,6 +81,7 @@ export function PersonPanel({
   onClose,
   footer,
   onAddSpouse,
+  onAddChild,
   ref,
 }: PersonPanelProps) {
   const headingRef = useRef<HTMLDivElement>(null);
@@ -186,6 +195,22 @@ export function PersonPanel({
             />
           ))}
         </Section>
+
+        {/*
+          Under the list, matching "Add a spouse" above it. Offered whether or
+          not the person has a union yet: which family a child belongs to is
+          the form's question, and a panel that hid the button until a spouse
+          existed would leave the author guessing why.
+        */}
+        {onAddChild ? (
+          <button
+            type="button"
+            onClick={onAddChild}
+            className="mt-1 text-note text-link hover:underline"
+          >
+            Add a child
+          </button>
+        ) : null}
 
         {detail.notes ? (
           <section>

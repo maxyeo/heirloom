@@ -248,3 +248,30 @@ export function isImpossibleOrder(
   if (firstEarliest === null || laterLatest === null) return false;
   return laterLatest < firstEarliest;
 }
+
+/**
+ * Take the fields of a form whose names share a prefix, with the prefix
+ * stripped.
+ *
+ * A form that creates a person *inside* another record's flow posts two
+ * records at once, and both have a `notes` field. Namespacing the person's
+ * inputs as `partner.notes` (E3-T4) or `child.notes` (E3-T5) is what keeps
+ * them apart; stripping the prefix here is what lets
+ * `individualInputFromFormData` — which knows the *unprefixed* field names and
+ * is the only thing that should know them — read them unchanged.
+ *
+ * A second `FormData` rather than a mapped object, so the person's field names
+ * stay written down in exactly one place.
+ *
+ * Here rather than beside either flow's validator because both need it and
+ * neither owns it: `lib/union-input.ts` wrote it first for the add-spouse
+ * form, and `lib/child-input.ts` needs precisely the same function. Two copies
+ * would be two places for the prefix rule to drift.
+ */
+export function withoutPrefix(form: FormData, prefix: string): FormData {
+  const stripped = new FormData();
+  for (const [key, value] of form.entries()) {
+    if (key.startsWith(prefix)) stripped.append(key.slice(prefix.length), value);
+  }
+  return stripped;
+}

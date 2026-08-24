@@ -3,6 +3,13 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  type ChildFormState,
+  childFailedState,
+  childInvalidState,
+  childSavedState,
+} from "@/lib/child-form-state";
+import { addChildInputFromFormData } from "@/lib/child-input";
+import {
   failedFormState,
   type IndividualFormState,
   invalidFormState,
@@ -19,6 +26,7 @@ import {
   type RemovalState,
   removedState,
 } from "@/lib/removal-state";
+import { addChild } from "@/lib/save-child";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import { requireSession } from "@/lib/session";
@@ -215,6 +223,77 @@ export async function addSpouseAction(
        */
       revalidateTree();
       return spouseSavedState(result.unionId);
+  }
+}
+
+/**
+ * Record a birth into a union (for E3-T5's add-child form).
+ *
+ * The same shape as the actions above and for the same reasons: it takes the
+ * previous state and the form's own `FormData`, so the form works as a plain
+ * POST before any JavaScript has loaded, and it returns a state rather than
+ * redirecting, so the canvas decides where the author ends up.
+ *
+ * Note what it does *not* take: a parent. The submission names a union, and
+ * the union names its own partners — which is what leaves `addChild` reusable
+ * by E3-T6's set-parents, and what makes it impossible for a submission to
+ * disagree with itself about who the parents are.
+ *
+ * Everything this writes goes through `addChild`, which validates and — when
+ * the child is being created inline — writes both rows in one transaction.
+ * None of that lives here, because E6-T2's GEDCOM import will write child
+ * links without ever reaching this action, and a rule that lives on one door
+ * is a rule somebody forgets to fit to the next.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields, including the hidden `unionId`
+ * @returns a state to render: the child's id, or what to fix
+ */
+export async function addChildAction(
+  _previous: ChildFormState,
+  form: FormData,
+): Promise<ChildFormState> {
+  await requireSession();
+
+  const result = await addChild(addChildInputFromFormData(form));
+
+  switch (result.status) {
+    case "invalid":
+      return childInvalidState(result.linkIssues, result.childIssues);
+
+    case "union-not-found":
+      /**
+       * Said as a fact about the tree rather than as an error, because the
+       * ordinary way to reach it is a panel left open in one tab while E3-T8
+       * removed the union in another — including as the side effect of
+       * detaching its last child.
+       */
+      return childFailedState(
+        "That family is no longer recorded. It may have been removed.",
+      );
+
+    case "child-not-found":
+      return childFailedState(
+        "The person you chose is no longer in the tree. Search again, or add them as a new person.",
+      );
+
+    case "child-is-partner":
+      return childFailedState(
+        "That person is one of this family's parents, so they cannot also be its child.",
+      );
+
+    case "already-recorded":
+      return childFailedState(
+        "That person is already recorded as a child of this family.",
+      );
+
+    case "added":
+      /**
+       * A child changes the canvas — a new edge, and possibly a whole new
+       * person — so there is always something to revalidate.
+       */
+      revalidateTree();
+      return childSavedState(result.childId);
   }
 }
 

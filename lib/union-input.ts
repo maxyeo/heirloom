@@ -6,6 +6,7 @@ import {
   readDate,
   readEnum,
   readText,
+  withoutPrefix,
 } from "./field-input";
 import {
   type IndividualFields,
@@ -508,27 +509,6 @@ export type AddSpouseInput = {
    */
   union: UnionInput;
 };
-
-/**
- * Take the fields of a form whose names share a prefix, with the prefix
- * stripped.
- *
- * The add-spouse form posts a person and a union in one submission, and both
- * have a `notes` field. Namespacing the person's inputs as `partner.notes` is
- * what keeps them apart; stripping the prefix here is what lets
- * `individualInputFromFormData` — which knows the *unprefixed* field names and
- * is the only thing that should know them — read them unchanged.
- *
- * A second `FormData` rather than a mapped object, so the person's field names
- * stay written down in exactly one place.
- */
-function withoutPrefix(form: FormData, prefix: string): FormData {
-  const stripped = new FormData();
-  for (const [key, value] of form.entries()) {
-    if (key.startsWith(prefix)) stripped.append(key.slice(prefix.length), value);
-  }
-  return stripped;
-}
 
 /** The prefix the add-spouse form gives its inline-partner inputs. */
 export const PARTNER_FIELD_PREFIX = "partner.";

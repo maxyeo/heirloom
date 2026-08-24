@@ -356,3 +356,57 @@ describe("starting the add-spouse flow", () => {
     expect(buttonLabelled(host, "Add a spouse")).toBeTruthy();
   });
 });
+
+/**
+ * The panel's second route out into an editing flow (E3-T5, `YEO-33`), and the
+ * same two halves are worth asserting for the same reason: an optional prop
+ * whose absent case was never checked is how a read-only surface quietly grows
+ * an edit control nobody meant to ship.
+ */
+describe("starting the add-child flow", () => {
+  it("offers nothing when no callback was given", () => {
+    const host = render(
+      <PersonPanel detail={detail()} onSelectPerson={noop} onClose={noop} />,
+    );
+
+    expect(
+      [...host.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("Add a child"),
+      ),
+    ).toBe(false);
+  });
+
+  it("calls back when the button is pressed", () => {
+    const onAddChild = vi.fn();
+    const host = render(
+      <PersonPanel
+        detail={detail()}
+        onSelectPerson={noop}
+        onClose={noop}
+        onAddChild={onAddChild}
+      />,
+    );
+
+    act(() => buttonLabelled(host, "Add a child").click());
+
+    expect(onAddChild).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Which family a child belongs to is the add-child form's question, not this
+   * panel's — so the offer cannot be conditional on a union already existing.
+   * Hiding it until then would leave the author guessing why it was missing.
+   */
+  it("is offered to somebody with no union recorded yet", () => {
+    const host = render(
+      <PersonPanel
+        detail={detail({ spouses: [] })}
+        onSelectPerson={noop}
+        onClose={noop}
+        onAddChild={noop}
+      />,
+    );
+
+    expect(buttonLabelled(host, "Add a child")).toBeTruthy();
+  });
+});
