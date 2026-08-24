@@ -60,8 +60,9 @@ import type { TitledEntry } from "@/lib/page-index";
  * which `app/globals.test.ts` enforces.
  *
  * Width is the caller's business, not this component's. Put it inside the
- * `max-w-content` column the way `app/page.tsx` does; the article shell that
- * owns that column is E11-T2.
+ * `max-w-content` column the way `app/page.tsx` does. The E11-T2 shell puts
+ * that column beside the sidebar; it deliberately does not impose the measure
+ * itself, so the route stays the one place a page's width is decided.
  *
  * ## Linking to other entries (E2-T5, `YEO-28`)
  *

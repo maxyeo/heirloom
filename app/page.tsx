@@ -1,52 +1,51 @@
 import Link from "next/link";
 
-import { auth, signOut } from "@/auth";
+import { SiteChrome } from "@/app/site-chrome";
+import { ArticleHeading } from "@/components/ArticleHeading";
+import { siteName } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const session = await auth();
-  const title = process.env.NEXT_PUBLIC_SITE_TITLE ?? "Heirloom";
+  const title = siteName();
 
   return (
-    // `max-w-content` is Vector 2022's measure — see globals.css. The article
-    // shell that sets this column beside a sidebar is E11-T2.
-    <main className="mx-auto max-w-content px-6 py-10">
-      <h1>{title}</h1>
+    /*
+      The shell is applied here rather than in a layout because this page shares
+      the root layout with `/signin`, which must not get chrome — see
+      `app/site-chrome.tsx`. `/wiki` and `/tree` are segments of their own and
+      get `layout.tsx` files instead.
 
-      <div className="wiki-body">
-        <p className="text-caption text-ink-muted">
-          From {title}, the family wiki. Signed in as {session?.user?.email}.
-        </p>
+      "Signed in as …" and the sign-out button used to live on this page. Both
+      are in the header's account menu now, on every page rather than only on
+      this one.
+    */
+    <SiteChrome>
+      {/* `max-w-content` is Vector 2022's measure — see globals.css. The shell
+          gives this column the region beside the sidebar; the centring and the
+          measure stay with the page, which is what lets `/tree` be a full-bleed
+          canvas inside the same shell. */}
+      <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
+        <ArticleHeading title={title} />
 
-        <h2>Browse</h2>
-        <ul>
-          {/* First, and deliberately so. Until search exists (E8) the index is
-              the only way to reach an entry whose address you do not already
-              know, which is what makes it the fallback navigation rather than
-              a page of its own. */}
-          <li>
-            <Link href="/wiki">All entries</Link> — everything written so far,
-            alphabetically
-          </li>
-          <li>
-            <Link href="/tree">Family tree</Link> — everyone, and how they
-            connect
-          </li>
-        </ul>
-      </div>
-
-      <form
-        className="mt-10"
-        action={async () => {
-          "use server";
-          await signOut({ redirectTo: "/signin" });
-        }}
-      >
-        <button type="submit" className="text-note text-link hover:underline">
-          Sign out
-        </button>
-      </form>
-    </main>
+        <div className="wiki-body">
+          <h2>Browse</h2>
+          <ul>
+            {/* First, and deliberately so. Until search exists (E8) the index
+                is the only way to reach an entry whose address you do not
+                already know, which is what makes it the fallback navigation
+                rather than a page of its own. */}
+            <li>
+              <Link href="/wiki">All entries</Link> — everything written so far,
+              alphabetically
+            </li>
+            <li>
+              <Link href="/tree">Family tree</Link> — everyone, and how they
+              connect
+            </li>
+          </ul>
+        </div>
+      </main>
+    </SiteChrome>
   );
 }
