@@ -13,7 +13,7 @@ import { render } from "@/test/render";
  * genuinely about the rendered card: that an unlinked entry produces *no*
  * element at all, that the deep link is the one E2-T4 built, and that the
  * dates on it say only as much as the source did. The formatters themselves
- * are already covered without a document in `lib/person-format.test.ts`; what
+ * are already covered without a document in `lib/format-date.test.ts`; what
  * these check is that this component calls them with the right arguments,
  * which is where the invented-day bug lives.
  *
@@ -53,6 +53,18 @@ describe("EntryPersonCard", () => {
     expect(card?.textContent).toContain("1899–1960");
     expect(card?.textContent).toContain("12 March 1899, Kentish Town, London");
     expect(card?.textContent).toContain("4 August 1960, Hastings, Sussex");
+  });
+
+  it("carries the lifespan's qualifier, not just the bare years", () => {
+    // `formatLifespan` (E4-T3, `YEO-40`) now carries qualifiers: a person
+    // recorded as born "about" some year is not the same claim as one born
+    // in it, and the header must not flatten that difference away the way it
+    // did before this ticket's dependency landed.
+    const host = render(
+      <EntryPersonCard person={{ ...ROSE, birthDateQualifier: "about" }} />,
+    );
+
+    expect(host.textContent).toContain("about 1899–1960");
   });
 
   it("deep-links the person on the tree, the way E2-T4 spells it", () => {

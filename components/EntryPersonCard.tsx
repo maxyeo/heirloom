@@ -1,11 +1,8 @@
 import Link from "next/link";
 
 import type { EntryPerson } from "@/lib/entry-person";
-import {
-  formatLifespan,
-  formatPersonName,
-  formatQualifiedDate,
-} from "@/lib/person-format";
+import { formatLifespan, formatQualifiedDate } from "@/lib/format-date";
+import { formatPersonName } from "@/lib/person-format";
 import { personSearch } from "@/lib/tree-selection";
 
 /**
@@ -57,18 +54,14 @@ export function EntryPersonCard({
   if (!person) return null;
 
   const name = formatPersonName(person.givenName, person.surname);
-  const lifespan = formatLifespan(person.birthDate, person.deathDate);
+  const lifespan = formatLifespan(person);
 
   /**
    * The one place in this feature a date is formatted, and `precision` is
-   * passed explicitly at both call sites.
-   *
-   * `formatQualifiedDate` defaults it to `"day"`, which is right for the
-   * callers that predate E4-T2 and wrong for anything written since: a
-   * year-only date carries 1 January as an anchor, and a call that omits the
-   * precision renders that anchor as though a source had stated it. E4-T3
-   * (`YEO-40`) consolidates this formatter into `lib/format-date.ts`; keeping
-   * both calls adjacent is what makes that a one-line repoint.
+   * passed explicitly at both call sites — `formatQualifiedDate`'s parameter
+   * is required, so a call that omitted it would not compile. A year-only
+   * date carries 1 January as an anchor, and rendering that anchor without
+   * knowing the precision would show it as though a source had stated it.
    */
   const birth = formatQualifiedDate(
     person.birthDate,
