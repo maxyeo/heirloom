@@ -143,6 +143,29 @@ function decodeSegment(segment: string): string {
 }
 
 /**
+ * The path's segments, or `null` if it is not shaped like one.
+ *
+ * The two empties a well-formed path produces are dropped — the one before the
+ * leading slash, and the one after an optional trailing slash, so `/wiki/ada/`
+ * reads the same as `/wiki/ada`. An empty segment anywhere *else* is a doubled
+ * slash, and `/wiki/ada//edit` is a different address from `/wiki/ada/edit`:
+ * one of them is the editor and the other is a 404. Collapsing them with a
+ * blanket `filter(Boolean)` would light the "Edit" tab over a page that is not
+ * the editor, which is the same lie the unrecognised-sub-route case above
+ * exists to avoid — so it is rejected rather than tidied up.
+ */
+function pathSegments(pathname: string): string[] | null {
+  const parts = pathname.replace(/\/$/, "").split("/");
+
+  // `usePathname` always reports a leading slash, so the first part is always
+  // empty. Anything else did not come from a path.
+  if (parts[0] !== "") return null;
+
+  const segments = parts.slice(1);
+  return segments.some((segment) => segment === "") ? null : segments;
+}
+
+/**
  * The tab row for a path, or `null` where there is no article to put tabs on.
  *
  * `null` covers every non-article page the shell also wraps — `/`, `/tree`,
@@ -153,10 +176,8 @@ function decodeSegment(segment: string): string {
  *   no query string, no hash.
  */
 export function articleTabsForPath(pathname: string): ArticleTabRow | null {
-  // A leading "" from the leading slash, and a trailing "" from a trailing
-  // one, are both dropped by the filter — so `/wiki/ada/` reads the same as
-  // `/wiki/ada`.
-  const segments = pathname.split("/").filter(Boolean);
+  const segments = pathSegments(pathname);
+  if (!segments) return null;
 
   const [root, slug, ...rest] = segments;
   if (root !== "wiki" || !slug) return null;

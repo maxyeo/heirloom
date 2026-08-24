@@ -167,8 +167,18 @@ export function ArticleTabs({ pathname }: { pathname: string }) {
   }, [pathname]);
 
   const row = articleTabsForPath(pathname);
-  // Every other page the shell wraps — the front page, `/tree`, the entry
-  // index, the create form. Nothing renders, not an empty row.
+  /*
+    Every other page the shell wraps — the front page, `/tree`, the entry
+    index, the create form. Nothing renders, not an empty row.
+
+    The three effects above run on those pages too, because the rules of hooks
+    put them before this return. That is two document listeners on a page with
+    no menu, and they are deliberately left there: both bail on the first line
+    when the ref is empty, and the alternative — moving them into a child that
+    only mounts on an article — buys nothing measurable in exchange for a
+    component whose dismissal logic lives somewhere other than the component
+    that is dismissed.
+  */
   if (!row) return null;
 
   const namespaceTab = row.tabs.find((tab) => tab.group === "namespace");

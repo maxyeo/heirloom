@@ -74,6 +74,27 @@ describe("which pages get tabs", () => {
       articleTabsForPath("/wiki/ada-lovelace"),
     );
   });
+
+  it.each([
+    "/wiki/ada-lovelace//edit",
+    "//wiki/ada-lovelace",
+    "/wiki//ada-lovelace/history",
+    "/wiki/ada-lovelace//",
+  ])("refuses %s rather than collapsing the doubled slash", (pathname) => {
+    // `/wiki/ada//edit` is a different address from `/wiki/ada/edit`: one is
+    // the editor and the other is a 404. Tidying the extra slash away would
+    // light the "Edit" tab over a page that is not the editor, which is the
+    // same lie the unrecognised-sub-route case above exists to avoid.
+    expect(articleTabsForPath(pathname)).toBeNull();
+  });
+
+  it("refuses a string that is not a path at all", () => {
+    // Everything real arrives from `usePathname`, which always leads with a
+    // slash — so this is about the function being total rather than about a
+    // route anyone can reach.
+    expect(articleTabsForPath("wiki/ada-lovelace")).toBeNull();
+    expect(articleTabsForPath("")).toBeNull();
+  });
 });
 
 describe("the tabs themselves", () => {
