@@ -4,11 +4,8 @@ import type {
   GraphPerson,
   GraphUnion,
 } from "./family-graph";
-import {
-  formatLifespan,
-  formatPersonName,
-  formatQualifiedDate,
-} from "./person-format";
+import { formatLifespan, formatQualifiedDate } from "./format-date";
+import { formatPersonName } from "./person-format";
 
 /**
  * Everything the detail panel (E2-T1) shows about one person, derived from the
@@ -217,7 +214,7 @@ export function derivePersonDetail(
   return {
     id: person.id,
     name: formatPersonName(person.givenName, person.surname),
-    lifespan: formatLifespan(person.birthDate, person.deathDate),
+    lifespan: formatLifespan(person),
     sex: person.sex,
     birth: toLifeEvent(
       formatQualifiedDate(
@@ -247,7 +244,7 @@ function toSummary(person: GraphPerson): PersonSummary {
   return {
     id: person.id,
     name: formatPersonName(person.givenName, person.surname),
-    lifespan: formatLifespan(person.birthDate, person.deathDate),
+    lifespan: formatLifespan(person),
   };
 }
 

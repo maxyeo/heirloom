@@ -188,6 +188,28 @@ describe("how a family reads", () => {
     );
   });
 
+  it("carries a parent's date qualifier into their years", () => {
+    // The label exists to tell two Thomas Hales apart, and "about 1898" is a
+    // materially weaker claim than "1898" when that is the thing being told
+    // apart. E4-T3 put the qualifier in `formatLifespan`; this is the surface
+    // reading it back.
+    const graph = seedGraph();
+    const thomas = graph.people.find((entry) => entry.id === "thomas");
+    if (!thomas) throw new Error("no thomas in the seed graph");
+    thomas.birthDateQualifier = "about";
+    thomas.birthDatePrecision = "year";
+    thomas.birthDate = "1898-01-01";
+
+    const option = [
+      ...parentOptions(graph, "nora").available,
+      ...parentOptions(graph, "nora").current,
+    ].find((entry) => entry.unionId === "u1");
+
+    expect(option?.label).toBe("Mary Ellis and Thomas Hale (about 1898–1974)");
+    // Never the anchor day the year is stored on.
+    expect(option?.label).not.toMatch(/January/);
+  });
+
   it("says outright that the other parent is unrecorded", () => {
     // The ticket's "one known parent and one unknown". A label that hid the
     // empty column would make the case unenterable through the one flow that

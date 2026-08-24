@@ -148,9 +148,12 @@ describe("the person's own record", () => {
     const thomas = detailFor("thomas");
 
     expect(thomas.name).toBe("Thomas Hale");
-    expect(thomas.lifespan).toBe("1898–1947");
-    // "about" is recorded on the birth date and has to survive to the page,
-    // which is the entire reason the qualifier columns exist.
+    // "about" is recorded on the birth date, so it belongs in the lifespan
+    // too (E4-T3): `1898–1947` would assert a birth year the record does not
+    // support, on the line that appears under every mention of him.
+    expect(thomas.lifespan).toBe("about 1898–1947");
+    // The same qualifier has to survive to the full date row, which is the
+    // entire reason the qualifier columns exist.
     expect(thomas.birth).toEqual({
       date: "about 20 November 1898",
       place: null,
