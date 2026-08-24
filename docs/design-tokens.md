@@ -123,6 +123,11 @@ Two things inside it take a modifier:
   because a 220px float in a phone-width column leaves a two-word measure
   beside it.
 - `a.new` is a red link, and stays red after it has been followed.
+- `h2`, `h3` and `h4` carry a `scroll-margin-top` of
+  `calc(var(--header-height) + 0.5rem)`. The header is sticky, so an anchor
+  scrolled to `top: 0` arrives underneath it; this is the browser's own answer,
+  and it applies to `#fragment` links, `scrollIntoView` and the back button
+  alike. See "The contents panel" below.
 
 ## Deliberately not done
 
@@ -131,7 +136,7 @@ Two things inside it take a modifier:
   would be worse than shipping none, so `:root` declares `color-scheme: light`
   and the browser stops painting dark scrollbars over a light page.
 - **No infobox styles.** Derived from the tree record, not authored — E11-T5.
-- **No hatnote, tabs or table of contents.** E11-T3, T7, T9.
+- **No hatnote or article tabs.** E11-T7, T9.
 
 ## The shell
 
@@ -166,6 +171,27 @@ before the first paint, because a sidebar the viewer collapsed cannot be allowed
 to appear for a frame on every page load. `lib/sidebar-preference.ts` has the
 long version, including why the stored preference is a wide-screen one that a
 phone ignores.
+
+## The contents panel
+
+E11-T3 added Vector 2022's "Contents" under the sidebar's "Navigation". It is
+generated from the entry's `bodyHtml` on every render and stored nowhere —
+`lib/article-outline.ts` derives a stable id for each `h2`/`h3`/`h4` from the
+heading's own text, numbering a repeat `-2`, `-3`, and so on. A stored id would
+survive the author renaming the heading and quietly point at the wrong section.
+E11-T4's section `[edit]` links share that function rather than slugging again.
+
+It brings no colour and no type size of its own: the panel is `text-note` on
+`--color-ink-muted`, the current section is `--color-ink` with a
+`--color-rule` bar beside it, and both are utilities.
+
+The one number it needs is `--header-height`, and it does not read it directly.
+The stylesheet gives article headings a `scroll-margin-top` derived from the
+token; the browser uses that when it scrolls to an anchor, and
+`components/ArticleContents.tsx` reads the same resolved value back off the
+heading to decide which section is current. One declaration, three uses — which
+is what keeps "the highlighted section" and "the section a click lands on" from
+drifting apart.
 
 ## The rule that keeps this honest
 

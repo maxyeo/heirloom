@@ -3,7 +3,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { ArticleContents } from "@/components/ArticleContents";
 import { ArticleHeading } from "@/components/ArticleHeading";
+import { readArticleOutline } from "@/lib/article-outline";
 import { getPageBySlug } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
@@ -79,6 +81,16 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    */
   const bodyHtml = sanitizeHtml(entry.bodyHtml);
 
+  /**
+   * The section structure, and the same body with an `id` on every heading —
+   * derived here, never stored, so that renaming a heading cannot leave a
+   * stale anchor behind. E11-T3 (`YEO-73`); E11-T4 (`YEO-74`) hangs its
+   * section `[edit]` links off the same ids. See `lib/article-outline.ts`,
+   * which runs the body back through the sanitiser to write them, so
+   * `outline.html` rather than `bodyHtml` is what goes into the document.
+   */
+  const outline = readArticleOutline(bodyHtml);
+
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
     // half of "readable on a phone": the measure alone would run the text to
@@ -122,7 +134,7 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
           // leave the reader scrolling sideways through prose.
           <div
             className="wiki-body break-words"
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+            dangerouslySetInnerHTML={{ __html: outline.html }}
           />
         ) : (
           // An entry can exist with an empty body — the column defaults to ''
@@ -132,6 +144,11 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
             This entry has no content yet.
           </p>
         )}
+
+        {/* The pinned contents panel (E11-T3). It renders into the shell's
+            sidebar rather than here — see `components/ArticleContents.tsx` —
+            and to nothing at all when the entry has no headings. */}
+        <ArticleContents headings={outline.headings} />
       </article>
     </main>
   );
