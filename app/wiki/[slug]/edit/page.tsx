@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { EntryEditForm } from "@/components/EntryEditForm";
-import { getPageBySlug } from "@/lib/pages";
+import { getPageBySlug, listPages } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
 
@@ -62,11 +62,33 @@ export default async function EntryEditPage({ params }: EntryEditPageProps) {
   // `/wiki/new`, and `savePage` refuses an unknown slug for the same reason.
   if (!entry) notFound();
 
+  /**
+   * The link button's entry list (E2-T5, `YEO-28`).
+   *
+   * Read here rather than in the editor because the editor is a Client
+   * Component: one that imported `@/lib/pages` would drag postgres.js into
+   * the browser bundle and into every suite that mounts it (docs/testing.md).
+   * A Server Component fetching and passing down is the framework's own
+   * pattern for this, and the same shape `app/tree/page.tsx` uses to hand the
+   * canvas its graph.
+   *
+   * After the `notFound()` above, deliberately: a request for an entry that
+   * does not exist has no reason to read the whole index. `listPages` already
+   * returns them ordered, and only `title` and `slug` cross to the client —
+   * `updatedAt` is index chrome the picker never shows, and every byte here
+   * is in the RSC payload of a page somebody is about to type into.
+   */
+  const entries = (await listPages()).map(({ slug, title }) => ({
+    slug,
+    title,
+  }));
+
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
       <EntryEditForm
         slug={entry.slug}
         title={entry.title}
+        entries={entries}
         /**
          * Sanitised on the way out, as the read route does. The editor sets
          * this as its starting document, so it is markup heading for a

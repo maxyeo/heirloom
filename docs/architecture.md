@@ -68,6 +68,27 @@ idempotent, so the second pass costs a parse and nothing else.
 This matters more here than it would elsewhere. With no RLS underneath and no
 CSP over the top, the allowlist is the whole defence.
 
+### Links between entries
+
+A link from one entry to another is stored as a plain, **site-relative**
+`<a href="/wiki/rose-hall">` — no origin, no scheme, and no marker of any
+kind. That is not a simplification; it is the only shape available. The
+allowlist above permits exactly one attribute on an `a`, and it is `href`, so
+a `class` or a `data-` attribute saying "this one is internal" would be
+stripped on the next save. The href is the marker.
+
+Two things follow, and both are deliberate:
+
+- **Bodies outlive the domain they were written on.** An absolute href would
+  keep resolving after a move, pointing at somebody else's server, and it
+  would do it silently.
+- **Resolution happens at render time, against `pages.slug`.** Nothing is
+  denormalised, so renaming or deleting an entry needs no sweep over stored
+  HTML. A link to an entry that no longer exists is simply one that does not
+  resolve — which is what E11-T6 renders red. The editor's link panel reads
+  the same hrefs back the same way (`lib/entry-links.ts`, E2-T5), so an author
+  who opens a broken link is told it is broken rather than shown an address.
+
 ### Secrets
 
 `DATABASE_URL`, `AUTH_SECRET`, and `AUTH_GOOGLE_SECRET` live in Vercel's

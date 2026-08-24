@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useId, useRef, useState, useTransition } from "react";
 
 import { EntryEditor } from "@/components/EntryEditor";
+import type { TitledEntry } from "@/lib/page-index";
 import { savePageAction } from "@/app/wiki/actions";
 
 /**
@@ -37,12 +38,22 @@ export interface EntryEditFormProps {
   title: string;
   /** The stored body, already sanitised on the way out of the database. */
   initialHtml: string;
+  /**
+   * Every entry that exists, for the editor's link button (E2-T5, `YEO-28`).
+   *
+   * Passed straight through. This form holds no opinion about linking; it is
+   * here because the route that reads the database is on the other side of
+   * it and the editor is a Client Component that must not reach for `@/db`
+   * itself.
+   */
+  entries?: readonly TitledEntry[];
 }
 
 export function EntryEditForm({
   slug,
   title: storedTitle,
   initialHtml,
+  entries,
 }: EntryEditFormProps) {
   const router = useRouter();
   const titleId = useId();
@@ -110,7 +121,11 @@ export function EntryEditForm({
         className="mt-1 mb-4 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 font-serif text-h2 text-ink"
       />
 
-      <EntryEditor initialHtml={initialHtml} onChange={onBodyChange} />
+      <EntryEditor
+        initialHtml={initialHtml}
+        onChange={onBodyChange}
+        entries={entries}
+      />
 
       {error === null ? null : (
         <p id={errorId} role="alert" className="mt-3 text-note text-ink">
