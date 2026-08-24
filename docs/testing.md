@@ -464,12 +464,14 @@ the default, a date that is not a full day, a qualifier that is not `exact`.
 Two fixtures carry them deliberately, so most modules inherit the coverage
 rather than each restating it:
 
-- **`db/seed.ts`** — the seeded family includes a year-only birth, a
-  month-precision death, a `before` qualifier, an adopted child, a union with
-  one partner unrecorded and neither its type nor its ending known, and one
-  individual linked to an entry. A developer running `npm run db:seed` sees
-  every one of those branches drawn, which is how two of the three bugs above
-  would have been noticed by eye.
+- **`db/seed-family.ts`** — the seeded family includes a year-only birth, a
+  month-precision death, `about` and `before` qualifiers, an adopted child, a
+  union with one partner unrecorded and neither its type nor its ending known,
+  and one individual linked to an entry. A developer running `npm run db:seed`
+  sees every one of those branches drawn, which is how two of the three bugs
+  above would have been noticed by eye. It is a plain value with fixed ids and
+  no database import, so a test can have the same coverage by importing it —
+  see "Inherit the seeded family, do not retype it" below.
 - **`lib/family-graph.db.test.ts`** — `getFamilyGraph` copies twenty-six columns
   into the graph by hand, and the four date columns on a person share one type
   with each other. `birthDatePrecision: p.deathDatePrecision` compiles, and
@@ -479,6 +481,62 @@ rather than each restating it:
 
 Adding a non-default value to a fixture for a module that never reads that field
 is noise, not coverage. Put the awkward value where the branch is.
+
+### Inherit the seeded family, do not retype it
+
+The rule above says most modules inherit the seed's coverage rather than
+restating it. Taken literally that needs the seed to be **importable**, which
+until E10-T3 (`YEO-67`) it was not: the family lived inside `db/seed.ts`'s
+`main()`, reachable only by running the script against a database. So every
+test that wanted the hard case retyped it, and a retyped fixture is a copy that
+agrees on the day it is written and stops agreeing silently on any day after.
+
+That is not a hypothesis. `lib/tree-layout.test.ts` carried a fixture
+documented as "the seed fixture from docs/architecture.md, trimmed" whose
+names, dates and child counts were none of the seed's — one child where the
+seed has eight, `marriage`/`ongoing` where the seed's half-known union carries
+`unknown`/`unknown`. The tests passed. They were testing an invented family
+under a comment claiming otherwise, and no run could say so.
+
+The family is now `db/seed-family.ts`: a `FamilyGraph` of plain values, with
+fixed ids so that the foreign keys can be expressed in a literal at all —
+`db/seed.ts` writes it and decides nothing about it. The split follows
+`db/seed-guard.ts`, which left that script for the same reason: what needs no
+database should not be trapped in something that does.
+
+```ts
+import { seedFamily, seedPerson } from "@/db/seed-family";
+```
+
+Two consequences worth knowing.
+
+**Ids are fixed rather than `defaultRandom()`.** A `?person=` deep link into a
+seeded tree now survives the next `npm run db:seed`, where before it quietly
+addressed nobody.
+
+**Order is still not a promise.** `getFamilyGraph` puts no `ORDER BY` on
+`individuals`, and orders unions by `sequence` then `start_date` — so the array
+order in `db/seed-family.ts` is the order the seed _writes_, not the order a
+reader gets back. Assert properties that hold whatever order the rows arrive
+in. `lib/tree-layout.seed.test.ts` is the worked example: it checks who exists
+and how many times, which rank each generation lands on relative to the others,
+and how each edge is styled — and deliberately asserts no coordinate, because
+dagre breaks ties within a rank by insertion order.
+
+That file is also the answer to "which test would notice". A tree that draws a
+twice-married person once per marriage still looks like a family tree, and
+looks like one for every family that never remarried. It was validated by
+mutation rather than inspection — reversing `rankdir`, dropping the union
+nodes, un-dashing an ended union or an adopted child, and duplicating a partner
+each fail it, and each names the assertion at fault.
+
+A fixture is still allowed to diverge from the seed **on purpose**, and two
+do: `lib/person-infobox.test.ts` gives several people entries because a linked
+relative beside an unlinked one is what it is testing, and
+`lib/tree-layout.test.ts` keeps an invented graph for the cases the seed cannot
+express — a person with no surname, a person whose death is recorded and whose
+birth is not. Both say so. The rule is not "never write a literal"; it is that
+a fixture claiming to be the seed has to actually be it.
 
 ### Racing two writers
 
