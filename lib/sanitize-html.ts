@@ -89,7 +89,21 @@ export const ALLOWED_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
  */
 export const ALLOWED_URL_SCHEMES = ["http", "https", "mailto"] as const;
 
-const OPTIONS: sanitize.IOptions = {
+/**
+ * The allowlist as sanitize-html wants it.
+ *
+ * Exported so that a pass which has to *add* something to the output can start
+ * from this object rather than restate it. `lib/article-outline.ts` is the one
+ * that does: it re-runs the sanitiser with `id` permitted on `h2`/`h3`/`h4` so
+ * that the heading ids E11-T3 and E11-T4 anchor to are written by the
+ * sanitiser itself rather than spliced into its output afterwards. Deriving
+ * from this constant is what keeps that pass from quietly falling behind a
+ * tightening made here.
+ *
+ * Widen it nowhere else. A caller that wants a *looser* allowlist wants a
+ * different module.
+ */
+export const SANITIZE_OPTIONS: sanitize.IOptions = {
   allowedTags: [...ALLOWED_TAGS],
   allowedAttributes: Object.fromEntries(
     Object.entries(ALLOWED_ATTRIBUTES).map(([tag, attrs]) => [tag, [...attrs]]),
@@ -137,5 +151,5 @@ const OPTIONS: sanitize.IOptions = {
  */
 export function sanitizeHtml(html: string | null | undefined): string {
   if (!html) return "";
-  return sanitize(html, OPTIONS);
+  return sanitize(html, SANITIZE_OPTIONS);
 }

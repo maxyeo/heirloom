@@ -2,6 +2,7 @@ import { RoutedArticleTabs } from "@/components/RoutedArticleTabs";
 import { SidebarScrim } from "@/components/SidebarScrim";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteSidebar } from "@/components/SiteSidebar";
+import { ARTICLE_CONTENTS_SLOT_ID } from "@/lib/article-outline";
 import { sidebarBootScript } from "@/lib/sidebar-preference";
 
 /**
@@ -26,7 +27,8 @@ import { sidebarBootScript } from "@/lib/sidebar-preference";
  * seam below:
  *
  * - **E11-T3 (`YEO-73`)** — the pinned table of contents, into
- *   `SiteSidebar`'s `children`.
+ *   `SiteSidebar`'s `children`. Landed as an empty element the article route
+ *   renders into; see the seam below.
  * - **E11-T7 (`YEO-77`)** — the Article / Read / Edit / View history tabs,
  *   into the top of the content region. Landed: `RoutedArticleTabs`.
  *
@@ -70,7 +72,19 @@ export function AppShell({
           inside a row it is not being stretched to fill. */}
       <div className="flex items-start">
         <SiteSidebar id={SIDEBAR_ID}>
-          {/* E11-T3 (`YEO-73`) renders the article's contents list here. */}
+          {/*
+            E11-T3 (`YEO-73`) renders the article's contents list into this
+            element rather than arriving here as a prop. The headings belong to
+            one entry and only `app/wiki/[slug]/page.tsx` has them, so a prop
+            would have to travel *up* from the page to the layout that renders
+            this shell. `components/ArticleContents.tsx` records what was tried
+            instead and why this is what is left. The seam is still the one
+            E11-T2 marked, and the panel still lands under "Navigation".
+
+            Empty on every other route, and on an entry with no headings —
+            which is what "no headings shows no contents panel" asks for.
+          */}
+          <div id={ARTICLE_CONTENTS_SLOT_ID} />
         </SiteSidebar>
 
         {/* Present at every width; painted only while the sidebar is a drawer. */}

@@ -2,10 +2,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { ArticleContents } from "@/components/ArticleContents";
 import { ArticleHeading } from "@/components/ArticleHeading";
 import { EntryPersonCard } from "@/components/EntryPersonCard";
+import { readArticleOutline } from "@/lib/article-outline";
 import { getEntryPerson } from "@/lib/entry-person";
-import { getPageBySlug } from "@/lib/pages";
+import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
+import { resolveEntryLinks } from "@/lib/red-links";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
 
@@ -81,6 +84,17 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   const bodyHtml = sanitizeHtml(entry.bodyHtml);
 
   /**
+   * The section structure, and the same body with an `id` on every heading —
+   * derived here, never stored, so that renaming a heading cannot leave a
+   * stale anchor behind. E11-T3 (`YEO-73`); E11-T4 (`YEO-74`) hangs its
+   * section `[edit]` links off the same ids. See `lib/article-outline.ts`,
+   * which runs the body back through the sanitiser to write them, so
+   * `outline.html` rather than `bodyHtml` is what the red-link pass below
+   * consumes, and its output is what goes into the document.
+   */
+  const outline = readArticleOutline(bodyHtml);
+
+  /**
    * Who this entry is about, or `undefined` when nobody is linked to it
    * (E2-T3). One row out of `individuals`, and the card below renders nothing
    * at all for the entries — places, heirlooms, stories — that are not about a
@@ -92,6 +106,23 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    * on a route that was already reading the database.
    */
   const person = await getEntryPerson(entry.id);
+
+  /**
+   * Red links (E11-T6): every internal link in the body is resolved against
+   * `pages.slug` here, and the ones that lead nowhere are rendered red with an
+   * invitation to write the entry. One query for the whole article, however
+   * many links it holds — and none at all when it holds none. See
+   * `lib/red-links.ts`.
+   *
+   * **After the sanitiser, never before.** The rewrite adds `class` and
+   * `title` to the anchors it marks, and the allowlist permits neither on an
+   * `a`; sanitising this value again would quietly strip the feature back out.
+   * That is why this runs on `outline.html` and not on `bodyHtml`:
+   * `readArticleOutline` is itself a sanitiser pass, so ordering it after this
+   * one would undo the red links. It splices opening tags by byte offset, so
+   * the heading ids written above survive untouched.
+   */
+  const articleHtml = await resolveEntryLinks(outline.html, findExistingSlugs);
 
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
@@ -130,7 +161,7 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
           // leave the reader scrolling sideways through prose.
           <div
             className="wiki-body break-words"
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
+            dangerouslySetInnerHTML={{ __html: articleHtml }}
           />
         ) : (
           // An entry can exist with an empty body — the column defaults to ''
@@ -140,6 +171,11 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
             This entry has no content yet.
           </p>
         )}
+
+        {/* The pinned contents panel (E11-T3). It renders into the shell's
+            sidebar rather than here — see `components/ArticleContents.tsx` —
+            and to nothing at all when the entry has no headings. */}
+        <ArticleContents headings={outline.headings} />
       </article>
     </main>
   );

@@ -1,3 +1,8 @@
+import {
+  collapseWhitespace,
+  decodeHtmlEscapes,
+  HTML_TOKEN_PATTERN,
+} from "@/lib/html-text";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 
 /**
@@ -102,58 +107,16 @@ const BLOCK_TAGS: Readonly<Record<string, ContentBlockKind>> = {
 };
 
 /**
- * Tags, text runs, and comments, in one pass.
+ * The scanner, the escape decoder and the whitespace rule all live in
+ * `lib/html-text.ts` now.
  *
- * Three alternatives in one regex rather than three passes, so the scanner
- * sees the document in source order and a `<` inside a text run cannot be
- * mistaken for a tag it is not. Comments are matched first so that a `>`
- * inside one does not terminate a phantom tag.
+ * They were written here for E1-T6 and moved out for E11-T6 (`YEO-76`), which
+ * walks the same sanitised HTML to find the links in it. The reasoning has
+ * not changed — a closed tag set is what makes a regex enough, and a DOM
+ * implementation in the server bundle would be over-building — it is only
+ * that two modules now depend on agreeing with `sanitizeHtml`'s output, and
+ * one description of that agreement is safer than two.
  */
-const TOKEN_PATTERN = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][^\s/>]*)[^>]*>|([^<]+)/g;
-
-/**
- * The four escapes `sanitizeHtml` emits, decoded in one pass.
- *
- * Deliberately not a character-reference decoder. `sanitize-html` parses its
- * input with htmlparser2, which decodes *every* entity in the document —
- * `&mdash;`, `&#8212;`, `&#x2019;`, `&nbsp;` all reach this module as the
- * characters they name — and re-escapes only `&`, `<`, `>` and `"` on the way
- * out. So those four are the entire set that can still be in the string
- * scanned below, and a named table, a decimal branch and a hex branch would
- * each be code no input can reach.
- *
- * One pass matters even for four. Replacing `&amp;` before `&lt;` would turn
- * the *literal* text `&amp;lt;` — which is how a real `&lt;` in the prose is
- * stored — into `<`, so the same paragraph would read as edited every time it
- * was round-tripped. Matching all four in one `replace` decodes each `&...;`
- * exactly once.
- */
-const ESCAPE_PATTERN = /&(amp|lt|gt|quot);/g;
-
-const ESCAPES: Readonly<Record<string, string>> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-};
-
-function decodeEscapes(text: string): string {
-  return text.replace(ESCAPE_PATTERN, (_whole, name: string) => ESCAPES[name]);
-}
-
-/**
- * Whitespace as the browser renders it: any run of it is one space, and the
- * ends are trimmed.
- *
- * This is what makes the diff indifferent to how the editor happened to
- * pretty-print its output. Without it, the same sentence saved by TipTap and
- * then re-saved after a manual `UPDATE` that added a newline would read as a
- * changed paragraph. JavaScript's `\s` includes ` `, so a non-breaking
- * space — which renders as a space — collapses with the rest.
- */
-function normaliseWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
 
 /**
  * Turn an entry body into the sequence of content blocks a reader sees.
@@ -219,7 +182,7 @@ export function extractContentBlocks(
     open.includes("listItem") ? "listItem" : (open.at(-1) ?? "paragraph");
 
   const flush = () => {
-    const text = normaliseWhitespace(decodeEscapes(buffer));
+    const text = collapseWhitespace(decodeHtmlEscapes(buffer));
     buffer = "";
     // A block with nothing in it is not a change anyone can see. TipTap emits
     // `<p></p>` for a blank line, and a diff that reported those would drown
@@ -227,7 +190,7 @@ export function extractContentBlocks(
     if (text) blocks.push({ kind: currentKind(), text });
   };
 
-  for (const token of safe.matchAll(TOKEN_PATTERN)) {
+  for (const token of safe.matchAll(HTML_TOKEN_PATTERN)) {
     // Read by index rather than destructured with `!== undefined` checks:
     // `RegExpExecArray` types every group as `string`, so comparing one
     // against `undefined` is a type error even though an unmatched
@@ -236,7 +199,9 @@ export function extractContentBlocks(
     // string, so an empty slot is always an alternative that did not fire.
     const closing = token[1];
     const tagName = token[2];
-    const text = token[3];
+    // Group 3 is the attribute run, which this scanner has no use for; the
+    // text a reader sees is group 4. See `HTML_TOKEN_PATTERN`.
+    const text = token[4];
 
     if (text) {
       buffer += text;
@@ -285,7 +250,7 @@ export function extractContentBlocks(
  * The identity of a block, as one comparable string.
  *
  * A NUL separates the two halves because it is the one character the text
- * half cannot contain: `normaliseWhitespace` keeps only what was in the
+ * half cannot contain: `collapseWhitespace` keeps only what was in the
  * document, and an HTML parser will not hand one back. Concatenating without a
  * separator that cannot appear in either half would let one kind's text
  * collide with another's.
