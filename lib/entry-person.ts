@@ -18,26 +18,32 @@ import type { DatePrecision, DateQualifier } from "@/lib/family-graph";
  *
  * `getFamilyGraph` would answer this too, and it is what `/tree` already does.
  * It is the wrong tool here: it reads every individual, every union and every
- * child link in the family in order to render one card about one person. The
- * article route needs exactly one row, so it asks for exactly one row.
+ * child link in the family in order to answer one question about one person.
+ * The question is one row, so this asks for one row.
+ *
+ * E11-T5's infobox does go on to load the graph (`lib/entry-infobox.ts`
+ * explains why: a stepchild is two hops out), and it starts from *this* answer
+ * rather than searching the graph for a matching `pageId`. There is one
+ * reverse lookup, with one opinion about the tie-break below, and everything
+ * that needs to know who an entry is about asks it.
  *
  * ## Why the columns are spelled out
  *
  * The same reason `WikiEntry` in `lib/pages.ts` gives for its own narrow
  * select: widening the query and widening the type are then one edit. `notes`
- * and `sex` are the deliberate omissions — the card states who this is and
+ * and `sex` are the deliberate omissions — this states who somebody is and
  * when they lived, and `notes` in particular is authored prose that belongs in
  * the entry body rather than duplicated above it.
  */
 
 /**
- * The person an entry is about, as the header card needs them.
+ * The person an entry is about, and the dates that place them.
  *
  * Each date arrives as the three columns that are only meaningful together —
  * the day, how far the source can be trusted (`qualifier`), and how much of it
  * was actually known (`precision`). Dropping either sibling here is how a year
  * read off a headstone becomes "1 January 1890" on the page; see
- * `formatQualifiedDate` in `lib/person-format.ts`, whose `precision` argument
+ * `formatQualifiedDate` in `lib/format-date.ts`, whose `precision` argument
  * exists for precisely that.
  */
 export type EntryPerson = {
@@ -58,8 +64,8 @@ export type EntryPerson = {
  * The person this entry is about, or `undefined` when nobody claims it.
  *
  * `undefined` is the ordinary case rather than a failure: most entries are
- * about a place, an heirloom or a story, and the card is simply not rendered
- * for them. See `EntryPersonCard`.
+ * about a place, an heirloom or a story, and the surfaces keyed off this — the
+ * E11-T5 infobox today — simply render nothing for them.
  *
  * ## Why `limit(1)` needs an `order by` to mean anything
  *

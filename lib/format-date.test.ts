@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatLifespan,
   formatQualifiedDate,
+  formatQualifiedYear,
   type Lifespan,
 } from "@/lib/format-date";
 
@@ -229,5 +230,38 @@ describe("formatLifespan", () => {
         ),
       ).not.toMatch(/January|\b1\b/);
     });
+  });
+});
+
+/**
+ * The year alone, extracted for E11-T5's infobox: Wikipedia writes a union as
+ * "m. 1933; died 1947" beside a name, where the full dates would be a record
+ * rather than a summary.
+ */
+describe("formatQualifiedYear", () => {
+  it("gives the year, with no anchor day and no month", () => {
+    expect(formatQualifiedYear("1933-02-11", "exact")).toBe("1933");
+    expect(formatQualifiedYear("1948-01-01", "exact")).toBe("1948");
+  });
+
+  it("keeps the qualifier, because a guess is not a fact", () => {
+    expect(formatQualifiedYear("1948-07-03", "about")).toBe("about 1948");
+    expect(formatQualifiedYear("1920-01-01", "before")).toBe("before 1920");
+    expect(formatQualifiedYear("1890-06-14", "after")).toBe("after 1890");
+  });
+
+  it("is null when there is no date, never a dash or a word", () => {
+    expect(formatQualifiedYear(null, "exact")).toBeNull();
+    expect(formatQualifiedYear(null, "about")).toBeNull();
+  });
+
+  it("reads the same year whatever precision the date was stored at", () => {
+    // A year-precision date is anchored to 1 January and a day-precision one
+    // is not, and this returns the four characters both of them genuinely
+    // recorded — which is why it needs no `precision` argument where
+    // `formatQualifiedDate` requires one.
+    for (const date of ["1908-01-01", "1908-05-01", "1908-05-30"]) {
+      expect(formatQualifiedYear(date, "exact")).toBe("1908");
+    }
   });
 });

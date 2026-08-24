@@ -79,6 +79,7 @@ to everyone who reads it at a glance.
 | --------------------- | --------------------------------------------- |
 | `--container-content` | `46em` — Vector 2022's measure                |
 | `--container-thumb`   | `220px` — Wikipedia's default thumbnail width |
+| `--container-infobox` | `20.5rem` — the person infobox (E11-T5)       |
 | `--radius-panel`      | `2px` — Vector 2022 rounds almost nothing     |
 
 The measure is in `em` deliberately, so it scales with the content type rather
@@ -135,7 +136,13 @@ Two things inside it take a modifier:
   palette rather than an inversion of this one. Shipping a half-guessed one
   would be worse than shipping none, so `:root` declares `color-scheme: light`
   and the browser stops painting dark scrollbars over a light page.
-- **No infobox styles.** Derived from the tree record, not authored — E11-T5.
+- **No hand-written infobox.** E11-T5 built the box, and it added one token
+  (`--container-infobox`) and no rules: `components/PersonInfobox.tsx` is
+  `bg-panel` inside `border-rule` with `border-rule-soft` between the rows,
+  which is Vector 2022's infobox and was already declared above. What stays
+  deliberately absent is the _markup_ — there is no infobox template for an
+  author to type, because every row is derived from `individuals` / `unions` /
+  `union_children` at render time. See `lib/person-infobox.ts`.
 - **No hatnote.** E11-T9.
 
 ## The shell
