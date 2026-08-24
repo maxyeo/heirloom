@@ -1,8 +1,9 @@
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { savePage } from "@/lib/save-page";
+import { raceWriters } from "@/test/db-concurrency";
 
 /**
  * Database tests for the save action's write path. Run with `npm run test:db`;
@@ -38,24 +39,6 @@ async function readPage(id = PAGE) {
     .from(schema.pages)
     .where(eq(schema.pages.id, id));
   return page;
-}
-
-/**
- * Force a second pool connection open before a test needs two at once.
- *
- * postgres.js opens connections on demand, and opening one costs an order of
- * magnitude more than a whole transaction against a local Postgres. So two
- * saves fired at a cold pool do not actually overlap: the first finishes while
- * the second is still shaking hands, and the race test below then passes
- * whether or not `savePage` locks anything. Two deliberately slow queries in
- * parallel leave both connections open and idle, after which concurrency in
- * the test means concurrency in the database.
- */
-async function warmPool() {
-  await Promise.all([
-    db.execute(sql`select pg_sleep(0.05)`),
-    db.execute(sql`select pg_sleep(0.05)`),
-  ]);
 }
 
 async function readRevisions(id = PAGE) {
@@ -273,12 +256,10 @@ describe("savePage", () => {
    * at which point its no-op check is answering the right question.
    *
    * Remove the `.for("update")` from `savePage` and this fails with two
-   * revisions and two `saved` results — provided the pool is warm, which is
-   * the only reason `warmPool` exists.
+   * revisions and two `saved` results — provided the two calls genuinely
+   * overlap, which is what `raceWriters` is for (`test/db-concurrency.ts`).
    */
   it("writes one revision when two identical saves race", async () => {
-    await warmPool();
-
     const edit = {
       slug: SLUG,
       title: "Raced",
@@ -286,7 +267,10 @@ describe("savePage", () => {
       editedBy: EDITOR,
     };
 
-    const results = await Promise.all([savePage(edit), savePage(edit)]);
+    const results = await raceWriters([
+      () => savePage(edit),
+      () => savePage(edit),
+    ]);
 
     expect(results.map((r) => r.status).sort()).toEqual(["saved", "unchanged"]);
     expect(await readRevisions()).toHaveLength(1);

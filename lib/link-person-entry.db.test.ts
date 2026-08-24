@@ -1,8 +1,9 @@
-import { eq, inArray, like, sql } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { createEntryForPerson, setPersonEntry } from "@/lib/link-person-entry";
+import { raceWriters } from "@/test/db-concurrency";
 
 /**
  * Database tests for the person↔entry link (E2-T2, `YEO-25`). Run with
@@ -64,19 +65,6 @@ async function readPerson(id: string) {
     .from(schema.individuals)
     .where(eq(schema.individuals.id, id));
   return person;
-}
-
-/**
- * Force a second pool connection open before the race test needs two at once.
- * Copied from `lib/create-page.db.test.ts`, for the reason spelled out there:
- * postgres.js opens connections on demand, so two calls fired at a cold pool
- * do not actually overlap and the race test would pass either way.
- */
-async function warmPool() {
-  await Promise.all([
-    db.execute(sql`select pg_sleep(0.05)`),
-    db.execute(sql`select pg_sleep(0.05)`),
-  ]);
 }
 
 async function readRevisions(pageId: string) {
@@ -151,11 +139,9 @@ describe("createEntryForPerson", () => {
      * `page_id` and both create an entry — and the loser's is orphaned at an
      * address nobody linked.
      */
-    await warmPool();
-
-    const [first, second] = await Promise.all([
-      createEntryForPerson({ personId: ROSE, createdBy: AUTHOR }),
-      createEntryForPerson({ personId: ROSE, createdBy: AUTHOR }),
+    const [first, second] = await raceWriters([
+      () => createEntryForPerson({ personId: ROSE, createdBy: AUTHOR }),
+      () => createEntryForPerson({ personId: ROSE, createdBy: AUTHOR }),
     ]);
 
     const created = [first, second].filter(
@@ -260,11 +246,9 @@ describe("setPersonEntry", () => {
      * this entry" (READ COMMITTED hides the other's uncommitted row) and both
      * write it, which is the state the check exists to prevent.
      */
-    await warmPool();
-
-    const [first, second] = await Promise.all([
-      setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE }),
-      setPersonEntry({ personId: THOMAS, pageId: LOOSE_PAGE }),
+    const [first, second] = await raceWriters([
+      () => setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE }),
+      () => setPersonEntry({ personId: THOMAS, pageId: LOOSE_PAGE }),
     ]);
 
     const outcomes = [first.status, second.status].sort();
