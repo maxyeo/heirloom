@@ -1,3 +1,4 @@
+import { RoutedArticleTabs } from "@/components/RoutedArticleTabs";
 import { SidebarScrim } from "@/components/SidebarScrim";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteSidebar } from "@/components/SiteSidebar";
@@ -27,7 +28,7 @@ import { sidebarBootScript } from "@/lib/sidebar-preference";
  * - **E11-T3 (`YEO-73`)** — the pinned table of contents, into
  *   `SiteSidebar`'s `children`.
  * - **E11-T7 (`YEO-77`)** — the Article / Read / Edit / View history tabs,
- *   into the top of the content region.
+ *   into the top of the content region. Landed: `RoutedArticleTabs`.
  *
  * The session is passed in rather than read here: `components/` stays clear of
  * `@/auth` so its files can be mounted in a suite with no `AUTH_*`. The
@@ -76,10 +77,14 @@ export function AppShell({
         <SidebarScrim />
 
         <div className="min-w-0 flex-1">
-          {/* E11-T7 (`YEO-77`) puts the article tab row here, above the
-              content column and below the header — which is where the mockup
-              has it, and why this is a wrapper rather than `{children}` on its
-              own. */}
+          {/* E11-T7 (`YEO-77`): the article tab row, above the content column
+              and below the header — which is where the mockup has it, and why
+              this is a wrapper rather than `{children}` on its own.
+
+              It renders nothing on a page that is not an article, so the shell
+              does not have to know which of its routes have tabs; the path
+              decides. See `lib/article-tabs.ts`. */}
+          <RoutedArticleTabs />
           {children}
         </div>
       </div>
