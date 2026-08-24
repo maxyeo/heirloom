@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xyflow/react/dist/style.css";
 
 import { PersonPanel } from "@/components/PersonPanel";
+import { PersonRemoval } from "@/components/PersonRemoval";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { derivePersonDetail } from "@/lib/person-detail";
 import { layoutFamilyGraph } from "@/lib/tree-layout";
@@ -257,6 +258,13 @@ function FamilyTreeCanvas({ graph }: { graph: FamilyGraph }) {
           detail={detail}
           onSelectPerson={selectPerson}
           onClose={close}
+          /*
+            E3-T8's remove/detach affordance, composed in rather than built
+            into the panel. It needs the whole graph — the confirmation has to
+            name the real unions and child links that a delete would take —
+            and the panel only ever holds one person's derived detail.
+          */
+          footer={<PersonRemoval graph={graph} personId={detail.id} />}
         />
       )}
     </div>

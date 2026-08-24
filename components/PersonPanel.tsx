@@ -37,6 +37,18 @@ export interface PersonPanelProps {
   /** Follow a relative's link. The panel stays open, showing them instead. */
   onSelectPerson: (personId: string) => void;
   onClose: () => void;
+  /**
+   * Rendered at the foot of the record, below everything the panel knows how
+   * to say.
+   *
+   * A slot rather than a prop per feature, and it exists because the panel is
+   * deliberately a *read-only* record (see the note above) while the things
+   * that want to sit at the bottom of it are not. E3-T8 puts the remove and
+   * detach affordance here, so that neither the cascade rules nor the
+   * confirmation copy have to be understood by this file — the caller
+   * composes `components/PersonRemoval.tsx` in and this renders it.
+   */
+  footer?: React.ReactNode;
   /** So the canvas can measure the panel and pan out from under it. */
   ref?: Ref<HTMLElement>;
 }
@@ -45,6 +57,7 @@ export function PersonPanel({
   detail,
   onSelectPerson,
   onClose,
+  footer,
   ref,
 }: PersonPanelProps) {
   const headingRef = useRef<HTMLDivElement>(null);
@@ -155,6 +168,8 @@ export function PersonPanel({
             <p className="text-caption whitespace-pre-line">{detail.notes}</p>
           </section>
         ) : null}
+
+        {footer ? <div className="mt-4">{footer}</div> : null}
       </div>
     </aside>
   );
