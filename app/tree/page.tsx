@@ -27,7 +27,16 @@ export default async function TreePage() {
           database and the session layer in behind it. See the note in
           `AddPersonPanel`.
         */}
-        <AddPersonPanel action={createIndividualAction} />
+        {/*
+          Hidden while there is nobody on the tree (E3-T9): the empty state
+          below opens this very panel under a label that suits a first run, and
+          two buttons for one flow is two independent `open` states landing two
+          identical, non-modal panels in the same fixed corner. The first
+          screen of a deployment should ask for exactly one thing.
+        */}
+        {graph.people.length === 0 ? null : (
+          <AddPersonPanel action={createIndividualAction} />
+        )}
       </header>
       <div className="min-h-0 flex-1">
         {/*
@@ -35,7 +44,17 @@ export default async function TreePage() {
           one more: the canvas renders the form, so importing the action inside
           `FamilyTree` would take `components/FamilyTree.test.tsx` down with it.
         */}
-        <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />
+        <FamilyTree
+          graph={graph}
+          addSpouseAction={addSpouseAction}
+          /*
+            And the add-person action once more (E3-T9): on an empty database
+            the canvas is replaced by an invitation that opens the same panel
+            the header does, so that the first screen of a fresh deployment
+            has the thing it is asking for on it.
+          */
+          createIndividualAction={createIndividualAction}
+        />
       </div>
     </main>
   );
