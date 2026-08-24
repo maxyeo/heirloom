@@ -162,8 +162,16 @@ export function derivePersonDetail(
     ),
     type: union.type,
     endReason: union.endReason,
-    start: formatQualifiedDate(union.startDate, union.startDateQualifier),
-    end: formatQualifiedDate(union.endDate, union.endDateQualifier),
+    start: formatQualifiedDate(
+      union.startDate,
+      union.startDateQualifier,
+      union.startDatePrecision,
+    ),
+    end: formatQualifiedDate(
+      union.endDate,
+      union.endDateQualifier,
+      union.endDatePrecision,
+    ),
   }));
 
   // Grouped by union and in the same order as the spouse list above, which is
@@ -212,11 +220,19 @@ export function derivePersonDetail(
     lifespan: formatLifespan(person.birthDate, person.deathDate),
     sex: person.sex,
     birth: toLifeEvent(
-      formatQualifiedDate(person.birthDate, person.birthDateQualifier),
+      formatQualifiedDate(
+        person.birthDate,
+        person.birthDateQualifier,
+        person.birthDatePrecision,
+      ),
       person.birthPlace,
     ),
     death: toLifeEvent(
-      formatQualifiedDate(person.deathDate, person.deathDateQualifier),
+      formatQualifiedDate(
+        person.deathDate,
+        person.deathDateQualifier,
+        person.deathDatePrecision,
+      ),
       person.deathPlace,
     ),
     notes: person.notes,

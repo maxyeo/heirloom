@@ -277,6 +277,36 @@ describe("deleting a person", () => {
     expect(withMary.end).toBe("2 August 1931");
   });
 
+  it("carries a union's own date precision, not a fabricated day", () => {
+    // YEO-39 added `date_precision`; this is the regression it exists to
+    // catch — a coarse date silently formatted as if it were exact.
+    const graph: FamilyGraph = {
+      people: [
+        person({ id: "a", givenName: "Ada" }),
+        person({ id: "b", givenName: "Ben" }),
+      ],
+      unions: [
+        union({
+          id: "u9",
+          partnerAId: "a",
+          partnerBId: "b",
+          startDate: "1890-01-01",
+          startDatePrecision: "year",
+          endDate: "1900-03-01",
+          endDatePrecision: "month",
+        }),
+      ],
+      childLinks: [],
+    };
+
+    const [withPrecision] = removalOf("a", graph).unions;
+
+    expect(withPrecision.start).toBe("1890");
+    expect(withPrecision.start).not.toBe("1 January 1890");
+    expect(withPrecision.end).toBe("March 1900");
+    expect(withPrecision.end).not.toBe("1 March 1900");
+  });
+
   it("cleans up a union their departure would leave with nobody in it", () => {
     // The one orphan a delete can create, and the cascade cannot reach it: a
     // union with no partners recorded, whose only child is the person going.
@@ -369,6 +399,34 @@ describe("detaching a partner", () => {
     const preview = previewPartnerDetachment(seedGraph(), "u2", "thomas");
 
     expect(preview?.removesUnion).toBe(false);
+  });
+
+  it("carries the union's own date precision, not a fabricated day", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person({ id: "a", givenName: "Ada" }),
+        person({ id: "b", givenName: "Ben" }),
+      ],
+      unions: [
+        union({
+          id: "u9",
+          partnerAId: "a",
+          partnerBId: "b",
+          startDate: "1890-01-01",
+          startDatePrecision: "year",
+          endDate: "1900-03-01",
+          endDatePrecision: "month",
+        }),
+      ],
+      childLinks: [],
+    };
+
+    const preview = previewPartnerDetachment(graph, "u9", "a");
+
+    expect(preview?.start).toBe("1890");
+    expect(preview?.start).not.toBe("1 January 1890");
+    expect(preview?.end).toBe("March 1900");
+    expect(preview?.end).not.toBe("1 March 1900");
   });
 
   it("removes the union when nothing would be left in it", () => {
