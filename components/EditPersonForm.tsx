@@ -13,12 +13,12 @@ import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import {
   IndividualFieldset,
   individualFormValuesFrom,
+  type IndividualFormField,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import { ModalDialog } from "@/components/ModalDialog";
 import type { GraphPerson } from "@/lib/family-graph";
 import { emptyIndividualFormState } from "@/lib/individual-form-state";
-import type { IndividualField } from "@/lib/individual-input";
 import { formatPersonName } from "@/lib/person-format";
 
 /**
@@ -194,7 +194,7 @@ export function EditPersonForm({
   const initial = useMemo(() => individualFormValuesFrom(person), [person]);
   const [values, setValues] = useState<IndividualFormValues>(initial);
 
-  const setField = useCallback((field: IndividualField, value: string) => {
+  const setField = useCallback((field: IndividualFormField, value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
   }, []);
 
@@ -388,13 +388,11 @@ const FIELD_NAMES = Object.keys({
   surname: true,
   sex: true,
   birthDate: true,
-  birthDateQualifier: true,
   birthPlace: true,
   deathDate: true,
-  deathDateQualifier: true,
   deathPlace: true,
   notes: true,
-} satisfies Record<IndividualField, true>) as IndividualField[];
+} satisfies Record<IndividualFormField, true>) as IndividualFormField[];
 
 /**
  * Whether two sets of form values would write the same row.

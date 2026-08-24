@@ -51,6 +51,34 @@ export const dateQualifier = pgEnum("date_qualifier", [
   "after",
 ]);
 
+/**
+ * How much of the `date` column sitting next to this one was actually known
+ * (E4-T2, `YEO-39`).
+ *
+ * A second column rather than more members on `date_qualifier`, because the
+ * two answer different questions and a record routinely needs both. The
+ * qualifier says how far the source can be trusted — "about 1890" against a
+ * flat "1890". This says how much of a date the source gave at all: a
+ * headstone and a census give a year, a parish register gives a day.
+ *
+ * The gap it closes is the one a `date` column cannot: Postgres has to be
+ * handed a real calendar day, so a year read off a headstone had nowhere to go
+ * but 1 January, and every reader downstream — the tree label, the detail
+ * panel, a GEDCOM export — then repeated that invented day as though somebody
+ * had recorded it. With this column a year-only date is stored as the first of
+ * January *with `year` beside it*, and the day is an anchor rather than an
+ * assertion. Nothing formats, compares or exports it as a day: see
+ * `DATE_PRECISIONS` and `isImpossibleOrder` in `lib/field-input.ts`, and
+ * `formatQualifiedDate` in `lib/person-format.ts`.
+ *
+ * `day` is the default, which is what makes the migration safe: every existing
+ * row came from an `<input type="date">` and therefore carries a full date, so
+ * it keeps meaning precisely what it meant before. `not null` for the same
+ * reason `date_qualifier` is — this is only ever read alongside its date, and
+ * "no date at all" is already said by the `date` column being null.
+ */
+export const datePrecision = pgEnum("date_precision", ["day", "month", "year"]);
+
 export const unionType = pgEnum("union_type", [
   "marriage",
   "partnership",
@@ -159,11 +187,17 @@ export const individuals = pgTable(
     birthDateQualifier: dateQualifier("birth_date_qualifier")
       .notNull()
       .default("exact"),
+    birthDatePrecision: datePrecision("birth_date_precision")
+      .notNull()
+      .default("day"),
     birthPlace: text("birth_place"),
     deathDate: date("death_date"),
     deathDateQualifier: dateQualifier("death_date_qualifier")
       .notNull()
       .default("exact"),
+    deathDatePrecision: datePrecision("death_date_precision")
+      .notNull()
+      .default("day"),
     deathPlace: text("death_place"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -191,10 +225,16 @@ export const unions = pgTable("unions", {
   startDateQualifier: dateQualifier("start_date_qualifier")
     .notNull()
     .default("exact"),
+  startDatePrecision: datePrecision("start_date_precision")
+    .notNull()
+    .default("day"),
   endDate: date("end_date"),
   endDateQualifier: dateQualifier("end_date_qualifier")
     .notNull()
     .default("exact"),
+  endDatePrecision: datePrecision("end_date_precision")
+    .notNull()
+    .default("day"),
   endReason: unionEndReason("end_reason").notNull().default("ongoing"),
   /**
    * Display order when dates are unknown. Families often remember the sequence

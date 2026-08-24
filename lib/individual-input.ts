@@ -50,7 +50,9 @@
  */
 
 import {
+  DATE_PRECISIONS,
   DATE_QUALIFIERS,
+  type DatePrecision,
   type DateQualifier,
   isImpossibleOrder,
   MAX_NOTES_LENGTH,
@@ -60,7 +62,9 @@ import {
 } from "./field-input";
 
 export {
+  DATE_PRECISIONS,
   DATE_QUALIFIERS,
+  type DatePrecision,
   type DateQualifier,
   MAX_NOTES_LENGTH,
 } from "./field-input";
@@ -103,13 +107,19 @@ export type IndividualFields = {
   givenName: string;
   surname: string | null;
   sex: Sex;
-  /** ISO `YYYY-MM-DD`, or null when unknown. */
+  /**
+   * ISO `YYYY-MM-DD`, or null when unknown. An *anchor* rather than a day
+   * whenever `birthDatePrecision` is coarser than `day` — see
+   * `DATE_PRECISIONS` in `lib/field-input.ts`.
+   */
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
+  birthDatePrecision: DatePrecision;
   birthPlace: string | null;
-  /** ISO `YYYY-MM-DD`, or null when unknown. */
+  /** ISO `YYYY-MM-DD`, or null when unknown. An anchor, as `birthDate` is. */
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
+  deathDatePrecision: DatePrecision;
   deathPlace: string | null;
   notes: string | null;
 };
@@ -240,7 +250,7 @@ export function validateIndividual(
   if (birthDate === undefined) {
     add(
       "birthDate",
-      "The birth date needs to be a real date, like 1890-04-12.",
+      "That birth date could not be read. Try a year like 1890, or a full date like 12 March 1890.",
     );
   }
 
@@ -251,6 +261,18 @@ export function validateIndividual(
   );
   if (birthDateQualifier === undefined) {
     add("birthDateQualifier", "That is not one of the options for a date.");
+  }
+
+  const birthDatePrecision = readEnum(
+    input.birthDatePrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (birthDatePrecision === undefined) {
+    add(
+      "birthDatePrecision",
+      "That is not one of the options for how much of a date is known.",
+    );
   }
 
   const birthPlace = readText(input.birthPlace);
@@ -267,7 +289,7 @@ export function validateIndividual(
   if (deathDate === undefined) {
     add(
       "deathDate",
-      "The death date needs to be a real date, like 1953-11-02.",
+      "That death date could not be read. Try a year like 1953, or a full date like 2 November 1953.",
     );
   }
 
@@ -278,6 +300,18 @@ export function validateIndividual(
   );
   if (deathDateQualifier === undefined) {
     add("deathDateQualifier", "That is not one of the options for a date.");
+  }
+
+  const deathDatePrecision = readEnum(
+    input.deathDatePrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (deathDatePrecision === undefined) {
+    add(
+      "deathDatePrecision",
+      "That is not one of the options for how much of a date is known.",
+    );
   }
 
   const deathPlace = readText(input.deathPlace);
@@ -311,9 +345,19 @@ export function validateIndividual(
     deathDate &&
     birthDateQualifier !== undefined &&
     deathDateQualifier !== undefined &&
+    birthDatePrecision !== undefined &&
+    deathDatePrecision !== undefined &&
     isImpossibleOrder(
-      { date: birthDate, qualifier: birthDateQualifier },
-      { date: deathDate, qualifier: deathDateQualifier },
+      {
+        date: birthDate,
+        qualifier: birthDateQualifier,
+        precision: birthDatePrecision,
+      },
+      {
+        date: deathDate,
+        qualifier: deathDateQualifier,
+        precision: deathDatePrecision,
+      },
     )
   ) {
     add(
@@ -347,9 +391,12 @@ export function validateIndividual(
        * a stray `ABT`.
        */
       birthDateQualifier: birthDate ? (birthDateQualifier ?? "exact") : "exact",
+      /** Normalised away with no date beside it, for the reason above. */
+      birthDatePrecision: birthDate ? (birthDatePrecision ?? "day") : "day",
       birthPlace: birthPlace ?? null,
       deathDate: deathDate ?? null,
       deathDateQualifier: deathDate ? (deathDateQualifier ?? "exact") : "exact",
+      deathDatePrecision: deathDate ? (deathDatePrecision ?? "day") : "day",
       deathPlace: deathPlace ?? null,
       notes: notes ?? null,
     },
@@ -402,9 +449,11 @@ export function individualInputFromFormData(form: FormData): IndividualInput {
     sex: form.get("sex"),
     birthDate: form.get("birthDate"),
     birthDateQualifier: form.get("birthDateQualifier"),
+    birthDatePrecision: form.get("birthDatePrecision"),
     birthPlace: form.get("birthPlace"),
     deathDate: form.get("deathDate"),
     deathDateQualifier: form.get("deathDateQualifier"),
+    deathDatePrecision: form.get("deathDatePrecision"),
     deathPlace: form.get("deathPlace"),
     notes: form.get("notes"),
   };

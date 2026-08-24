@@ -6,6 +6,7 @@ import { FormSelect } from "@/components/FormSelect";
 import {
   emptyIndividualFormValues,
   IndividualFieldset,
+  type IndividualFormField,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import { PartnerPicker } from "@/components/PartnerPicker";
@@ -21,7 +22,6 @@ import {
   type ChildRelation,
 } from "@/lib/child-input";
 import type { GraphPerson } from "@/lib/family-graph";
-import type { IndividualField } from "@/lib/individual-input";
 import { type PartnerCandidate, splitTypedName } from "@/lib/partner-search";
 import type { SpouseLink } from "@/lib/person-detail";
 
@@ -145,9 +145,12 @@ export function AddChildForm({
     emptyIndividualFormValues,
   );
 
-  const setChildField = useCallback((field: IndividualField, value: string) => {
-    setChild((current) => ({ ...current, [field]: value }));
-  }, []);
+  const setChildField = useCallback(
+    (field: IndividualFormField, value: string) => {
+      setChild((current) => ({ ...current, [field]: value }));
+    },
+    [],
+  );
 
   /**
    * The link exists, so this form has nothing left to show. Watching the
@@ -402,7 +405,7 @@ function Child({
   excludeIds: readonly string[];
   selected: PartnerCandidate | null;
   values: IndividualFormValues;
-  onChangeField: (field: IndividualField, value: string) => void;
+  onChangeField: (field: IndividualFormField, value: string) => void;
   childErrors: ChildFormState["childErrors"];
   pickerError: string | undefined;
   disabled: boolean;

@@ -1,4 +1,4 @@
-import type { DateQualifier } from "./family-graph";
+import type { DatePrecision, DateQualifier } from "./family-graph";
 
 /**
  * How a person's recorded facts are rendered as text.
@@ -59,12 +59,33 @@ const QUALIFIER_PREFIX: Record<DateQualifier, string> = {
 };
 
 /**
- * A date column and its `date_qualifier` sibling, read together.
+ * How much of the date to show, per `date_precision` (E4-T2, `YEO-39`).
  *
- * The two are only ever meaningful as a pair — a qualifier with no date says
+ * This table is the whole of what stops a year-only date from being displayed
+ * as 1 January. The stored day is an anchor — see `DATE_PRECISIONS` in
+ * `lib/field-input.ts` — and showing parts of it the author never typed would
+ * be inventing a fact and then attributing it to them.
+ */
+const PRECISION_OPTIONS: Record<DatePrecision, Intl.DateTimeFormatOptions> = {
+  day: { dateStyle: "long" },
+  month: { year: "numeric", month: "long" },
+  year: { year: "numeric" },
+};
+
+/**
+ * A date column read together with its `date_qualifier` and `date_precision`
+ * siblings.
+ *
+ * The three are only ever meaningful together — a qualifier with no date says
  * nothing, which is why the schema stores "no date at all" as a null `date`
- * and keeps the qualifier `not null`. So this takes both and returns null
+ * and keeps the other two `not null`. So this takes them all and returns null
  * when there is no date, and callers decide whether to render a row at all.
+ *
+ * The result is deliberately something `parseDateInput` can read straight back
+ * in: "about 1890" out of here goes into the date field and comes back as the
+ * same three values. That round trip is what lets the edit form prefill a
+ * free-text date box without a second, quieter formatter written to serve it
+ * — and `lib/parse-date.test.ts` asserts it closes.
  *
  * Pinned to `en-GB` and UTC for the same reason `formatRevisionTimestamp` is:
  * `Intl` otherwise defaults to the *environment's* locale and zone, so the
@@ -72,10 +93,16 @@ const QUALIFIER_PREFIX: Record<DateQualifier, string> = {
  * the machine that serves it. A `date` column has no time part, and parsing
  * `YYYY-MM-DD` as UTC then formatting it as UTC is what keeps a birthday from
  * sliding to the previous day west of Greenwich.
+ *
+ * `precision` defaults to `day`, which matches the column default and means
+ * every caller written before E4-T2 keeps its existing behaviour untouched.
+ * E4-T3 (`YEO-40`) is where this becomes `lib/format-date.ts` and the last
+ * places still rendering a raw date go through it.
  */
 export function formatQualifiedDate(
   date: string | null,
   qualifier: DateQualifier,
+  precision: DatePrecision = "day",
 ): string | null {
   if (!date) return null;
 
@@ -85,7 +112,7 @@ export function formatQualifiedDate(
   if (Number.isNaN(parsed.getTime())) return date;
 
   const formatted = new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "long",
+    ...PRECISION_OPTIONS[precision],
     timeZone: "UTC",
   }).format(parsed);
 

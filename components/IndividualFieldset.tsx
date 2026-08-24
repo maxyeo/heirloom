@@ -2,18 +2,18 @@
 
 import { useEffect, useId, useRef } from "react";
 
+import { DateField } from "@/components/DateField";
 import { FormSelect } from "@/components/FormSelect";
 import {
-  DATE_QUALIFIERS,
   MAX_NAME_LENGTH,
   MAX_NOTES_LENGTH,
   SEXES,
-  type DateQualifier,
   type IndividualField,
   type IndividualFieldErrors,
   type IndividualFields,
   type Sex,
 } from "@/lib/individual-input";
+import { formatQualifiedDate } from "@/lib/person-format";
 
 /**
  * One person's details as a set of form controls (E3-T2, `YEO-30`).
@@ -57,9 +57,18 @@ import {
  * Controlled is necessary and, for `<select>`, not sufficient. React makes a
  * reset harmless for inputs by writing `node.defaultValue` beside the value;
  * it has no equivalent for a select, whose DOM default lives in each option's
- * `defaultSelected` flag. So the three selects here are `FormSelect`, which
- * keeps that flag in step — without it a refused submission quietly reverts
- * `sex` to `male` and both qualifiers to `exact`. See `components/FormSelect.tsx`.
+ * `defaultSelected` flag. So the one select here is `FormSelect`, which keeps
+ * that flag in step — without it a refused submission quietly reverts `sex` to
+ * `male`. See `components/FormSelect.tsx`.
+ *
+ * ## Where the date qualifiers went (E4-T2, `YEO-39`)
+ *
+ * There used to be three selects, because each date was a `select` of
+ * `exact`/`about`/`before`/`after` in front of an `<input type="date">`. Both
+ * dates are now a single `DateField` text box that reads "about 1890" and
+ * works the qualifier out for itself, so a date's qualifier and precision are
+ * derived rather than chosen and are not values this form holds. That is why
+ * `IndividualFormValues` below is narrower than `IndividualFields`.
  */
 
 /**
@@ -73,7 +82,25 @@ import {
  * already does it for every caller including GEDCOM import, so doing it again
  * here would be a second, quieter set of rules about what blank means.
  */
-export type IndividualFormValues = Record<IndividualField, string>;
+export type IndividualFormValues = Record<IndividualFormField, string>;
+
+/**
+ * The fields a person form actually holds a value for.
+ *
+ * `IndividualFields` minus the four columns nobody types: a date's qualifier
+ * and its precision are read out of the date the author wrote (E4-T2,
+ * `YEO-39`), so holding them here as well would be a second copy free to
+ * disagree with the text on screen. `DateField` derives them on every render
+ * and posts them as hidden inputs, which is what keeps this form's state and
+ * what it submits from drifting apart.
+ */
+export type IndividualFormField = Exclude<
+  IndividualField,
+  | "birthDateQualifier"
+  | "birthDatePrecision"
+  | "deathDateQualifier"
+  | "deathDatePrecision"
+>;
 
 /**
  * A blank person, for a form that is starting one.
@@ -82,19 +109,17 @@ export type IndividualFormValues = Record<IndividualField, string>;
  * default held across renders, and a mutable one would leak a half-typed
  * person from one form into the next that mounted.
  *
- * The two qualifiers start at `exact` rather than blank because they are
- * `select`s with no empty option — a date is exact until somebody says
- * otherwise, which is also the column default.
+ * Both dates start blank, qualifier and all: a date nobody has typed has
+ * nothing to qualify, and `DateField` posts the column defaults for an empty
+ * box.
  */
 export const emptyIndividualFormValues: IndividualFormValues = Object.freeze({
   givenName: "",
   surname: "",
   sex: "unknown",
   birthDate: "",
-  birthDateQualifier: "exact",
   birthPlace: "",
   deathDate: "",
-  deathDateQualifier: "exact",
   deathPlace: "",
   notes: "",
 });
@@ -118,9 +143,14 @@ export const emptyIndividualFormValues: IndividualFormValues = Object.freeze({
  *
  * Written out field by field rather than mapped over the keys, so that a
  * column added to `IndividualFields` is a type error here rather than a value
- * quietly missing from a prefilled form. Neither qualifier needs a fallback:
- * both columns are `not null`, and `validateIndividual` normalises a qualifier
- * with no date back to `exact` before the row is ever written.
+ * quietly missing from a prefilled form.
+ *
+ * Each date goes back through `formatQualifiedDate`, which is the same
+ * function the detail panel renders with — so what the edit form shows is
+ * literally what the rest of the app shows, and `parseDateInput` reads it
+ * straight back into the three columns it came from. That round trip
+ * (asserted in `lib/parse-date.test.ts`) is what lets a free-text date box be
+ * prefilled without a second, quieter formatter written to serve it.
  *
  * The parameter is `IndividualFields` rather than `GraphPerson` on purpose —
  * the graph's person is that type plus an `id` and a `pageId`, so it is
@@ -133,11 +163,19 @@ export function individualFormValuesFrom(
     givenName: fields.givenName,
     surname: fields.surname ?? "",
     sex: fields.sex,
-    birthDate: fields.birthDate ?? "",
-    birthDateQualifier: fields.birthDateQualifier,
+    birthDate:
+      formatQualifiedDate(
+        fields.birthDate,
+        fields.birthDateQualifier,
+        fields.birthDatePrecision,
+      ) ?? "",
     birthPlace: fields.birthPlace ?? "",
-    deathDate: fields.deathDate ?? "",
-    deathDateQualifier: fields.deathDateQualifier,
+    deathDate:
+      formatQualifiedDate(
+        fields.deathDate,
+        fields.deathDateQualifier,
+        fields.deathDatePrecision,
+      ) ?? "",
     deathPlace: fields.deathPlace ?? "",
     notes: fields.notes ?? "",
   };
@@ -157,21 +195,6 @@ const SEX_LABELS: Record<Sex, string> = {
   unknown: "Unknown",
 };
 
-/**
- * What each date qualifier is called on screen.
- *
- * Prepositions rather than the stored words, because the control sits
- * immediately before the date and the two are read as one phrase: "Born about
- * 1890", "Died before 1953-11-02". "Exact" as a label would be a category
- * name in the middle of a sentence.
- */
-const QUALIFIER_LABELS: Record<DateQualifier, string> = {
-  exact: "on",
-  about: "about",
-  before: "before",
-  after: "after",
-};
-
 const CONTROL_CLASS =
   "mt-1 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -184,7 +207,7 @@ export interface IndividualFieldsetProps {
    */
   namePrefix?: string;
   /** One field changed. The caller merges it into `values`. */
-  onChange: (field: IndividualField, value: string) => void;
+  onChange: (field: IndividualFormField, value: string) => void;
   /** Messages to show under the inputs they belong to. Empty when all is well. */
   fieldErrors: IndividualFieldErrors;
   /** Grey everything out while a submission is in flight. */
@@ -211,12 +234,27 @@ export function IndividualFieldset({
    * one page — E3-T4 puts an existing partner beside a new one.
    */
   const base = useId();
-  const fieldName = (field: IndividualField) => `${namePrefix}${field}`;
-  const fieldId = (field: IndividualField) => `${base}-${field}`;
-  const errorId = (field: IndividualField) => `${base}-${field}-error`;
-  const describedBy = (field: IndividualField) =>
+  const fieldName = (field: IndividualFormField) => `${namePrefix}${field}`;
+  const fieldId = (field: IndividualFormField) => `${base}-${field}`;
+  const errorId = (field: IndividualFormField) => `${base}-${field}-error`;
+  const describedBy = (field: IndividualFormField) =>
     fieldErrors[field] === undefined ? undefined : errorId(field);
-  const invalid = (field: IndividualField) => fieldErrors[field] !== undefined;
+  const invalid = (field: IndividualFormField) =>
+    fieldErrors[field] !== undefined;
+
+  /**
+   * Every message a date can come back with, in one place.
+   *
+   * The qualifier and the precision are derived by `DateField`, so only a
+   * hand-made POST can get them refused — but "only" is not "never", and a
+   * message with no field on screen to hang under is a message nobody ever
+   * sees. Folding them into the date's own slot keeps the promise that nothing
+   * is silently dropped.
+   */
+  const dateError = (field: "birthDate" | "deathDate") =>
+    fieldErrors[field] ??
+    fieldErrors[`${field}Qualifier`] ??
+    fieldErrors[`${field}Precision`];
 
   const firstField = useRef<HTMLInputElement>(null);
 
@@ -293,18 +331,14 @@ export function IndividualFieldset({
         <FieldError id={errorId("sex")} message={fieldErrors.sex} />
       </div>
 
-      <DateRow
+      <DateField
         legend="Born"
-        dateField="birthDate"
-        qualifierField="birthDateQualifier"
-        qualifierLabel="How exact the birth date is"
-        fieldName={fieldName}
-        values={values}
-        onChange={onChange}
-        fieldErrors={fieldErrors}
+        name={fieldName("birthDate")}
+        value={values.birthDate}
+        onChange={(value) => onChange("birthDate", value)}
+        error={dateError("birthDate")}
         disabled={disabled}
-        fieldId={fieldId}
-        errorId={errorId}
+        className={CONTROL_CLASS}
       />
 
       <div>
@@ -328,18 +362,14 @@ export function IndividualFieldset({
         />
       </div>
 
-      <DateRow
+      <DateField
         legend="Died"
-        dateField="deathDate"
-        qualifierField="deathDateQualifier"
-        qualifierLabel="How exact the death date is"
-        fieldName={fieldName}
-        values={values}
-        onChange={onChange}
-        fieldErrors={fieldErrors}
+        name={fieldName("deathDate")}
+        value={values.deathDate}
+        onChange={(value) => onChange("deathDate", value)}
+        error={dateError("deathDate")}
         disabled={disabled}
-        fieldId={fieldId}
-        errorId={errorId}
+        className={CONTROL_CLASS}
       />
 
       <div>
@@ -383,97 +413,6 @@ export function IndividualFieldset({
           person&rsquo;s entry.
         </p>
       </div>
-    </div>
-  );
-}
-
-/**
- * A date and how much to trust it, as one row.
- *
- * The qualifier is a control rather than a checkbox marked "approximate"
- * because there are four answers and three of them are common in
- * genealogy — "about 1890" off a census age, "before 1920" from a probate
- * record, "after 1918" from a last letter. They are also exactly GEDCOM's
- * `ABT`/`BEF`/`AFT`, so what an author picks here survives an export.
- *
- * Its label is visually hidden: the two controls read as one phrase on screen
- * ("Born · about · 1890-04-12") and repeating "How exact the birth date is"
- * beside them would be noise. A screen reader still gets the sentence, because
- * an unlabelled `select` is a control nobody can identify out of context.
- */
-function DateRow({
-  legend,
-  dateField,
-  qualifierField,
-  qualifierLabel,
-  fieldName,
-  values,
-  onChange,
-  fieldErrors,
-  disabled,
-  fieldId,
-  errorId,
-}: {
-  legend: string;
-  dateField: "birthDate" | "deathDate";
-  qualifierField: "birthDateQualifier" | "deathDateQualifier";
-  qualifierLabel: string;
-  fieldName: (field: IndividualField) => string;
-  values: IndividualFormValues;
-  onChange: (field: IndividualField, value: string) => void;
-  fieldErrors: IndividualFieldErrors;
-  disabled: boolean;
-  fieldId: (field: IndividualField) => string;
-  errorId: (field: IndividualField) => string;
-}) {
-  return (
-    <div>
-      <Label htmlFor={fieldId(dateField)}>{legend}</Label>
-      <div className="mt-1 flex gap-2">
-        <label htmlFor={fieldId(qualifierField)} className="sr-only">
-          {qualifierLabel}
-        </label>
-        <FormSelect
-          id={fieldId(qualifierField)}
-          name={fieldName(qualifierField)}
-          disabled={disabled}
-          value={values[qualifierField]}
-          onChange={(event) => onChange(qualifierField, event.target.value)}
-          aria-invalid={fieldErrors[qualifierField] !== undefined}
-          aria-describedby={
-            fieldErrors[qualifierField] === undefined
-              ? undefined
-              : errorId(qualifierField)
-          }
-          className="rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {DATE_QUALIFIERS.map((qualifier) => (
-            <option key={qualifier} value={qualifier}>
-              {QUALIFIER_LABELS[qualifier]}
-            </option>
-          ))}
-        </FormSelect>
-        <input
-          id={fieldId(dateField)}
-          name={fieldName(dateField)}
-          type="date"
-          disabled={disabled}
-          value={values[dateField]}
-          onChange={(event) => onChange(dateField, event.target.value)}
-          aria-invalid={fieldErrors[dateField] !== undefined}
-          aria-describedby={
-            fieldErrors[dateField] === undefined
-              ? undefined
-              : errorId(dateField)
-          }
-          className="min-w-0 flex-1 rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60"
-        />
-      </div>
-      <FieldError
-        id={errorId(qualifierField)}
-        message={fieldErrors[qualifierField]}
-      />
-      <FieldError id={errorId(dateField)} message={fieldErrors[dateField]} />
     </div>
   );
 }

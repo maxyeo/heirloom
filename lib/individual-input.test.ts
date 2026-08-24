@@ -29,9 +29,11 @@ const MINIMAL_FIELDS: IndividualFields = {
   sex: "unknown",
   birthDate: null,
   birthDateQualifier: "exact",
+  birthDatePrecision: "day",
   birthPlace: null,
   deathDate: null,
   deathDateQualifier: "exact",
+  deathDatePrecision: "day",
   deathPlace: null,
   notes: null,
 };
@@ -66,9 +68,11 @@ describe("validateIndividual", () => {
       sex: "female",
       birthDate: "1815-12-10",
       birthDateQualifier: "exact",
+      birthDatePrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "exact",
+      deathDatePrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });
@@ -79,9 +83,11 @@ describe("validateIndividual", () => {
       sex: "female",
       birthDate: "1815-12-10",
       birthDateQualifier: "exact",
+      birthDatePrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "exact",
+      deathDatePrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });
@@ -197,7 +203,9 @@ describe("validateIndividual", () => {
       const fields = expectValid({
         ...MINIMAL,
         birthDateQualifier: "about",
+        birthDatePrecision: "day",
         deathDateQualifier: "before",
+        deathDatePrecision: "day",
       });
 
       expect(fields.birthDateQualifier).toBe("exact");
@@ -303,6 +311,7 @@ describe("validateIndividual", () => {
           ...MINIMAL,
           birthDate: "1890-01-01",
           birthDateQualifier: "about",
+          birthDatePrecision: "day",
           deathDate: "1889-12-01",
         }).deathDate,
       ).toBe("1889-12-01");
@@ -313,8 +322,36 @@ describe("validateIndividual", () => {
           birthDate: "1890-01-01",
           deathDate: "1889-12-01",
           deathDateQualifier: "about",
+          deathDatePrecision: "day",
         }).deathDate,
       ).toBe("1889-12-01");
+    });
+
+    it("reads a year-only date as the whole year, not as 1 January", () => {
+      // The case a `date_precision` column exists for (E4-T2, `YEO-39`). A
+      // year is stored on the first of January because Postgres needs a day,
+      // so comparing the stored days alone would refuse a woman born in June
+      // 1890 who died later the same year — the death's anchor reads as five
+      // months before her birth.
+      expect(
+        expectValid({
+          ...MINIMAL,
+          birthDate: "1890-06-01",
+          deathDate: "1890-01-01",
+          deathDatePrecision: "year",
+        }).deathDate,
+      ).toBe("1890-01-01");
+
+      // And the other side of it: a year genuinely earlier is still refused,
+      // so widening the anchor has not turned the rule off.
+      expect(
+        expectInvalid({
+          ...MINIMAL,
+          birthDate: "1890-06-01",
+          deathDate: "1889-01-01",
+          deathDatePrecision: "year",
+        }),
+      ).toEqual(["deathDate"]);
     });
 
     it("does not fire when the qualifiers leave room for an overlap", () => {
@@ -324,6 +361,7 @@ describe("validateIndividual", () => {
           ...MINIMAL,
           birthDate: "1890-01-01",
           birthDateQualifier: "before",
+          birthDatePrecision: "day",
           deathDate: "1889-12-01",
         }).deathDate,
       ).toBe("1889-12-01");
@@ -335,6 +373,7 @@ describe("validateIndividual", () => {
           birthDate: "1890-01-01",
           deathDate: "1889-12-01",
           deathDateQualifier: "after",
+          deathDatePrecision: "day",
         }).deathDate,
       ).toBe("1889-12-01");
     });
@@ -346,8 +385,10 @@ describe("validateIndividual", () => {
           ...MINIMAL,
           birthDate: "1890-01-01",
           birthDateQualifier: "after",
+          birthDatePrecision: "day",
           deathDate: "1889-01-01",
           deathDateQualifier: "before",
+          deathDatePrecision: "day",
         }),
       ).toEqual(["deathDate"]);
     });
@@ -444,9 +485,11 @@ describe("individualInputFromFormData", () => {
       sex: "female",
       birthDate: "1815-12-10",
       birthDateQualifier: "about",
+      birthDatePrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "exact",
+      deathDatePrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });

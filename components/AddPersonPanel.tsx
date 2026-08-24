@@ -12,13 +12,13 @@ import {
 import {
   IndividualFieldset,
   emptyIndividualFormValues,
+  type IndividualFormField,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import {
   emptyIndividualFormState,
   type IndividualFormState,
 } from "@/lib/individual-form-state";
-import type { IndividualField } from "@/lib/individual-input";
 
 /**
  * Adding somebody to the family (E3-T2, `YEO-30`).
@@ -150,7 +150,7 @@ export function AddPersonForm({
     emptyIndividualFormValues,
   );
 
-  const setField = useCallback((field: IndividualField, value: string) => {
+  const setField = useCallback((field: IndividualFormField, value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
   }, []);
 
