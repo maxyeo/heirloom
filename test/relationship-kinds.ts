@@ -123,19 +123,41 @@ export function stepParentsOf(
   const unionById = new Map(graph.unions.map((u) => [u.id, u]));
 
   const steps = new Set<string>();
+  const addPartnersOf = (unionId: string) => {
+    const union = unionById.get(unionId);
+    if (union === undefined) return;
+    for (const partnerId of [union.partnerAId, union.partnerBId]) {
+      if (partnerId === null) continue;
+      // Not me, and not one of my own parents — including the parent whose
+      // union this is.
+      if (partnerId === personId || parents.has(partnerId)) continue;
+      steps.add(partnerId);
+    }
+  };
+
+  // Derived: my parent's other spouse.
   for (const parentId of parents) {
     for (const unionId of partnerUnionsOf(graph, parentId)) {
-      const union = unionById.get(unionId);
-      if (union === undefined) continue;
-      for (const partnerId of [union.partnerAId, union.partnerBId]) {
-        if (partnerId === null) continue;
-        // Not me, and not one of my own parents — including the parent whose
-        // union this is.
-        if (partnerId === personId || parents.has(partnerId)) continue;
-        steps.add(partnerId);
-      }
+      addPartnersOf(unionId);
     }
   }
+
+  /**
+   * Stated: a union I am linked into as a `step` child. The partners of that
+   * union are my step-parents because the link says so, with no remarriage
+   * to read it out of — the same record `lib/person-infobox.ts` turns into a
+   * stepchild from the other end.
+   *
+   * Both sources are needed, and neither subsumes the other. Without this
+   * one, a person whose only link is `step` is somebody else's stepchild and
+   * has no step-parent, which is the same relationship disagreeing with
+   * itself depending on which end it is read from.
+   */
+  for (const link of graph.childLinks) {
+    if (link.childId !== personId || link.relation !== "step") continue;
+    addPartnersOf(link.unionId);
+  }
+
   return steps;
 }
 

@@ -2,6 +2,7 @@ import { is } from "drizzle-orm";
 import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
+import { seedFamily, seedPerson, seedUnion } from "@/db/seed-family";
 import * as schema from "@/db/schema";
 // `import type` matters: lib/family-graph.ts imports @/db, and taking only the
 // type erases the import entirely, which is what keeps this file runnable with
@@ -91,110 +92,61 @@ const SHAWS = [
   "stanley",
 ];
 
+/**
+ * The seeded family, with its uuids swapped for the names this file reads by.
+ *
+ * The rows come from `db/seed-family.ts` — the same value `db/seed.ts` writes
+ * and `lib/tree-layout.seed.test.ts` lays out — so there is no second copy of
+ * the family here to drift away from the first. That mattered enough to
+ * extract: `db/seed-family.ts` exists because `lib/tree-layout.test.ts` had
+ * been asserting over a literal that called itself the seed and had quietly
+ * stopped being it, and "nothing was wrong with the test; it was simply not
+ * testing what it said it was, and no run could report that" is the failure
+ * this file would otherwise be the fourth instance of.
+ *
+ * Only the identifiers are rewritten. Every date, qualifier, precision, sex,
+ * union type, end reason, sequence and child relation is the seed's own, so a
+ * change to the seeded family reaches these assertions rather than passing
+ * them by. The names are worth the remap because the questions here are about
+ * people rather than about rows: `siblingKind(graph, "edward", "clara")` is
+ * the claim being made, and the uuid spelling of it is not.
+ */
 function seedGraph(): FamilyGraph {
+  const named = new Map<string, string>([
+    ...Object.entries(seedPerson).map(
+      ([name, person]) => [person.id, name] as const,
+    ),
+    ...Object.entries(seedUnion).map(
+      ([name, union]) => [union.id, name] as const,
+    ),
+  ]);
+
+  /** Every id in the fixture is one of the two maps above; a miss is a bug. */
+  const rename = (id: string): string => {
+    const name = named.get(id);
+    if (name === undefined) throw new Error(`seedGraph: unnamed id "${id}"`);
+    return name;
+  };
+  const renameOrNull = (id: string | null) => (id === null ? null : rename(id));
+
   return {
-    people: [
-      // Thomas's mother; his father is the unrecorded partner of u0, which is
-      // what keeps the half-known union the schema calls extremely common in
-      // front of every walk below.
-      person({ id: "agnes", givenName: "Agnes", birthDate: "1875-01-01" }),
-      person({
-        id: "mary",
-        givenName: "Mary",
-        surname: "Ellis",
-        birthDate: "1901-03-14",
-        deathDate: "1931-08-02",
-      }),
-      person({
-        id: "thomas",
-        givenName: "Thomas",
-        sex: "male",
-        birthDate: "1898-11-20",
-        deathDate: "1947-06-11",
-        pageId: "page-thomas",
-      }),
-      person({
-        id: "rose",
-        givenName: "Rose",
-        surname: "Bennett",
-        birthDate: "1908-05-30",
-        deathDate: "1989-01-19",
-      }),
-      // The imprecise one, as in the seed: a headstone age and a funeral
-      // notice rather than a register entry.
-      person({
-        id: "walter",
-        givenName: "Walter",
-        surname: "Shaw",
-        sex: "male",
-        birthDate: "1905-01-01",
-        birthDateQualifier: "about",
-        birthDatePrecision: "year",
-        deathDate: "1978-04-01",
-        deathDatePrecision: "month",
-      }),
-      child("edward", "Edward", "Hale", "male", 1929),
-      child("clara", "Clara", "Hale", "female", 1934),
-      child("arthur", "Arthur", "Hale", "male", 1936),
-      child("ruth", "Ruth", "Shaw", "female", 1949),
-      child("harold", "Harold", "Shaw", "male", 1950),
-      child("doris", "Doris", "Shaw", "female", 1952),
-      child("frank", "Frank", "Shaw", "male", 1954),
-      child("vera", "Vera", "Shaw", "female", 1955),
-      child("leonard", "Leonard", "Shaw", "male", 1957),
-      child("joyce", "Joyce", "Shaw", "female", 1959),
-      child("stanley", "Stanley", "Shaw", "male", 1961),
-    ],
-    unions: [
-      union({
-        id: "u0",
-        partnerAId: "agnes",
-        partnerBId: null,
-        type: "unknown",
-        endReason: "unknown",
-        sequence: 1,
-      }),
-      union({
-        id: "u1",
-        partnerAId: "mary",
-        partnerBId: "thomas",
-        startDate: "1927-04-16",
-        endDate: "1931-08-02",
-        endReason: "death",
-        sequence: 1,
-      }),
-      union({
-        id: "u2",
-        partnerAId: "rose",
-        partnerBId: "thomas",
-        startDate: "1933-02-11",
-        endDate: "1947-06-11",
-        endReason: "death",
-        sequence: 2,
-      }),
-      union({
-        id: "u3",
-        partnerAId: "rose",
-        partnerBId: "walter",
-        startDate: "1948-01-01",
-        startDateQualifier: "about",
-        startDatePrecision: "year",
-        sequence: 3,
-      }),
-    ],
-    childLinks: [
-      { unionId: "u0", childId: "thomas", relation: "biological" },
-      { unionId: "u1", childId: "edward", relation: "biological" },
-      // Clara was adopted, which is the whole reason children belong to a
-      // union rather than to a parent.
-      { unionId: "u2", childId: "clara", relation: "adopted" },
-      { unionId: "u2", childId: "arthur", relation: "biological" },
-      ...SHAWS.map((id) => ({
-        unionId: "u3",
-        childId: id,
-        relation: "biological" as const,
-      })),
-    ],
+    people: seedFamily.people.map((person) => ({
+      ...person,
+      id: rename(person.id),
+      // The entry id is a page, not a person, and nothing here reads it.
+      pageId: person.pageId === null ? null : "page-thomas",
+    })),
+    unions: seedFamily.unions.map((union) => ({
+      ...union,
+      id: rename(union.id),
+      partnerAId: renameOrNull(union.partnerAId),
+      partnerBId: renameOrNull(union.partnerBId),
+    })),
+    childLinks: seedFamily.childLinks.map((link) => ({
+      unionId: rename(link.unionId),
+      childId: rename(link.childId),
+      relation: link.relation,
+    })),
   };
 }
 
@@ -558,18 +510,6 @@ describe("adoption and fostering leave the structure alone", () => {
     });
   }
 
-  /**
-   * The comparable value with the infobox's stepchild list blanked — the one
-   * field a `step` link is allowed to move, and the subject of its own
-   * assertion rather than of this comparison.
-   */
-  const withoutStepchildren = (
-    entry: ReturnType<typeof structure>[number],
-  ) => ({
-    ...entry,
-    stepchildren: null,
-  });
-
   /** The same family, with one child recorded as having arrived differently. */
   function withRelation(
     graph: FamilyGraph,
@@ -636,13 +576,17 @@ describe("adoption and fostering leave the structure alone", () => {
    * `step` is a stepchild by the record itself, without any remarriage to
    * derive it from.
    *
-   * That is worth pinning rather than sweeping past, because it is the single
-   * exception to this file's claim, and it is a narrow one: marking Edward's
-   * link `step` adds him to Thomas's and Mary's stepchildren and changes
-   * **nothing** about parents, siblings, relatives or the panel. A stored
-   * relationship label sits beside the derivation without replacing it, which
-   * is exactly the arrangement the rest of the model avoids by not having
-   * one.
+   * It is the single exception to this file's claim, and it does not behave
+   * like the three above: those say a union raised this child, so nothing
+   * derived may move. `step` says the union did *not*, so things must move.
+   * Replacing Edward's only link with a `step` one does not annotate his
+   * parentage, it removes it — he becomes Thomas and Mary's stepson and
+   * nobody's son, which is what the record now says.
+   *
+   * Asserted in both directions, because a relationship that disagrees with
+   * itself depending on which end it is read from is the failure worth
+   * guarding here: the infobox calls him their stepchild, and the walk from
+   * his end calls them his step-parents.
    */
   it("treats a `step` link as a record rather than as an arrival", () => {
     const stated = withRelation(seedGraph(), "edward", "step");
@@ -652,12 +596,40 @@ describe("adoption and fostering leave the structure alone", () => {
         (p) => p.id,
       ),
     ).toEqual(["edward", ...SHAWS]);
-
-    // Everything derived is untouched: same parents, same siblings, same
-    // relatives, same panel.
-    expect(structure(stated).map(withoutStepchildren)).toEqual(
-      structure(seedGraph()).map(withoutStepchildren),
+    expect(stepParentsOf(stated, "edward")).toEqual(
+      new Set(["thomas", "mary"]),
     );
+
+    // And the parentage the link no longer claims is gone with it.
+    expect(parentsOf(stated, "edward")).toEqual(new Set());
+    expect(siblingKind(stated, "edward", "clara")).toBe("none");
+  });
+
+  /**
+   * The case the application actually produces, which the one above cannot
+   * reach: `lib/child-input.ts` lets an *existing* person be attached to a
+   * second union, so a `step` link normally sits *beside* a birth link rather
+   * than replacing it. Edward keeps his parents and gains a stepmother.
+   *
+   * Read as an arrival, the added row would make Rose his parent — which
+   * then hides her from his step-parents, because a parent cannot be one,
+   * and makes her own children his full siblings rather than his half. All
+   * three are checked here and in `test/relationship-kinds.test.ts`.
+   */
+  it("adds a stepmother without disturbing a parentage already recorded", () => {
+    const base = seedGraph();
+    const stated: FamilyGraph = {
+      ...base,
+      childLinks: [
+        ...base.childLinks,
+        { unionId: "u2", childId: "edward", relation: "step" },
+      ],
+    };
+
+    expect(parentsOf(stated, "edward")).toEqual(new Set(["mary", "thomas"]));
+    expect(stepParentsOf(stated, "edward")).toEqual(new Set(["rose"]));
+    expect(siblingKind(stated, "edward", "clara")).toBe("half");
+    expect(siblingKind(stated, "edward", "ruth")).toBe("step");
   });
 
   it("leaves the seeded family unchanged by Clara's adoption", () => {
@@ -765,70 +737,6 @@ describe("the schema stores no relationship", () => {
 // ---------------------------------------------------------------------------
 // Fixture builders and small helpers
 // ---------------------------------------------------------------------------
-
-function person(
-  overrides: Partial<FamilyGraph["people"][number]> & {
-    id: string;
-    givenName: string;
-  },
-) {
-  return {
-    surname: "Hale",
-    sex: "female",
-    birthDate: null,
-    birthDateQualifier: "exact",
-    birthDatePrecision: "day",
-    birthPlace: null,
-    deathDate: null,
-    deathDateQualifier: "exact",
-    deathDatePrecision: "day",
-    deathPlace: null,
-    notes: null,
-    pageId: null,
-    ...overrides,
-  } satisfies FamilyGraph["people"][number];
-}
-
-/**
- * A child known by the year they were born and nothing finer, written to the
- * 1 January anchor with `year` beside it — the seed's own helper, and the
- * reason none of these eleven claims a birthday nobody recorded.
- */
-function child(
-  id: string,
-  givenName: string,
-  surname: string,
-  sex: "male" | "female",
-  birthYear: number,
-) {
-  return person({
-    id,
-    givenName,
-    surname,
-    sex,
-    birthDate: `${birthYear}-01-01`,
-    birthDatePrecision: "year",
-  });
-}
-
-function union(
-  overrides: Partial<FamilyGraph["unions"][number]> & { id: string },
-) {
-  return {
-    partnerAId: null,
-    partnerBId: null,
-    type: "marriage",
-    endReason: "ongoing",
-    sequence: 1,
-    startDate: null,
-    startDateQualifier: "exact",
-    startDatePrecision: "day",
-    endDate: null,
-    endDateQualifier: "exact",
-    endDatePrecision: "day",
-    ...overrides,
-  } satisfies FamilyGraph["unions"][number];
-}
 
 function detailFor(id: string) {
   const detail = derivePersonDetail(seedGraph(), id);
