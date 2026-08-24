@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   date,
   index,
   integer,
@@ -107,6 +108,38 @@ export const revisions = pgTable(
       .notNull()
       .defaultNow(),
     createdBy: text("created_by"),
+    /**
+     * Provenance for a restore (E1-T7): which revision this row's content was
+     * copied forward from, or null for an ordinary save.
+     *
+     * A column rather than a convention baked into the title or the body,
+     * because restore is the one operation whose *meaning* is not recoverable
+     * from the content it writes. A restored revision is byte-identical to the
+     * revision it came from, so without this the history reads as though
+     * somebody retyped an old version from memory — the two rows are
+     * indistinguishable, and "restoring is itself undoable" becomes a fact
+     * about the data that nothing in the data actually records.
+     *
+     * Nullable, and that is the common case: every row written before this
+     * column existed, and every row an ordinary save writes, has no source
+     * revision. Null therefore means "typed, not restored", which is a real
+     * distinction rather than missing data.
+     *
+     * `onDelete: "set null"` on a self-reference that, in practice, only ever
+     * fires as collateral: nothing deletes a revision on its own (that is the
+     * append-only property this whole ticket rests on), and the only deletion
+     * that reaches this table is the `pages` cascade above, which takes a
+     * page's whole history — source rows and restored rows together — in one
+     * statement.
+     *
+     * The type annotation is required by TypeScript, not by Drizzle: a table
+     * whose column definition refers back to the same table is circular, and
+     * without an explicit return type the inference has nowhere to bottom out.
+     */
+    restoredFromId: uuid("restored_from_id").references(
+      (): AnyPgColumn => revisions.id,
+      { onDelete: "set null" },
+    ),
   },
   (t) => [index("revisions_page_id_created_at_idx").on(t.pageId, t.createdAt)],
 );

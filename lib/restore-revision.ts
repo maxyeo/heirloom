@@ -1,0 +1,239 @@
+import { eq, sql } from "drizzle-orm";
+
+import { db, schema } from "@/db";
+import { isRevisionId } from "@/lib/revision-format";
+import { getRevisionById } from "@/lib/revisions";
+import { sanitizeHtml } from "@/lib/sanitize-html";
+import { writeRevision } from "@/lib/save-page";
+
+/**
+ * One-click restore (E1-T7, `YEO-21`): put an entry back the way an older
+ * revision had it, by *appending* that content rather than by reaching back
+ * for it.
+ *
+ * ## Why this is a copy forward and never a rewind
+ *
+ * docs/product.md promises that "nothing is ever destroyed", and offers
+ * one-click restore as the recovery story that replaces a database backup.
+ * That promise only holds if restore itself cannot destroy anything — so this
+ * module does exactly what a save does: it writes a new `revisions` row and
+ * updates `pages` to match. It never deletes a revision, never edits one in
+ * place, and never truncates history back to a chosen point.
+ *
+ * Three consequences fall out of that, and all three are the ticket's
+ * acceptance criteria rather than side effects:
+ *
+ *   - the revision being restored *from* is untouched, so restoring the same
+ *     version twice, or restoring the wrong one, costs nothing;
+ *   - the state the page was in immediately before the restore is still the
+ *     second-newest revision, with a restore control of its own — which is
+ *     what "restoring is itself undoable" means concretely. Undoing a restore
+ *     is not a special operation; it is a restore;
+ *   - the new row is attributed to whoever clicked restore, not to the author
+ *     of the old revision. They are the person who decided the entry should
+ *     say this again, and history should name the person who made the
+ *     decision, not the one whose words were chosen.
+ *
+ * ## Why it is not `savePage`
+ *
+ * The same reason `lib/create-page.ts` gives for its own existence: `savePage`
+ * takes an edit from a browser, and this takes a reference to a row. Routing
+ * restore through it would mean the content made a round trip out to a client
+ * and back — the one path on which it could be altered in transit, which is
+ * precisely what a restore must not allow. Here the content is read from the
+ * database and written back to the database; the caller never supplies it, and
+ * a direct POST to the server action cannot substitute its own.
+ *
+ * What *is* shared is the part worth sharing: `writeRevision` appends the
+ * history row here exactly as it does for a save and for a creation, inside
+ * one transaction, so a restored revision is written by the same code and
+ * follows the same rule as every other revision.
+ */
+
+export type RestoreRevisionInput = {
+  /** Which entry. The URL-facing identifier, as the route knows it. */
+  slug: string;
+  /** Which revision to copy forward. Untrusted; shape-checked here. */
+  revisionId: string;
+  /** The signed-in restorer's email. Written to both rows. */
+  restoredBy: string;
+};
+
+/**
+ * Every way a restore can end, as a value rather than an exception — the same
+ * shape and the same reasoning as `SavePageResult`: `unchanged` and
+ * `not-found` are outcomes a UI renders, not faults.
+ *
+ * There is no separate `wrong-page` member. A revision belonging to another
+ * entry is folded into `not-found` deliberately, exactly as the history detail
+ * route folds it into a 404: the caller is asking about a revision that, as
+ * far as this entry is concerned, does not exist, and a distinct status would
+ * confirm to an unauthorised prober that the id they guessed is real.
+ */
+export type RestoreRevisionResult =
+  | {
+      status: "restored";
+      pageId: string;
+      /** The new row, not the one restored from. */
+      revisionId: string;
+    }
+  | { status: "unchanged"; pageId: string }
+  | { status: "empty-title" }
+  | { status: "not-found" };
+
+/**
+ * Restore an entry to the content of one of its own revisions.
+ *
+ * @param input which entry, which revision, and who to attribute it to
+ * @returns what happened, including the ids the caller may want to link to
+ */
+export async function restoreRevision(
+  input: RestoreRevisionInput,
+): Promise<RestoreRevisionResult> {
+  /**
+   * Shape first, for the reason `isRevisionId` documents at length: this value
+   * comes from a URL and a form field, is under no obligation to look like a
+   * UUID, and handing a non-UUID to `eq(schema.revisions.id, …)` makes
+   * Postgres *raise* rather than return no rows. Checking here rather than
+   * only in the route means the server action is covered too — it is a POST
+   * endpoint anyone can reach, not just a page anyone can load.
+   */
+  if (!isRevisionId(input.revisionId)) return { status: "not-found" };
+
+  /**
+   * Read the source revision *before* opening the transaction, which is safe
+   * for one specific reason: revisions are append-only, so this row cannot
+   * change under us — there is no writer anywhere in the codebase that updates
+   * `revisions`, only inserts. Reading it inside the transaction instead would
+   * mean holding the `pages` row lock taken below while checking out a second
+   * pool connection, which is the shape that deadlocks a connection pool under
+   * load for no benefit here.
+   */
+  const source = await getRevisionById(input.revisionId);
+  if (!source) return { status: "not-found" };
+
+  return db.transaction(async (tx): Promise<RestoreRevisionResult> => {
+    /**
+     * `FOR UPDATE`, for the same reason `savePage` takes it: it makes the
+     * no-op check below trustworthy under concurrency. Two people clicking
+     * restore on the same revision at the same moment must produce one new
+     * revision, not two identical ones — the second transaction blocks, then
+     * re-reads the row the first committed and correctly finds the page
+     * already says what it was asked to make it say.
+     */
+    const [page] = await tx
+      .select({
+        id: schema.pages.id,
+        title: schema.pages.title,
+        bodyHtml: schema.pages.bodyHtml,
+      })
+      .from(schema.pages)
+      .where(eq(schema.pages.slug, input.slug))
+      .for("update");
+
+    // The slug holds no row: deleted, or POSTed at directly.
+    if (!page) return { status: "not-found" };
+
+    /**
+     * The cross-entry guard, and the reason this function takes a slug as well
+     * as a revision id rather than trusting the id alone. Revision ids are
+     * database-wide, so without this check a revision id lifted from one
+     * entry's history and posted against another entry's slug would overwrite
+     * the second entry with the first one's content — a write, not just a
+     * misleading read, which is what makes this a genuine security boundary
+     * rather than the cosmetic version of the same check on the detail route.
+     */
+    if (source.pageId !== page.id) return { status: "not-found" };
+
+    /**
+     * Cleaned on the way back in, on the same terms as a save. A revision is
+     * not automatically safe just because it is already in the database: rows
+     * written before E1-T4, by `db/seed.ts`, or by hand in a SQL console have
+     * never been through the sanitiser, and restore is the operation that
+     * takes such a row and makes it the live page again. `sanitizeHtml` is
+     * idempotent, so for every row the app itself wrote this costs a parse and
+     * changes nothing.
+     *
+     * The comparison below is therefore against the values that would actually
+     * be written, which is the same rule `savePage` applies — and it has the
+     * same useful consequence: restoring a pre-sanitiser revision onto a
+     * pre-sanitiser page *does* count as a change, because it genuinely
+     * rewrites the stored HTML.
+     */
+    const title = source.title.trim();
+    const bodyHtml = sanitizeHtml(source.bodyHtml);
+
+    /**
+     * `revisions.title` is `not null` and every writer trims before inserting,
+     * so this is unreachable from the application's own history. It is here
+     * for the hand-written row — a data fix, a migration backfill — because
+     * the alternative is that restore is the one path in the wiki that can
+     * leave an entry with a blank title, and the invariant is worth more than
+     * the branch costs.
+     */
+    if (!title) return { status: "empty-title" };
+
+    /**
+     * The no-op rule, applied deliberately rather than inherited.
+     *
+     * Restoring a revision whose content the page already has is a request for
+     * a state the page is already in, and the honest answer is to record
+     * nothing. Appending here would add a history row that describes no change
+     * — indistinguishable in the list from a real edit — and would bump
+     * `updated_at`, pushing an entry nobody actually changed to the top of
+     * E8-T4's recently-changed feed. That is the same argument `savePage`
+     * makes for declining an unchanged save, and it applies with more force
+     * here, because the most common way to reach it is a reader clicking
+     * restore on the row marked "(current version)".
+     *
+     * Nothing is lost by refusing: the entry already reads exactly as the
+     * reader asked for it to read. The UI says so rather than reporting a
+     * failure.
+     *
+     * Note which revision this compares against — the *page*, not the newest
+     * revision. They agree by construction (see `lib/save-page.ts`), but the
+     * page is the row being written, so it is the row that decides whether the
+     * write would change anything.
+     */
+    if (page.title === title && page.bodyHtml === bodyHtml) {
+      return { status: "unchanged", pageId: page.id };
+    }
+
+    /**
+     * The append. `restoredFrom` is what distinguishes this row from someone
+     * having retyped the old version by hand — the content alone cannot say
+     * where it came from, because it is byte-identical to the row it came
+     * from.
+     */
+    const revisionId = await writeRevision(tx, {
+      pageId: page.id,
+      title,
+      bodyHtml,
+      editedBy: input.restoredBy,
+      restoredFrom: source.id,
+    });
+
+    /**
+     * `now()` rather than a JavaScript `Date`, matching `savePage`: Postgres
+     * evaluates it once per transaction and `revisions.created_at` defaults to
+     * the same call, so the page and the revision recording it carry exactly
+     * the same timestamp.
+     *
+     * `updatedBy` is the restorer. The page's "last changed by" is a statement
+     * about who last changed it, and that is the person who clicked restore —
+     * the original author's name stays where it is accurate, on the revision
+     * they actually wrote.
+     */
+    await tx
+      .update(schema.pages)
+      .set({
+        title,
+        bodyHtml,
+        updatedAt: sql`now()`,
+        updatedBy: input.restoredBy,
+      })
+      .where(eq(schema.pages.id, page.id));
+
+    return { status: "restored", pageId: page.id, revisionId };
+  });
+}

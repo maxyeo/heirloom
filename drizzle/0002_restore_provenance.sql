@@ -1,0 +1,2 @@
+ALTER TABLE "revisions" ADD COLUMN "restored_from_id" uuid;--> statement-breakpoint
+ALTER TABLE "revisions" ADD CONSTRAINT "revisions_restored_from_id_revisions_id_fk" FOREIGN KEY ("restored_from_id") REFERENCES "public"."revisions"("id") ON DELETE set null ON UPDATE no action;
