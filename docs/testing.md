@@ -290,9 +290,24 @@ used to _widen_ what is public, which is an edit that shows up in a diff.
    `requireSession()` in prose, and `// await requireSession();` is exactly
    what a half-finished edit leaves behind — a regex counts both as a guard.
    `typescript` is already a devDependency, so `test/route-inventory.ts` uses
-   the compiler's own scanner and counts neither. Asserting the import as well
-   as the call is the other half: a local function of the same name is not the
-   boundary.
+   the compiler's own scanner and counts neither.
+
+   Three things have to line up, and no two of them are enough: the **import**
+   (so a bare call is not an unresolved name), the **call** (an import with no
+   call is what a guard leaves behind when someone deletes the line but not
+   the line above it), and **no shadowing**. The last is the subtle one.
+   Matching a call by name cannot see scope, so a local
+   `async function requireSession() {}` _inside_ the component satisfies the
+   first two while never reaching `@/lib/session` — the import is right there,
+   the call is right there, and neither is the boundary. Resolving scopes
+   properly means building a whole `ts.Program` and a type checker to answer
+   one question, so instead the name is simply not available to be
+   redeclared: there is no legitimate reason to call a local binding
+   `requireSession`, and forbidding it closes the hole outright.
+
+   Aliases and namespace imports both resolve, so
+   `import { requireSession as guard }` and `session.requireSession()` are
+   guards. Reporting either as unguarded would be a baffling failure.
 
    This is the one place the auth boundary goes further than the tripwire
    idiom of `lib/sanitize-html.call-sites.test.ts` and `app/globals.test.ts`,
@@ -335,11 +350,11 @@ on the list is refused.
 
 **`proxy.ts` is read, not imported.** It re-exports Auth.js's `auth`, so
 importing it loads next-auth. The matcher patterns are extracted from its
-source text and compiled with `tryToParsePath` — Next's own path-to-regexp
-call, the same one `getMiddlewareMatchers` makes — so the semantics of that
-negative lookahead are Next's rather than a reimplementation. Next cannot be
-given the patterns from a shared module either: it reads them statically at
-build time and ignores variables.
+source text and then handed to `unstable_doesMiddlewareMatch`, Next's own
+testing helper for exactly this question — so the patterns come from the file
+that ships, but what they _mean_ is decided by Next rather than approximated
+here. Next cannot be given the patterns from a shared module either: it reads
+them statically at build time and ignores variables.
 
 This is where the interesting failure lives. The exemptions are **prefixes,
 not whole segments**, so `/signin` being public also makes `/signin-help`
@@ -355,19 +370,33 @@ defence in depth architecture.md describes, demonstrated rather than asserted.
 rather than by inspection. Each of these turns it red, naming the specific
 route or action at fault:
 
-| Mutation                                      | Caught by                              |
-| --------------------------------------------- | -------------------------------------- |
-| A new unguarded page                          | `every route demands a session`        |
-| A new unguarded `route.ts` handler            | `every route demands a session`        |
-| A guard that is commented out                 | `every route demands a session`        |
-| A guard named only in a docblock              | `every route demands a session`        |
-| A local function shadowing the guard's name   | `every route demands a session`        |
-| A page named `/signin-help`                   | `the proxy matcher …`                  |
-| An action with its `requireSession()` removed | `every server action rejects …`        |
-| A new inline `"use server"` action            | `no action hides from the check above` |
+| Mutation                                          | Caught by                              |
+| ------------------------------------------------- | -------------------------------------- |
+| A new unguarded page                              | `every route demands a session`        |
+| A new unguarded `route.ts` handler                | `every route demands a session`        |
+| A page in a route group, unguarded                | `every route demands a session`        |
+| A guard that is commented out                     | `every route demands a session`        |
+| A guard named only in a docblock                  | `every route demands a session`        |
+| A local declaration shadowing the guard           | `every route demands a session`        |
+| The guard's name imported from elsewhere          | `every route demands a session`        |
+| A page named `/signin-help`                       | `the proxy matcher …`                  |
+| An action with its `requireSession()` removed     | `every server action rejects …`        |
+| A new unguarded `actions.ts`, in `app/` or `lib/` | `every server action rejects …`        |
+| A new inline `"use server"` action                | `no action hides from the check above` |
 
-The middle three are why this reads the syntax tree. A boundary test that
-cannot fail is worse than none, because it is also reassuring.
+And two that must _not_ fail, checked as deliberately as the rest: a guard
+reached through an alias, and one reached through a namespace import. A test
+that is merely stricter is not the same as a test that is correct.
+
+The shadowing rows are why this reads the syntax tree rather than the source.
+A boundary test that cannot fail is worse than none, because it is also
+reassuring.
+
+**Where it looks.** Routes come from `app/`, because that is where Next routes
+from. `"use server"` modules are looked for across `app`, `components` and
+`lib` — the directories `lib/sanitize-html.call-sites.test.ts` already scans —
+because the directive is legal in any module, and an action module outside
+`app/` would otherwise be invisible to every check above it.
 
 ## Why `test:db` is not in CI
 

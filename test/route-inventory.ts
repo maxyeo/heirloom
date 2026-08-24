@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, posix, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { tryToParsePath } from "next/dist/lib/try-to-parse-path";
+import { unstable_doesMiddlewareMatch } from "next/dist/experimental/testing/server";
 import ts from "typescript";
 
 /**
@@ -29,6 +29,20 @@ export const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /** Where the App Router lives, relative to the repository root. */
 const APP_DIR = "app";
+
+/**
+ * Where a `"use server"` module may live.
+ *
+ * Routes only ever come from `app/`, but an action module does not have to:
+ * the directive is legal in any module, and `components/AddPersonPanel.tsx`
+ * already discusses client components importing one. Scanning only `app/`
+ * would make a future `lib/…-actions.ts` invisible to the checks below — the
+ * "list nobody remembers to extend" failure this file exists to remove.
+ *
+ * The three directories are `lib/sanitize-html.call-sites.test.ts`'s, so the
+ * two tripwires cover the same ground.
+ */
+const SOURCE_DIRS = ["app", "components", "lib"];
 
 /**
  * Filenames that make a directory answerable at a URL.
@@ -74,14 +88,24 @@ export type RouteFile = {
   route: string;
 };
 
-/** Every file under `app/` with one of `SOURCE_EXTENSIONS`, repo-relative. */
-export function appSourceFiles(): string[] {
-  return readdirSync(join(repoRoot, APP_DIR), {
+/** Every source file under `dir`, repo-relative. */
+function sourceFilesUnder(dir: string): string[] {
+  return readdirSync(join(repoRoot, dir), {
     recursive: true,
     encoding: "utf8",
   })
     .filter((entry) => SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext)))
-    .map((entry) => join(APP_DIR, entry));
+    .map((entry) => join(dir, entry));
+}
+
+/** Every file under `app/` with one of `SOURCE_EXTENSIONS`, repo-relative. */
+export function appSourceFiles(): string[] {
+  return sourceFilesUnder(APP_DIR);
+}
+
+/** Every file a `"use server"` module could be, repo-relative. */
+export function actionSourceFiles(): string[] {
+  return SOURCE_DIRS.flatMap(sourceFilesUnder);
 }
 
 /** Read a repo-relative path. */
@@ -242,7 +266,7 @@ function hasModuleDirective(source: ts.SourceFile): boolean {
  * module exports.
  */
 export function serverActionModules(): string[] {
-  return appSourceFiles()
+  return actionSourceFiles()
     .filter((file) => hasModuleDirective(parse(file)))
     .sort();
 }
@@ -257,7 +281,7 @@ export function serverActionModules(): string[] {
  * every such file as something to be justified.
  */
 export function inlineServerActionFiles(): string[] {
-  return appSourceFiles()
+  return actionSourceFiles()
     .filter((file) => {
       const source = parse(file);
       if (hasModuleDirective(source)) return false;
@@ -282,67 +306,148 @@ export type BoundaryUsage = {
   imported: boolean;
   /**
    * The guards actually *called*, by their canonical name and in source
-   * order. A commented-out call is not a call, and a local function that
-   * happens to share the name is not a guard.
+   * order. A commented-out call is not a call.
    */
   called: string[];
+  /**
+   * Local declarations that reuse a guard's name.
+   *
+   * Always expected to be empty, and not a stylistic objection. Matching a
+   * call by name cannot see scope, so a local `async function
+   * requireSession() {}` *inside* the component shadows the import at every
+   * call site below it while leaving both the import and the call looking
+   * exactly right. Rather than resolve scopes — which means a whole
+   * `ts.Program` and a type checker to answer one question — the name is
+   * simply not available to be redeclared. There is no legitimate reason to
+   * name a local binding after the auth boundary, so forbidding it costs
+   * nothing and closes the hole outright.
+   */
+  shadowed: string[];
 };
 
 /**
  * How a route file uses the auth boundary.
  *
- * Both halves matter, and neither is sufficient alone. A call with no import
- * is an unresolved name — or worse, a local decoy: `async function
- * requireSession() {}` above the component satisfies any check that only
- * looks for the call. An import with no call is the shape a guard leaves
- * behind when somebody deletes the line but not the line above it.
+ * Three things have to line up, and no two of them are enough:
  *
- * So the import is resolved first, and the calls are matched against what it
- * actually bound. That also makes `import { requireSession as guard }` work,
- * which a name-matching check would have rejected — safe direction, but wrong
- * for the wrong reason, and confusing to whoever hit it.
+ * - **The import**, so a bare call is not an unresolved name.
+ * - **The call**, because an import with no call is what a guard leaves
+ *   behind when somebody deletes the line but not the line above it.
+ * - **No shadowing**, because the first two can both be satisfied by code
+ *   that never reaches `@/lib/session` at runtime.
+ *
+ * Named and namespace imports are both understood, and an alias resolves to
+ * the name it was imported under — `import { requireSession as guard }` is a
+ * guard, and reporting it as unguarded would be a baffling failure.
  */
 export function boundaryUsage(file: string): BoundaryUsage {
   const source = parse(file);
 
   /** Local name in this file → the guard it refers to. */
   const bound = new Map<string, string>();
+  /** Local names bound to the whole module: `import * as session from …`. */
+  const namespaces = new Set<string>();
+  const shadowed: string[] = [];
 
   // ESM import declarations are always top level, so there is no need to walk
   // the tree for them.
   for (const statement of source.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== BOUNDARY_MODULE
+      !ts.isStringLiteral(statement.moduleSpecifier)
     ) {
       continue;
     }
 
-    const named = statement.importClause?.namedBindings;
-    if (!named || !ts.isNamedImports(named)) continue;
+    const isBoundary = statement.moduleSpecifier.text === BOUNDARY_MODULE;
+    const clause = statement.importClause;
+    if (!clause) continue;
+
+    // A default import named after a guard is somebody else's module.
+    if (clause.name && BOUNDARY_CALLS.has(clause.name.text) && !isBoundary) {
+      shadowed.push(clause.name.text);
+    }
+
+    const named = clause.namedBindings;
+    if (!named) continue;
+
+    if (ts.isNamespaceImport(named)) {
+      if (isBoundary) namespaces.add(named.name.text);
+      continue;
+    }
 
     for (const element of named.elements) {
       // `propertyName` is set only for `{ a as b }`, where it holds `a`.
       const canonical = (element.propertyName ?? element.name).text;
-      if (BOUNDARY_CALLS.has(canonical)) {
+      if (isBoundary && BOUNDARY_CALLS.has(canonical)) {
         bound.set(element.name.text, canonical);
+      } else if (BOUNDARY_CALLS.has(element.name.text)) {
+        // The guard's name, imported from somewhere that is not the boundary.
+        shadowed.push(element.name.text);
       }
     }
   }
 
   const called: string[] = [];
+
   // The visitor never short-circuits: every call is wanted, not just the
   // first, so `some` here is being used to walk the whole tree.
   some(source, (node) => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      const canonical = bound.get(node.expression.text);
-      if (canonical) called.push(canonical);
+    const declared = declaresBoundaryName(node);
+    if (declared) shadowed.push(declared);
+
+    if (ts.isCallExpression(node)) {
+      // `requireSession()`
+      if (ts.isIdentifier(node.expression)) {
+        const canonical = bound.get(node.expression.text);
+        if (canonical) called.push(canonical);
+      }
+      // `session.requireSession()`
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        namespaces.has(node.expression.expression.text) &&
+        BOUNDARY_CALLS.has(node.expression.name.text)
+      ) {
+        called.push(node.expression.name.text);
+      }
     }
+
     return false;
   });
 
-  return { imported: bound.size > 0, called };
+  return {
+    imported: bound.size > 0 || namespaces.size > 0,
+    called,
+    shadowed,
+  };
+}
+
+/**
+ * The name a declaration binds, when that name is one of the guards'.
+ *
+ * Covers every form that can introduce a binding a later call would resolve
+ * to ahead of the import: a function or class declaration, a `const`, a
+ * parameter, and a destructured element.
+ */
+function declaresBoundaryName(node: ts.Node): string | null {
+  if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+    return node.name && BOUNDARY_CALLS.has(node.name.text)
+      ? node.name.text
+      : null;
+  }
+
+  if (
+    ts.isVariableDeclaration(node) ||
+    ts.isParameter(node) ||
+    ts.isBindingElement(node)
+  ) {
+    return ts.isIdentifier(node.name) && BOUNDARY_CALLS.has(node.name.text)
+      ? node.name.text
+      : null;
+  }
+
+  return null;
 }
 
 /**
@@ -379,24 +484,16 @@ export function proxyMatchers(): string[] {
  * Whether the proxy runs on a pathname — which, for this app, means whether
  * the pathname is protected at the edge.
  *
- * The pattern is compiled with `tryToParsePath`, the same path-to-regexp call
- * Next's own `getMiddlewareMatchers` makes, so the semantics of the negative
- * lookahead are Next's rather than a reimplementation of them.
- *
- * Next additionally wraps the compiled source in optional groups for
- * transport forms (`/_next/data/...`, `.rsc`). Those are omitted here because
- * they are optional groups on an anchored pattern: they can only *widen* what
- * matches, so a pathname this reports as protected is protected under the
- * real thing too. `has`/`missing` conditions are likewise absent — a matcher
- * written as a bare string cannot carry them.
+ * `unstable_doesMiddlewareMatch` is Next's own testing helper for exactly
+ * this question, and it takes the matcher config directly, so nothing here
+ * reimplements or approximates the compilation. It is the reason `proxy.ts`
+ * can be read as text and still answered about faithfully: the patterns are
+ * extracted from the source, but what they *mean* is decided by Next.
  */
 export function proxyProtects(pathname: string): boolean {
-  return proxyMatchers().some((source) => {
-    const { regexStr } = tryToParsePath(source);
-    if (!regexStr) {
-      throw new Error(`proxy.ts matcher is not a parseable path: ${source}`);
-    }
-    return new RegExp(regexStr).test(pathname);
+  return unstable_doesMiddlewareMatch({
+    config: { matcher: proxyMatchers() },
+    url: pathname,
   });
 }
 

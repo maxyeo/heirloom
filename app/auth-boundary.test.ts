@@ -147,7 +147,7 @@ describe("every route demands a session", () => {
   it.each(guarded.map((route) => [route.route, route.file]))(
     "%s calls the boundary",
     (_route, file) => {
-      const { imported, called } = boundaryUsage(file);
+      const { imported, called, shadowed } = boundaryUsage(file);
 
       /**
        * Both flavours count. `requireSession` throws, which is what a page
@@ -167,6 +167,20 @@ describe("every route demands a session", () => {
        */
       expect(imported).toBe(true);
       expect(called.length).toBeGreaterThan(0);
+
+      /**
+       * And nothing local is wearing the guard's name. Matching a call by
+       * name cannot see scope, so a local `async function requireSession()
+       * {}` inside the component would satisfy both assertions above while
+       * never reaching `@/lib/session` — the import is right there, the call
+       * is right there, and neither is the boundary.
+       *
+       * Resolving scopes properly means a `ts.Program` and a type checker to
+       * answer one question. Forbidding the name outright costs nothing:
+       * there is no legitimate reason for a local binding to be called
+       * `requireSession`.
+       */
+      expect(shadowed).toEqual([]);
     },
   );
 
@@ -174,7 +188,9 @@ describe("every route demands a session", () => {
     // The inverse, so an over-zealous guard on /signin is caught too: it
     // would lock everyone out of the only door in.
     for (const route of routes.filter((r) => PUBLIC_ROUTES.has(r.route))) {
-      expect(boundaryUsage(route.file).called).toEqual([]);
+      const usage = boundaryUsage(route.file);
+      expect(usage.called).toEqual([]);
+      expect(usage.shadowed).toEqual([]);
     }
   });
 });
