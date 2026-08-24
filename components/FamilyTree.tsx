@@ -18,13 +18,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "@xyflow/react/dist/style.css";
 
+import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
+import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { derivePersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
 import { layoutFamilyGraph } from "@/lib/tree-layout";
+import { treeOnboarding } from "@/lib/tree-onboarding";
 import { panToReveal, toRect, unobscuredRegion } from "@/lib/tree-viewport";
 
 function PersonNode({
@@ -83,9 +86,34 @@ export interface FamilyTreeProps {
    * `AddSpouseFormAction`.
    */
   addSpouseAction?: AddSpouseFormAction;
+  /**
+   * The add-person action (E3-T2), for the empty state's own call to action
+   * (E3-T9). Optional for the same reason and with the same consequence: a
+   * canvas given none is read-only, and the invitation it shows on an empty
+   * database is words rather than words and a button.
+   */
+  createIndividualAction?: IndividualFormAction;
 }
 
-export function FamilyTree({ graph, addSpouseAction }: FamilyTreeProps) {
+export function FamilyTree({
+  graph,
+  addSpouseAction,
+  createIndividualAction,
+}: FamilyTreeProps) {
+  /**
+   * An empty database gets an invitation instead of a canvas (E3-T9).
+   *
+   * The branch is here, above the provider, rather than inside the canvas
+   * below: `FamilyTreeCanvas` is a dozen hooks deep before it renders
+   * anything, and a component that returns early past them is a component
+   * where the next effect added has to remember it. Nothing is lost, because
+   * a graph with nobody in it has no layout, no selection and no viewport to
+   * preserve — there is nothing for React Flow to do.
+   */
+  if (graph.people.length === 0) {
+    return <TreeEmptyState action={createIndividualAction} />;
+  }
+
   return (
     <ReactFlowProvider>
       <FamilyTreeCanvas graph={graph} addSpouseAction={addSpouseAction} />
@@ -95,6 +123,14 @@ export function FamilyTree({ graph, addSpouseAction }: FamilyTreeProps) {
 
 function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
   const layout = useMemo(() => layoutFamilyGraph(graph), [graph]);
+
+  /**
+   * How far along the tree is (E3-T9). Only the `unconnected` stage reaches
+   * this component — `FamilyTree` above has already sent an empty graph
+   * somewhere else — and it is what decides whether the canvas says anything
+   * beyond the cards themselves.
+   */
+  const onboarding = useMemo(() => treeOnboarding(graph), [graph]);
 
   /**
    * The nodes are held in state rather than passed straight from the layout,
@@ -283,6 +319,16 @@ function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
         edges={layout.edges}
         nodeTypes={nodeTypes}
         fitView
+        /*
+          Fit, but never magnify (E3-T9). React Flow's fitView zooms up to 2x
+          by default, which is invisible on a family — a dozen cards always
+          need zooming *out* — and absurd on the first one: a single card
+          blown up to twice its size, alone in the middle of the viewport, is
+          most of what makes a one-person tree look broken rather than new.
+          Capping the fit at 1 renders the lone card at the size every other
+          card on this canvas is drawn at.
+        */
+        fitViewOptions={{ maxZoom: 1 }}
         // Layout is computed, never stored. Nobody positions anything by hand,
         // so there is no way to drag the family into a mess.
         nodesDraggable={false}
@@ -294,6 +340,15 @@ function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
         <Controls showInteractive={false} />
         <MiniMap pannable zoomable />
       </ReactFlow>
+
+      {/*
+        People on the canvas and nothing joining them (E3-T9). Hidden while a
+        panel is open, because the panel is both the answer to the hint and,
+        on a narrow viewport, sitting on top of it.
+      */}
+      {onboarding.stage === "unconnected" && detail === null ? (
+        <TreeStartHint person={onboarding.person} />
+      ) : null}
 
       {detail === null ? null : addingSpouse && addSpouseAction ? (
         <AddSpouseForm

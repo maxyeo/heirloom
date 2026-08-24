@@ -58,6 +58,16 @@ export type IndividualFormAction = (
 export interface AddPersonPanelProps {
   /** Where a submission goes. `createIndividualAction`, in the tree header. */
   action: IndividualFormAction;
+  /**
+   * What the opening button says.
+   *
+   * The header wants the standing label; E3-T9's empty state opens the same
+   * panel as "Add the first person", because on a tree with nobody on it that
+   * is the whole instruction. A label rather than a second component, so that
+   * adding somebody stays one flow with one set of validation messages
+   * however the author reached it.
+   */
+  label?: string;
 }
 
 /**
@@ -70,7 +80,10 @@ export interface AddPersonPanelProps {
  * half-typed person kept alive invisibly behind a closed panel is a draft
  * nobody asked for and nothing shows.
  */
-export function AddPersonPanel({ action }: AddPersonPanelProps) {
+export function AddPersonPanel({
+  action,
+  label = "Add person",
+}: AddPersonPanelProps) {
   const [open, setOpen] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
   /** Named so the button can point at what it expands. */
@@ -97,7 +110,7 @@ export function AddPersonPanel({ action }: AddPersonPanelProps) {
         aria-controls={panelId}
         className="shrink-0 rounded-panel border border-rule px-3 py-1.5 font-medium transition hover:bg-panel"
       >
-        Add person
+        {label}
       </button>
 
       {open ? (

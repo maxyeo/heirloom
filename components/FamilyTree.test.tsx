@@ -2,8 +2,10 @@
 import { act } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
 import type { FamilyGraph } from "@/lib/family-graph";
+import { emptyIndividualFormState } from "@/lib/individual-form-state";
 import { removedState } from "@/lib/removal-state";
 import {
   type AddSpouseFormAction,
@@ -74,8 +76,15 @@ beforeAll(() => {
 function render(
   graph: FamilyGraph,
   addSpouseAction?: AddSpouseFormAction,
+  createIndividualAction?: IndividualFormAction,
 ): HTMLElement {
-  return mount(<FamilyTree graph={graph} addSpouseAction={addSpouseAction} />);
+  return mount(
+    <FamilyTree
+      graph={graph}
+      addSpouseAction={addSpouseAction}
+      createIndividualAction={createIndividualAction}
+    />,
+  );
 }
 
 /** Hand the canvas a new graph, as a write that revalidated `/tree` would. */
@@ -84,7 +93,27 @@ function reseed(
   graph: FamilyGraph,
   addSpouseAction?: AddSpouseFormAction,
 ): void {
-  rerender(host, <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />);
+  rerender(
+    host,
+    <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />,
+  );
+}
+
+/** An add-person action that records nothing and refuses nothing. */
+const inertCreate: IndividualFormAction = async () => emptyIndividualFormState;
+
+/** Nobody recorded at all: the first screen of a fresh deployment. */
+function emptyGraph(): FamilyGraph {
+  return { people: [], unions: [], childLinks: [] };
+}
+
+/** One person and nothing else, which is what the first save leaves behind. */
+function loneGraph(): FamilyGraph {
+  return {
+    people: [person({ id: "rose", givenName: "Rose" })],
+    unions: [],
+    childLinks: [],
+  };
 }
 
 /** An add-spouse action that records nothing and refuses nothing. */
@@ -138,9 +167,9 @@ function graph(): FamilyGraph {
 }
 
 function nodeWrapper(host: HTMLElement, id: string): HTMLElement {
-  const found = [...host.querySelectorAll<HTMLElement>(".react-flow__node")].find(
-    (wrapper) => wrapper.dataset.id === id,
-  );
+  const found = [
+    ...host.querySelectorAll<HTMLElement>(".react-flow__node"),
+  ].find((wrapper) => wrapper.dataset.id === id);
   if (!found) throw new Error(`no node rendered for "${id}"`);
   return found;
 }
@@ -212,7 +241,9 @@ describe("navigating by the panel's links", () => {
 
     expect(panelLabel(host)).toBe("Details for Dora Hale");
     expect(nodeWrapper(host, "dora").classList.contains("selected")).toBe(true);
-    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(false);
+    expect(nodeWrapper(host, "rose").classList.contains("selected")).toBe(
+      false,
+    );
     // Read from the other end of the same rows: Dora's parents are the two
     // partners of the union she was born into.
     expect(host.textContent).toContain("Rose Hale");
@@ -389,5 +420,107 @@ describe("a fresh graph arriving after a write", () => {
     reseed(host, without);
 
     expect(panelLabel(host)).toBeNull();
+  });
+});
+
+/**
+ * E3-T9 (`YEO-37`). The two states this canvas has always been able to
+ * produce and nothing ever asserted: no people at all, and people with
+ * nothing joining them.
+ *
+ * What each state *says* is decided in `lib/tree-onboarding.ts` and asserted
+ * there with no DOM. What is left here is the part that can only be seen by
+ * mounting: that an empty graph gets an invitation instead of a canvas, that
+ * the invitation's button opens the real add-person panel, and that the hint
+ * appears and disappears at the right moments.
+ */
+describe("an empty tree", () => {
+  it("invites the first person instead of showing a blank canvas", () => {
+    const host = render(emptyGraph(), undefined, inertCreate);
+
+    expect(host.textContent).toContain("Nobody is on the tree yet");
+    expect(buttonLabelled(host, "Add the first person")).toBeTruthy();
+    // Nothing to lay out, so there is no canvas — and therefore no minimap of
+    // an empty viewport, which is the thing that reads as broken.
+    expect(host.querySelector(".react-flow")).toBeNull();
+  });
+
+  it("walks somebody to the first save", () => {
+    const host = render(emptyGraph(), undefined, inertCreate);
+
+    click(buttonLabelled(host, "Add the first person"));
+
+    // The same panel the page header opens, not a second form: one flow, one
+    // set of validation messages, however the author reached it.
+    expect(panelLabel(host)).toBe("Add a person");
+  });
+
+  it("still says what to do when the canvas was given no action", () => {
+    // `/tree` always passes one; a test that mounts the tree without reaching
+    // Auth.js does not, and the invitation has to survive that.
+    const host = render(emptyGraph());
+
+    expect(host.textContent).toContain("Nobody is on the tree yet");
+    expect(
+      [...host.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("Add the first person"),
+      ),
+    ).toBe(false);
+  });
+
+  it("becomes a canvas as soon as somebody is saved", () => {
+    // The write revalidated `/tree`, so the new graph arrives as a prop. This
+    // is the join between the invitation and the tree, and it is the step of
+    // the walk that would silently strand somebody on a dead screen.
+    const host = render(emptyGraph(), undefined, inertCreate);
+    reseed(host, loneGraph());
+
+    expect(host.textContent).not.toContain("Nobody is on the tree yet");
+    expect(nodeWrapper(host, "rose")).toBeTruthy();
+  });
+});
+
+describe("a tree with nobody connected", () => {
+  it("draws the lone person and says what comes next", () => {
+    const host = render(loneGraph(), inertAction);
+
+    // Not an empty state: there is a real card on a real canvas.
+    expect(nodeWrapper(host, "rose")).toBeTruthy();
+    expect(host.textContent).toContain("Just Rose Hale so far.");
+    // The one thing about this application that cannot be guessed from the
+    // interface, said before anybody goes hunting for "add a child".
+    expect(host.textContent).toContain(
+      "Children belong to a marriage rather than to a person",
+    );
+  });
+
+  it("phrases the hint generally when there is nobody in particular to name", () => {
+    const several = loneGraph();
+    several.people.push(
+      person({ id: "walter", givenName: "Walter", sex: "male" }),
+    );
+
+    const host = render(several, inertAction);
+
+    expect(host.textContent).toContain("Nobody is connected yet.");
+  });
+
+  it("gets out of the way once a panel is open", () => {
+    const host = render(loneGraph(), inertAction);
+    open(host, "rose");
+
+    // The panel is the answer to the hint, and on a narrow viewport it is
+    // sitting on top of it.
+    expect(host.textContent).not.toContain("Just Rose Hale so far.");
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+  });
+
+  it("stops once a union exists", () => {
+    // The three-person seed: Rose married Walter and they had Dora. Nothing
+    // about this tree needs explaining.
+    const host = render(graph(), inertAction);
+
+    expect(host.textContent).not.toContain("Nobody is connected yet.");
+    expect(host.textContent).not.toContain("so far.");
   });
 });

@@ -35,7 +35,17 @@ export default async function TreePage() {
           one more: the canvas renders the form, so importing the action inside
           `FamilyTree` would take `components/FamilyTree.test.tsx` down with it.
         */}
-        <FamilyTree graph={graph} addSpouseAction={addSpouseAction} />
+        <FamilyTree
+          graph={graph}
+          addSpouseAction={addSpouseAction}
+          /*
+            And the add-person action once more (E3-T9): on an empty database
+            the canvas is replaced by an invitation that opens the same panel
+            the header does, so that the first screen of a fresh deployment
+            has the thing it is asking for on it.
+          */
+          createIndividualAction={createIndividualAction}
+        />
       </div>
     </main>
   );
