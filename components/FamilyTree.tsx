@@ -18,9 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "@xyflow/react/dist/style.css";
 
+import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { PersonPanel } from "@/components/PersonPanel";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { derivePersonDetail } from "@/lib/person-detail";
+import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
 import { layoutFamilyGraph } from "@/lib/tree-layout";
 import { panToReveal, toRect, unobscuredRegion } from "@/lib/tree-viewport";
 
@@ -68,15 +70,29 @@ const nodeTypes = { person: PersonNode, union: UnionNode };
  * writes the viewport in order to pan out from under the detail panel, and a
  * hook cannot reach a context its own component renders.
  */
-export function FamilyTree({ graph }: { graph: FamilyGraph }) {
+export interface FamilyTreeProps {
+  graph: FamilyGraph;
+  /**
+   * The add-spouse action (E3-T4), passed down from the Server Component that
+   * renders the canvas.
+   *
+   * Optional, and the canvas is read-only without it. That is what keeps the
+   * whole component tree mountable in jsdom: the action module reaches Auth.js
+   * and `@/db`, neither of which `npm test` has an environment for. See
+   * `AddSpouseFormAction`.
+   */
+  addSpouseAction?: AddSpouseFormAction;
+}
+
+export function FamilyTree({ graph, addSpouseAction }: FamilyTreeProps) {
   return (
     <ReactFlowProvider>
-      <FamilyTreeCanvas graph={graph} />
+      <FamilyTreeCanvas graph={graph} addSpouseAction={addSpouseAction} />
     </ReactFlowProvider>
   );
 }
 
-function FamilyTreeCanvas({ graph }: { graph: FamilyGraph }) {
+function FamilyTreeCanvas({ graph, addSpouseAction }: FamilyTreeProps) {
   const layout = useMemo(() => layoutFamilyGraph(graph), [graph]);
 
   /**
@@ -101,14 +117,30 @@ function FamilyTreeCanvas({ graph }: { graph: FamilyGraph }) {
   const [seededFrom, setSeededFrom] = useState(layout);
 
   if (seededFrom !== layout) {
-    // A different graph arrived — a soft navigation back to this route with
-    // fresh data. Re-seed from the new layout, selection included, since the
-    // person the panel was open on may no longer be in it. Adjusting state
-    // during render rather than in an effect is React's own answer to
-    // "reset state when a prop changes": the component re-renders before
-    // anything is committed, so the stale nodes are never painted.
+    /**
+     * A different graph arrived — a soft navigation back to this route, or a
+     * write that revalidated `/tree`. Re-seed from the new layout. Adjusting
+     * state during render rather than in an effect is React's own answer to
+     * "reset state when a prop changes": the component re-renders before
+     * anything is committed, so the stale nodes are never painted.
+     *
+     * The selection is carried across when the person is still in the graph.
+     * Every E3 write revalidates this route, so dropping it would mean that
+     * adding a spouse (E3-T4) closed the panel of the person you added them
+     * to, at the exact moment you wanted to look at the result. A person who
+     * is *not* in the new graph — deleted in another tab, or by E3-T8 — has no
+     * node to be selected, and the panel closes because there is nothing left
+     * to show.
+     */
+    const keep = nodes.find((node) => node.selected)?.id;
     setSeededFrom(layout);
-    setNodes(layout.nodes);
+    setNodes(
+      keep === undefined
+        ? layout.nodes
+        : layout.nodes.map((node) =>
+            node.id === keep ? { ...node, selected: true } : node,
+          ),
+    );
   }
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -124,6 +156,17 @@ function FamilyTreeCanvas({ graph }: { graph: FamilyGraph }) {
     () => (selectedId === null ? null : derivePersonDetail(graph, selectedId)),
     [graph, selectedId],
   );
+
+  /**
+   * Which person's add-spouse form is open (E3-T4), rather than a boolean.
+   *
+   * Holding the id means the form closes on its own when the author selects
+   * somebody else — no effect watching the selection, and no way for a form
+   * headed "Add a spouse for Rose" to be submitted against Thomas.
+   */
+  const [addingSpouseFor, setAddingSpouseFor] = useState<string | null>(null);
+  const addingSpouse =
+    addingSpouseFor !== null && addingSpouseFor === selectedId;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -251,12 +294,31 @@ function FamilyTreeCanvas({ graph }: { graph: FamilyGraph }) {
         <MiniMap pannable zoomable />
       </ReactFlow>
 
-      {detail === null ? null : (
+      {detail === null ? null : addingSpouse && addSpouseAction ? (
+        <AddSpouseForm
+          action={addSpouseAction}
+          person={{ id: detail.id, name: detail.name }}
+          people={graph.people}
+          /*
+            The write revalidated `/tree`, so a fresh graph is already on its
+            way into this component; closing the form is all that is left to
+            do, and the panel behind it re-renders with the new spouse in the
+            list.
+          */
+          onSaved={() => setAddingSpouseFor(null)}
+          onCancel={() => setAddingSpouseFor(null)}
+        />
+      ) : (
         <PersonPanel
           ref={panelRef}
           detail={detail}
           onSelectPerson={selectPerson}
           onClose={close}
+          onAddSpouse={
+            addSpouseAction
+              ? () => setAddingSpouseFor(detail.id)
+              : undefined
+          }
         />
       )}
     </div>

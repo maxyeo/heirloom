@@ -10,7 +10,15 @@ import {
 } from "@/lib/individual-form-state";
 import { individualInputFromFormData } from "@/lib/individual-input";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
+import { addSpouse } from "@/lib/save-union";
 import { requireSession } from "@/lib/session";
+import {
+  type SpouseFormState,
+  spouseFailedState,
+  spouseInvalidState,
+  spouseSavedState,
+} from "@/lib/spouse-form-state";
+import { addSpouseInputFromFormData } from "@/lib/union-input";
 
 /**
  * Server actions for editing the tree (E3-T1, `YEO-29`).
@@ -21,15 +29,16 @@ import { requireSession } from "@/lib/session";
  * a session is not. There is no row-level security under this database to fail
  * safe if an action forgets; see `lib/session.ts`.
  *
- * Validation lives one layer down, in `lib/save-individual.ts`, so the flows
- * that never come through here — E3-T4's add-spouse, E6-T2's GEDCOM import —
- * cannot skip it. What stays here is the pair of things only a request can do:
- * check the session, and revalidate the routes the write moved. See
+ * Validation lives one layer down, in `lib/save-individual.ts` and
+ * `lib/save-union.ts`, so the flows that never come through here — E6-T2's
+ * GEDCOM import above all — cannot skip it. What stays here is the pair of
+ * things only a request can do: check the session, and revalidate the routes
+ * the write moved. See
  * `node_modules/next/dist/docs/01-app/02-guides/server-actions.md`.
  *
  * Every export is an async function, which a `"use server"` module requires —
- * the form state type, its empty value and its constructors therefore live in
- * `lib/individual-form-state.ts`.
+ * the form state types, their empty values and their constructors therefore
+ * live in `lib/individual-form-state.ts` and `lib/spouse-form-state.ts`.
  */
 
 /**
@@ -138,5 +147,63 @@ export async function updateIndividualAction(
     case "updated":
       revalidateTree();
       return savedFormState(result.id);
+  }
+}
+
+/**
+ * Record a marriage or partnership (for E3-T4's add-spouse form).
+ *
+ * The same shape as the two actions above and for the same reasons: it takes
+ * the previous state and the form's own `FormData`, so the form works as a
+ * plain POST before any JavaScript has loaded, and it returns a state rather
+ * than redirecting, so the canvas decides where the author ends up.
+ *
+ * Everything this writes goes through `addSpouse`, which validates and — when
+ * the partner is being created inline — writes both rows in one transaction.
+ * None of that lives here, because E6-T2's GEDCOM import will create unions
+ * without ever reaching this action, and a rule that lives on one door is a
+ * rule somebody forgets to fit to the next.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields, including the hidden `personId`
+ * @returns a state to render: the new union's id, or what to fix
+ */
+export async function addSpouseAction(
+  _previous: SpouseFormState,
+  form: FormData,
+): Promise<SpouseFormState> {
+  await requireSession();
+
+  const result = await addSpouse(addSpouseInputFromFormData(form));
+
+  switch (result.status) {
+    case "invalid":
+      return spouseInvalidState(result.unionIssues, result.partnerIssues);
+
+    case "person-not-found":
+      /**
+       * One message for both "no such person" and "that is not a person id at
+       * all", matching the single status `addSpouse` folds them into. Said as
+       * a fact about the tree rather than as an error, because the ordinary
+       * way to reach it is a panel left open in one tab while E3-T8 deleted
+       * the person in another.
+       */
+      return spouseFailedState(
+        "That person is no longer in the tree. They may have been deleted.",
+      );
+
+    case "partner-not-found":
+      return spouseFailedState(
+        "The partner you chose is no longer in the tree. Search again, or add them as a new person.",
+      );
+
+    case "added":
+      /**
+       * A union changes the canvas — a new marker, two new edges, and possibly
+       * a whole new person — so unlike the `unchanged` case above there is
+       * always something to revalidate.
+       */
+      revalidateTree();
+      return spouseSavedState(result.unionId);
   }
 }
