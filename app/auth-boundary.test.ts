@@ -182,11 +182,21 @@ describe("every route demands a session", () => {
 describe("every server action rejects an anonymous caller", () => {
   const modules = serverActionModules();
 
+  /**
+   * Non-vacuity, not an inventory. `arrayContaining` rather than equality on
+   * purpose: a new `actions.ts` should be *driven* by the suite below, not
+   * reported here as a surprise. Requiring an edit to this line before a new
+   * action module is allowed to exist would make this the hand-maintained
+   * list the rest of the file is written to avoid.
+   *
+   * What it still catches is the enumeration silently finding nothing —
+   * a renamed directory, a changed directive — which would leave every
+   * assertion below iterating over an empty array.
+   */
   it("finds the action modules", () => {
-    expect(modules.map(posixPath)).toEqual([
-      "app/tree/actions.ts",
-      "app/wiki/actions.ts",
-    ]);
+    expect(modules.map(posixPath)).toEqual(
+      expect.arrayContaining(["app/tree/actions.ts", "app/wiki/actions.ts"]),
+    );
   });
 
   it.each(modules)("%s", async (file) => {
@@ -240,12 +250,14 @@ describe("no action hides from the check above", () => {
     expect(inline).toEqual([]);
   });
 
-  it("still sees the exempt file, so the exemption is not stale", () => {
-    // If the sign-in action moves, this fails and the exemption above should
-    // be deleted rather than left covering nothing.
-    expect(inlineServerActionFiles().map(posixPath)).toEqual([
-      ...INLINE_ACTION_EXEMPT,
-    ]);
+  it("still sees the exempt files, so the exemptions are not stale", () => {
+    // If sign-in or sign-out moves, its exemption should be deleted rather
+    // than left covering nothing. `arrayContaining` again: a *new* inline
+    // action is the assertion above's to report, and failing both would say
+    // the same thing twice.
+    expect(inlineServerActionFiles().map(posixPath)).toEqual(
+      expect.arrayContaining([...INLINE_ACTION_EXEMPT]),
+    );
   });
 });
 
