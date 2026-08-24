@@ -21,6 +21,7 @@ import "@xyflow/react/dist/style.css";
 import { AddChildForm } from "@/components/AddChildForm";
 import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { AddSpouseForm } from "@/components/AddSpouseForm";
+import { EditPerson } from "@/components/EditPersonForm";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
@@ -103,6 +104,13 @@ export interface FamilyTreeProps {
    */
   setParentsAction?: SetParentsFormAction;
   /**
+   * The edit-person action (E3-T3), passed down for exactly the reasons
+   * `addSpouseAction` is — and optional for the same one: without it the
+   * panel is the read-only record it always was, which is what keeps this
+   * whole component tree mountable in jsdom.
+   */
+  updateIndividualAction?: IndividualFormAction;
+  /**
    * The add-person action (E3-T2), for the empty state's own call to action
    * (E3-T9). Optional for the same reason and with the same consequence: a
    * canvas given none is read-only, and the invitation it shows on an empty
@@ -116,6 +124,7 @@ export function FamilyTree({
   addSpouseAction,
   addChildAction,
   setParentsAction,
+  updateIndividualAction,
   createIndividualAction,
 }: FamilyTreeProps) {
   /**
@@ -139,6 +148,7 @@ export function FamilyTree({
         addSpouseAction={addSpouseAction}
         addChildAction={addChildAction}
         setParentsAction={setParentsAction}
+        updateIndividualAction={updateIndividualAction}
       />
     </ReactFlowProvider>
   );
@@ -149,6 +159,7 @@ function FamilyTreeCanvas({
   addSpouseAction,
   addChildAction,
   setParentsAction,
+  updateIndividualAction,
 }: FamilyTreeProps) {
   const layout = useMemo(() => layoutFamilyGraph(graph), [graph]);
 
@@ -219,6 +230,21 @@ function FamilyTreeCanvas({
   );
   const detail = useMemo(
     () => (selectedId === null ? null : derivePersonDetail(graph, selectedId)),
+    [graph, selectedId],
+  );
+
+  /**
+   * The same person as `detail`, but as the row rather than as the reading of
+   * it. E3-T3's form prefills ten inputs, and `PersonDetail` has already
+   * turned a birth into "about 12 March 1890" and a name into one string — so
+   * the edit affordance needs the record the panel was derived *from*.
+   */
+  const person = useMemo(
+    () =>
+      selectedId === null
+        ? null
+        : (graph.people.find((candidate) => candidate.id === selectedId) ??
+          null),
     [graph, selectedId],
   );
 
@@ -399,6 +425,17 @@ function FamilyTreeCanvas({
         <TreeStartHint person={onboarding.person} />
       ) : null}
 
+      {/*
+        Losing the selection unmounts everything below, E3-T3's edit form
+        included — and a React unmount is the one exit its unsaved-changes
+        check cannot intervene in, since it is neither a browser navigation
+        nor a dismissal the form was asked about. That is safe rather than
+        overlooked: while the edit dialogue is open its backdrop covers this
+        whole canvas, so nothing here can deselect anybody. The only way the
+        person leaves the graph under it is a delete in *another* tab, which
+        the form already answers for — `updateIndividualAction` reports
+        `not-found`, and the correction is still on screen to copy out of.
+      */}
       {detail === null ? null : settingParents && setParentsAction ? (
         <SetParentsForm
           action={setParentsAction}
@@ -452,7 +489,24 @@ function FamilyTreeCanvas({
             name the real unions and child links that a delete would take —
             and the panel only ever holds one person's derived detail.
           */
-          footer={<PersonRemoval graph={graph} personId={detail.id} />}
+          footer={
+            <>
+              {/*
+                E3-T3's edit form, composed into the same slot for the same
+                reason: correcting a record is not something a read-only panel
+                should have to know how to do, and putting it here rather than
+                in `PersonPanel` keeps both features off a file two sibling
+                tickets are editing.
+              */}
+              {updateIndividualAction && person ? (
+                <EditPerson
+                  person={person}
+                  action={updateIndividualAction}
+                />
+              ) : null}
+              <PersonRemoval graph={graph} personId={detail.id} />
+            </>
+          }
           onAddSpouse={
             addSpouseAction
               ? () => setAddingSpouseFor(detail.id)

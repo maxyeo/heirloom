@@ -77,12 +77,14 @@ function render(
   graph: FamilyGraph,
   addSpouseAction?: AddSpouseFormAction,
   createIndividualAction?: IndividualFormAction,
+  updateIndividualAction?: IndividualFormAction,
 ): HTMLElement {
   return mount(
     <FamilyTree
       graph={graph}
       addSpouseAction={addSpouseAction}
       createIndividualAction={createIndividualAction}
+      updateIndividualAction={updateIndividualAction}
     />,
   );
 }
@@ -522,5 +524,58 @@ describe("a tree with nobody connected", () => {
 
     expect(host.textContent).not.toContain("Nobody is connected yet.");
     expect(host.textContent).not.toContain("so far.");
+  });
+});
+
+/**
+ * The E3-T3 wiring (`YEO-31`). Everything the edit form *does* — the prefill,
+ * the unsaved-changes warning, what a cleared field posts — is asserted in
+ * `components/EditPersonForm.test.tsx` against a stub action. What is left for
+ * the canvas is the two joins the ticket names: that the form is reached from
+ * the detail panel, and that it is opened on the person whose panel it is.
+ */
+describe("reaching the edit form", () => {
+  /** An edit action that records nothing and refuses nothing. */
+  const inertUpdate: IndividualFormAction = async () => emptyIndividualFormState;
+
+  it("offers nothing when the canvas was given no action", () => {
+    // `/tree` always passes one, but the prop is optional so that this file
+    // and anything else can mount the canvas without reaching Auth.js.
+    const host = render(graph());
+    open(host, "rose");
+
+    expect(
+      [...host.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("Edit details"),
+      ),
+    ).toBe(false);
+  });
+
+  it("opens from the panel, prefilled with the selected person", () => {
+    const host = render(graph(), undefined, undefined, inertUpdate);
+    open(host, "rose");
+
+    click(buttonLabelled(host, "Edit details"));
+
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(
+      host.querySelector<HTMLInputElement>('[name="givenName"]')?.value,
+    ).toBe("Rose");
+    // The hidden reference is what makes this an edit rather than a second
+    // Rose, so it is worth asserting from the outside as well.
+    expect(host.querySelector<HTMLInputElement>('input[name="id"]')?.value).toBe(
+      "rose",
+    );
+  });
+
+  it("edits whoever the panel is currently showing", () => {
+    const host = render(graph(), undefined, undefined, inertUpdate);
+    open(host, "walter");
+
+    click(buttonLabelled(host, "Edit details"));
+
+    expect(
+      host.querySelector<HTMLInputElement>('[name="givenName"]')?.value,
+    ).toBe("Walter");
   });
 });

@@ -5,9 +5,13 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   IndividualFieldset,
   emptyIndividualFormValues,
+  individualFormValuesFrom,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
-import type { IndividualFieldErrors } from "@/lib/individual-input";
+import type {
+  IndividualFieldErrors,
+  IndividualFields,
+} from "@/lib/individual-input";
 import { render } from "@/test/render";
 
 /**
@@ -195,5 +199,66 @@ describe("errors", () => {
     // One message on the page, not one per field with an empty one hiding
     // under each of the nine that are fine.
     expect(host.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+});
+
+describe("prefilling from a record", () => {
+  /** A person with every optional field unknown — the hard half of the map. */
+  const unknown: IndividualFields = {
+    givenName: "Rose",
+    surname: null,
+    sex: "unknown",
+    birthDate: null,
+    birthDateQualifier: "exact",
+    birthPlace: null,
+    deathDate: null,
+    deathDateQualifier: "exact",
+    deathPlace: null,
+    notes: null,
+  };
+
+  it("turns every unknown into the blank an input can hold", () => {
+    expect(individualFormValuesFrom(unknown)).toEqual({
+      ...emptyIndividualFormValues,
+      givenName: "Rose",
+    });
+  });
+
+  it("carries every recorded value through unchanged", () => {
+    const recorded: IndividualFields = {
+      givenName: "Rose",
+      surname: "Hale",
+      sex: "female",
+      birthDate: "1890-04-12",
+      birthDateQualifier: "about",
+      birthPlace: "Cork",
+      deathDate: "1953-11-02",
+      deathDateQualifier: "before",
+      deathPlace: "Dublin",
+      notes: "From the 1911 census.",
+    };
+
+    expect(individualFormValuesFrom(recorded)).toEqual(recorded);
+  });
+
+  it("fills every field the fieldset renders", () => {
+    // The pairing that matters: a field added to the record but forgotten
+    // here would render as `undefined` in a controlled input, which React
+    // turns into an uncontrolled one without saying so.
+    const values = individualFormValuesFrom(unknown);
+
+    for (const name of FIELD_NAMES) {
+      expect(typeof values[name], `${name} is not prefilled`).toBe("string");
+    }
+  });
+
+  it("renders as a filled-in form", () => {
+    const host = mount({
+      values: individualFormValuesFrom({ ...unknown, surname: "Hale" }),
+    });
+
+    expect((control(host, "surname") as HTMLInputElement).value).toBe("Hale");
+    // Not the string "null", which is what a looser conversion would show.
+    expect((control(host, "birthPlace") as HTMLInputElement).value).toBe("");
   });
 });

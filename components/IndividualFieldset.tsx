@@ -11,6 +11,7 @@ import {
   type DateQualifier,
   type IndividualField,
   type IndividualFieldErrors,
+  type IndividualFields,
   type Sex,
 } from "@/lib/individual-input";
 
@@ -97,6 +98,50 @@ export const emptyIndividualFormValues: IndividualFormValues = Object.freeze({
   deathPlace: "",
   notes: "",
 });
+
+/**
+ * A person who already exists, as a form can hold them (E3-T3, `YEO-31`).
+ *
+ * The other direction of the conversion described above, and the one the edit
+ * form needs: `IndividualFields` is the record — `null` for what is unknown —
+ * and an input has no way to hold a null, so every absent value becomes the
+ * empty string the control would show anyway. Going back is
+ * `validateIndividual`'s job, and it collapses blank to `null` again, which is
+ * what makes clearing a field on the edit form write a null rather than an
+ * empty string. The round trip closes by construction rather than by two sets
+ * of rules agreeing with each other.
+ *
+ * Deliberately not written when the fieldset was: E3-T2 starts from a blank
+ * person and has nothing to convert. It appears now because E3-T3 is the first
+ * caller with a record in hand, and it lives beside `IndividualFormValues` so
+ * that the type and both ways of producing it stay in one place.
+ *
+ * Written out field by field rather than mapped over the keys, so that a
+ * column added to `IndividualFields` is a type error here rather than a value
+ * quietly missing from a prefilled form. Neither qualifier needs a fallback:
+ * both columns are `not null`, and `validateIndividual` normalises a qualifier
+ * with no date back to `exact` before the row is ever written.
+ *
+ * The parameter is `IndividualFields` rather than `GraphPerson` on purpose —
+ * the graph's person is that type plus an `id` and a `pageId`, so it is
+ * accepted as it stands, and so is a row read any other way.
+ */
+export function individualFormValuesFrom(
+  fields: IndividualFields,
+): IndividualFormValues {
+  return {
+    givenName: fields.givenName,
+    surname: fields.surname ?? "",
+    sex: fields.sex,
+    birthDate: fields.birthDate ?? "",
+    birthDateQualifier: fields.birthDateQualifier,
+    birthPlace: fields.birthPlace ?? "",
+    deathDate: fields.deathDate ?? "",
+    deathDateQualifier: fields.deathDateQualifier,
+    deathPlace: fields.deathPlace ?? "",
+    notes: fields.notes ?? "",
+  };
+}
 
 /**
  * What each `sex` value is called on screen.
