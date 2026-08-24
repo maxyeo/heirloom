@@ -305,24 +305,36 @@ export function EditPersonForm({
             <p role="alert" className="mt-6 text-note text-ink">
               Your changes to {name} have not been saved yet.
             </p>
+            {/*
+              All three are disabled in flight, and the last one is why: a save
+              submitted from this prompt leaves the prompt on screen, and
+              "Discard them" calls `onClose` directly rather than through
+              `requestClose` — it is the one exit that has already been
+              answered for. Enabled mid-submission it would close the dialogue
+              over a write that is still going, and the author would never see
+              the field errors it came back with.
+            */}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 ref={keepEditingRef}
                 type="button"
-                className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash"
+                disabled={pending}
+                className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash disabled:cursor-not-allowed disabled:text-ink-muted disabled:opacity-60"
                 onClick={() => setConfirmingDiscard(false)}
               >
                 Keep editing
               </button>
               <button
                 type="submit"
-                className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash"
+                disabled={pending}
+                className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash disabled:cursor-not-allowed disabled:text-ink-muted disabled:opacity-60"
               >
-                Save them
+                {pending ? "Saving…" : "Save them"}
               </button>
               <button
                 type="button"
-                className="rounded-panel border border-rule px-3 py-1 text-note text-ink-muted hover:bg-wash"
+                disabled={pending}
+                className="rounded-panel border border-rule px-3 py-1 text-note text-ink-muted hover:bg-wash disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onClose}
               >
                 Discard them
