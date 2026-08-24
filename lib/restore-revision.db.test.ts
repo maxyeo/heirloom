@@ -1,9 +1,10 @@
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { restoreRevision } from "@/lib/restore-revision";
 import { savePage } from "@/lib/save-page";
+import { raceWriters } from "@/test/db-concurrency";
 
 /**
  * Database tests for one-click restore (E1-T7). Run with `npm run test:db`;
@@ -53,19 +54,6 @@ async function readRevisions(id = PAGE) {
     .from(schema.revisions)
     .where(eq(schema.revisions.pageId, id))
     .orderBy(asc(schema.revisions.createdAt));
-}
-
-/**
- * Force a second pool connection open before the race test needs two at once.
- * Copied from `lib/save-page.db.test.ts`, for the reason spelled out there:
- * postgres.js opens connections on demand, so two calls fired at a cold pool
- * do not actually overlap and the race test would pass either way.
- */
-async function warmPool() {
-  await Promise.all([
-    db.execute(sql`select pg_sleep(0.05)`),
-    db.execute(sql`select pg_sleep(0.05)`),
-  ]);
 }
 
 afterAll(removeFixture);
@@ -391,13 +379,11 @@ describe("restoreRevision", () => {
    * transaction blocks on the lock, re-reads the row the first committed, and
    * its no-op check then answers the right question.
    *
-   * `warmPool` exists for the reason that file documents at length — at a cold
-   * pool the two calls do not actually overlap, and the test would pass with
-   * the lock removed.
+   * `raceWriters` (`test/db-concurrency.ts`) is what makes the two calls
+   * genuinely overlap; fired at a cold pool they do not, and this would pass
+   * with the lock removed.
    */
   it("writes one revision when two identical restores race", async () => {
-    await warmPool();
-
     const [v1] = await readRevisions();
     const restore = {
       slug: SLUG,
@@ -405,9 +391,9 @@ describe("restoreRevision", () => {
       restoredBy: RESTORER,
     };
 
-    const results = await Promise.all([
-      restoreRevision(restore),
-      restoreRevision(restore),
+    const results = await raceWriters([
+      () => restoreRevision(restore),
+      () => restoreRevision(restore),
     ]);
 
     expect(results.map((r) => r.status).sort()).toEqual([

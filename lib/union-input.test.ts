@@ -255,6 +255,76 @@ describe("the dates", () => {
     ).toBe(true);
   });
 
+  /**
+   * The precision half of the same argument, which this file had no fixture
+   * for at all (`YEO-85`): every `*Precision` in it said `day`, so
+   * `isImpossibleOrder` only ever compared two single days and the widening
+   * in `precisionSpan` was never run from here.
+   *
+   * What the widening is for: a marriage recorded on a known day in June, and
+   * an end recorded as a bare year. The year is stored on its 1 January
+   * *anchor*, so reading that anchor as a day says the union ended five months
+   * before it started — and the validator refuses a true record, in the voice
+   * of a rule, because a caller left a column out. Honouring the precision
+   * widens the end back out to the whole of 1912, which overlaps June, and the
+   * record stands.
+   */
+  it("allows an end recorded only as a year that the start falls inside", () => {
+    expect(
+      validateUnion({
+        ...MINIMAL,
+        startDate: "1912-06-04",
+        endDate: "1912-01-01",
+        endDatePrecision: "year",
+        endReason: "death",
+      }).ok,
+    ).toBe(true);
+
+    // The same two dates with the anchor taken literally, which is what the
+    // missing precision used to mean.
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        startDate: "1912-06-04",
+        endDate: "1912-01-01",
+        endDatePrecision: "day",
+        endReason: "death",
+      }),
+    ).toContain("endDate");
+  });
+
+  /**
+   * Month precision, and specifically the last day of the month — the one
+   * value in `precisionSpan` that is computed rather than written down.
+   *
+   * 1912 is a leap year, so February's span ends on the 29th, and a union that
+   * began on 29 February and ended some time that same February is possible by
+   * exactly one day. A table that assumed 28 would refuse it.
+   */
+  it("widens a month to its real last day, leap year included", () => {
+    expect(
+      validateUnion({
+        ...MINIMAL,
+        startDate: "1912-02-29",
+        endDate: "1912-02-01",
+        endDatePrecision: "month",
+        endReason: "death",
+      }).ok,
+    ).toBe(true);
+
+    // March of a non-leap year ends on the 31st, and February of one ends on
+    // the 28th — so this pair genuinely cannot overlap.
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        startDate: "1913-03-01",
+        endDate: "1913-02-01",
+        endDatePrecision: "month",
+        endReason: "death",
+      }),
+    ).toContain("endDate");
+  });
+
   it("does not fault the end date when the start date was unreadable", () => {
     expect(
       expectInvalid({

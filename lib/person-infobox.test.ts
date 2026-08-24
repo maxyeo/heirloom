@@ -100,7 +100,17 @@ const SHAW_NAMES = [
   ["stanley", "Stanley", 1961],
 ] as const;
 
-/** `db/seed.ts`, as a value. Entries exist for the four adults and Edward. */
+/**
+ * The seed tree from docs/architecture.md as a plain value.
+ *
+ * Related to `db/seed.ts` but deliberately not a transcription of it. Several
+ * people here carry a `pageId`, because what this box does with a linked
+ * relative — and with an unlinked one beside them — is the thing under test,
+ * where the real seed writes a single entry, for Thomas. Which people those
+ * are is answered by the `pageId` lines below and deliberately not restated
+ * here: a count in a comment is a fact that drifts the first time somebody
+ * adds a person, which is what this one had already done.
+ */
 function seedGraph(): FamilyGraph {
   return {
     people: [
@@ -314,29 +324,58 @@ describe("spouses", () => {
     expect(walter.detail).toBe("m. about 1948");
   });
 
-  it("names the other end of a divorce and a separation", () => {
+  /**
+   * Every way a union can have ended, rather than the two that happen to be
+   * in the seed (`YEO-85`).
+   *
+   * This was one case asserting `divorce` under a name that promised a
+   * separation as well, which is the failure mode the fixture rule is about
+   * from its other side: `END_VERB` is a `Record` over the enum, so the
+   * compiler guarantees every key *exists* and guarantees nothing about what
+   * any of them says. `sep.` and `ended` were words no test had ever read
+   * back. A table over the enum cannot fall behind it — adding a member to
+   * `union_end_reason` fails to compile here until somebody says how it reads.
+   */
+  it.each([
+    ["death", "died 1938"],
+    ["divorce", "div. 1938"],
+    ["separation", "sep. 1938"],
+    ["unknown", "ended 1938"],
+  ] as const)(
+    "says how a union that ended in %s reads",
+    (endReason, ending) => {
+      const graph = seedGraph();
+      graph.unions = [
+        union("u1", "rose", "thomas", {
+          startDate: "1933-02-11",
+          endDate: "1938-05-02",
+          endReason,
+        }),
+      ];
+
+      expect(boxFor("rose", graph).spouses[0].detail).toBe(
+        `m. 1933; ${ending}`,
+      );
+    },
+  );
+
+  /**
+   * The same exhaustiveness for `UNION_PREFIX`. `marriage` is the column
+   * default and `unknown` is what `validateUnion` settles on when a form says
+   * nothing — so the value most likely to reach this function from a real
+   * record was the one no fixture in the repository carried.
+   */
+  it.each([
+    ["marriage", "m. 1933"],
+    ["partnership", "from 1933"],
+    ["unknown", "from 1933"],
+  ] as const)("introduces the start year of a %s", (type, detail) => {
     const graph = seedGraph();
     graph.unions = [
-      union("u1", "rose", "thomas", {
-        startDate: "1933-02-11",
-        endDate: "1938-05-02",
-        endReason: "divorce",
-      }),
+      union("u1", "rose", "thomas", { type, startDate: "1933-02-11" }),
     ];
 
-    expect(boxFor("rose", graph).spouses[0].detail).toBe("m. 1933; div. 1938");
-  });
-
-  it("does not borrow the word 'married' for a partnership", () => {
-    const graph = seedGraph();
-    graph.unions = [
-      union("u1", "rose", "thomas", {
-        type: "partnership",
-        startDate: "1933-02-11",
-      }),
-    ];
-
-    expect(boxFor("rose", graph).spouses[0].detail).toBe("from 1933");
+    expect(boxFor("rose", graph).spouses[0].detail).toBe(detail);
   });
 
   it("has nothing to say about a union nobody dated", () => {
