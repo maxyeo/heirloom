@@ -458,11 +458,25 @@ values say how a child _arrived_ — born, adopted, fostered — and none of the
 may move anything derived; that is asserted by sweeping the enum out of
 `db/schema.ts` rather than listing it, so a fifth value arrives inside the
 sweep. `step` is different in kind: it records a relationship, and
-`lib/person-infobox.ts` reads it as one. Marking a link `step` therefore adds a
-stepchild to the infobox and changes nothing else — no parent, sibling,
-relative or panel row moves. A stored label sitting beside the derivation
-without replacing it is exactly the arrangement the rest of the model avoids by
-not having one.
+`lib/person-infobox.ts` reads it as one. A stored label sitting beside the
+derivation without replacing it is exactly the arrangement the rest of the
+model avoids by not having one.
+
+Because it is a relationship rather than an arrival, `step` is the one value
+the walks must *subtract*: a link marked `step` is not a birth, and the person
+on the other end of it is not a parent. `test/relationship-kinds.ts` takes it
+out of `birthUnionsOf` and `parentsOf`, which is the same line
+`lib/person-infobox.ts` draws from the parent's end when it keeps `step` links
+out of `ownChildren`.
+
+That subtraction has to be there, and the interesting case is the one where a
+`step` link sits *beside* a birth link rather than replacing it — a child
+attached to a parent's second marriage, which `lib/child-input.ts` allows by
+letting an existing person be added to another union. Read as a birth, the
+step-parent joins the parents; that then hides them from the step-parents
+(already a parent) and makes their own children full siblings rather than
+half. All three are asserted in `test/relationship-kinds.test.ts`, and all
+three were confirmed to fail without the subtraction.
 
 **The tripwire underneath.** Every walk above is only _possible_ because a
 person row points at no other person: people meet through a union and nowhere

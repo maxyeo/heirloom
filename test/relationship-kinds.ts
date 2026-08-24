@@ -44,14 +44,29 @@ import { derivePersonDetail } from "@/lib/person-detail";
  *   `union_children` directly — a stored fact, not a derived label.
  */
 
-/** The unions a person was recorded into as a child. */
+/**
+ * The unions a person was recorded into as a child.
+ *
+ * A link recorded as `step` is excluded, and that exclusion is the whole of
+ * the distinction. `step` is the one `child_relation` value that states a
+ * *relationship* rather than how a child arrived — `adopted` and `foster`
+ * both still say "this union raised them", and they are the criterion's
+ * "adoption and fostering do not alter the derived structural relationships".
+ * `step` says the opposite: my parent married into this union and I did not
+ * come out of it.
+ *
+ * `lib/person-infobox.ts` draws the same line from the parent's end, taking
+ * `relation === "step"` off `ownChildren` and putting it under stepchildren
+ * instead. Reading it as a birth here would make a step-parent's other
+ * children full siblings.
+ */
 export function birthUnionsOf(
   graph: FamilyGraph,
   personId: string,
 ): Set<string> {
   return new Set(
     graph.childLinks
-      .filter((link) => link.childId === personId)
+      .filter((link) => link.childId === personId && link.relation !== "step")
       .map((link) => link.unionId),
   );
 }
@@ -78,7 +93,17 @@ export function partnerUnionsOf(
  */
 export function parentsOf(graph: FamilyGraph, personId: string): Set<string> {
   const detail = derivePersonDetail(graph, personId);
-  return new Set(detail?.parents.map((parent) => parent.person.id) ?? []);
+  return new Set(
+    detail?.parents
+      // `ParentLink` carries the relation the link was recorded with, and a
+      // `step` link names somebody who married a parent rather than somebody
+      // who is one. Collapsing to a bare id here would lose that, and the
+      // loss is silent: the step-parent would be indistinguishable from a
+      // real one, which then makes `stepParentsOf` drop them (they look
+      // already-a-parent) and `siblingKind` call their other children full.
+      .filter((parent) => parent.relation !== "step")
+      .map((parent) => parent.person.id) ?? [],
+  );
 }
 
 /**

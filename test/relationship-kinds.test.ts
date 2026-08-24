@@ -299,6 +299,95 @@ describe("bloodOnly", () => {
 });
 
 /**
+ * A `step` link recorded *alongside* a person's birth link, which is the way
+ * the application actually produces one and the way the seeded family does
+ * not.
+ *
+ * `lib/child-input.ts`'s `CHILD_MODES` lets an **existing** person be
+ * attached to a second union, and `CHILD_RELATIONS` offers `step` on that new
+ * link — the same "two ordinary rows" arrangement `db/schema.ts` uses to
+ * justify `adopted`: "a boy adopted by his stepfather is biological to one
+ * union and adopted into another". So Edward can hold a biological link to
+ * his parents' union and a `step` link to his father's second marriage, and
+ * both rows are ordinary.
+ *
+ * These are separate from the `step`-exception test in
+ * `lib/relationship-derivation.test.ts`, which *changes* a birth link's
+ * relation to `step`. That is a person with no birth union at all, and it
+ * cannot reach any of the three wrong answers below — the case only appears
+ * when a real birth link and a `step` link are held at once.
+ */
+describe("a step link beside a birth link", () => {
+  const remarriage = () =>
+    family({
+      unions: [
+        ["u1", "mary", "thomas"],
+        ["u2", "thomas", "rose"],
+      ],
+      children: [
+        ["u1", "edward"],
+        ["u2", "clara"],
+        // Edward is his stepmother's stepchild by the record, and still his
+        // own parents' son by the row above.
+        ["u2", "edward", "step"],
+      ],
+    });
+
+  it("does not count the step-parent among the parents", () => {
+    expect(parentsOf(remarriage(), "edward")).toEqual(
+      new Set(["mary", "thomas"]),
+    );
+  });
+
+  /**
+   * The wrong answer this guards is "full", reached by reading the `step`
+   * link as a birth: Edward and Clara would share union u2 and the union-first
+   * branch would answer before anything looked at a parent. They share Thomas
+   * and nobody else.
+   */
+  it("calls the stepmother's own child a half-sibling", () => {
+    expect(siblingKind(remarriage(), "edward", "clara")).toBe("half");
+  });
+
+  /**
+   * And the step-parent is still reported as one. Counting Rose as a parent
+   * does not merely add her to the wrong list — it deletes her from this one,
+   * because `stepParentsOf` skips anybody who is already a parent.
+   */
+  it("still names the stepmother a step-parent", () => {
+    expect(stepParentsOf(remarriage(), "edward")).toEqual(new Set(["rose"]));
+  });
+
+  /**
+   * The neighbouring values are untouched, which is the criterion "adoption
+   * and fostering do not alter the derived structural relationships" — they
+   * record how a child arrived at a union that did raise them, where `step`
+   * records that the union did not.
+   */
+  it.each(["adopted", "foster"] as const)(
+    "reads a %s link as a birth, unlike step",
+    (relation) => {
+      const graph = family({
+        unions: [
+          ["u1", "mary", "thomas"],
+          ["u2", "thomas", "rose"],
+        ],
+        children: [
+          ["u1", "edward"],
+          ["u2", "clara"],
+          ["u2", "edward", relation],
+        ],
+      });
+
+      expect(parentsOf(graph, "edward")).toEqual(
+        new Set(["mary", "thomas", "rose"]),
+      );
+      expect(siblingKind(graph, "edward", "clara")).toBe("full");
+    },
+  );
+});
+
+/**
  * A whole graph from the three facts these tests are about: who is partnered
  * with whom, who was born into which union, and who is on the page without
  * being either. Everybody is female, born on no recorded date, because
