@@ -369,10 +369,18 @@ export default async function CompareRevisionsPage({
               byte-different HTML and identical content — a word wrapped in
               `<em>` and unwrapped again, or the copy `lib/save-page.ts` writes
               when the save button was pressed with nothing typed.
+
+              It has to be said differently when the title moved, because the
+              title is a change and it is reported a few lines above. "Nothing
+              changed" printed under "the title changed from X to Y" reads as
+              the page contradicting itself, even though the second sentence
+              only ever meant the body.
             */
             <p className="text-caption text-ink-muted">
-              Nothing a reader can see changed between these two revisions. The
-              stored markup may differ, but the words, the headings and the
+              {titleChanged
+                ? "Apart from the title, nothing a reader can see changed between these two revisions."
+                : "Nothing a reader can see changed between these two revisions."}{" "}
+              The stored markup may differ, but the words, the headings and the
               list items are the same.
             </p>
           )}

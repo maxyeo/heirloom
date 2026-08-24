@@ -187,6 +187,18 @@ function normaliseWhitespace(text: string): string {
  * recognise, so widening the allowlist degrades to "that markup contributes
  * text to its enclosing block", never to a crash.
  *
+ * ## One known limitation
+ *
+ * A body whose block tags are *improperly nested* — `<p>A<h2>B</p>C</h2>`,
+ * which TipTap's schema cannot produce but a hand-written `UPDATE` can —
+ * comes back out of `sanitizeHtml` re-serialised with a stray empty `<p></p>`
+ * where the overlap was, and the `flush()` on each block tag then splits what
+ * a browser renders as one heading ("B C") into two heading blocks ("B" and
+ * "C"). It fails safe: an extra row in the diff, never a crash and never lost
+ * text. Fixing it would mean tracking overlap across the re-serialisation
+ * boundary, which is a great deal of machinery for a shape only a legacy row
+ * can hold.
+ *
  * @param html an entry or revision body, as stored
  * @returns its blocks in document order; empty blocks are dropped
  */
