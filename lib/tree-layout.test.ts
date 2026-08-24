@@ -51,8 +51,11 @@ function person(overrides: Partial<FamilyGraph["people"][number]> & { id: string
     sex: "female",
     birthDate: null,
     birthDateQualifier: "exact",
+    birthPlace: null,
     deathDate: null,
     deathDateQualifier: "exact",
+    deathPlace: null,
+    notes: null,
     pageId: null,
     ...overrides,
   } satisfies FamilyGraph["people"][number];
@@ -62,10 +65,13 @@ function union(overrides: Partial<FamilyGraph["unions"][number]> & { id: string 
   return {
     partnerAId: null,
     partnerBId: null,
+    type: "marriage",
     endReason: "ongoing",
     sequence: 1,
     startDate: null,
     startDateQualifier: "exact",
+    endDate: null,
+    endDateQualifier: "exact",
     ...overrides,
   } satisfies FamilyGraph["unions"][number];
 }
@@ -170,8 +176,22 @@ describe("layoutFamilyGraph", () => {
     const u1 = nodeById(nodes, "u1");
     expect(u1.data).toMatchObject({ endReason: "death" });
     // A union marker is a connector, not a record — clicking it should do
-    // nothing, so it must not be selectable.
+    // nothing and tabbing should skip it, so it is neither selectable nor
+    // focusable. Both matter now that selection is what opens the detail
+    // panel (E2-T1) and the tab order is how a keyboard reaches a person.
     expect(u1.selectable).toBe(false);
+    expect(u1.focusable).toBe(false);
+  });
+
+  it("labels a person node for anything that cannot see it", () => {
+    const { nodes } = layoutFamilyGraph(seedGraph());
+
+    // The wrapper React Flow puts in the tab order has no text of its own, so
+    // without this a screen reader announces every person as "group, node".
+    expect(nodeById(nodes, "thomas").ariaLabel).toBe("Thomas Hale, 1899–1960");
+    // Nobody's dates are recorded, so the label is the name and nothing else
+    // — not a name trailing an empty parenthetical.
+    expect(nodeById(nodes, "alice").ariaLabel).toBe("Alice");
   });
 
   it("formats a lifespan from whichever dates are known", () => {

@@ -2,6 +2,7 @@ import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
 
 import type { FamilyGraph } from "./family-graph";
+import { formatLifespan, formatPersonName } from "./person-format";
 
 export const PERSON_WIDTH = 176;
 export const PERSON_HEIGHT = 64;
@@ -70,6 +71,8 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
 
   for (const person of graph.people) {
     const laid = g.node(person.id);
+    const name = formatPersonName(person.givenName, person.surname);
+    const lifespan = formatLifespan(person.birthDate, person.deathDate);
     nodes.push({
       id: person.id,
       type: "person",
@@ -79,11 +82,16 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
         y: laid.y - PERSON_HEIGHT / 2,
       },
       data: {
-        name: [person.givenName, person.surname].filter(Boolean).join(" "),
-        lifespan: formatLifespan(person.birthDate, person.deathDate),
+        name,
+        lifespan,
         sex: person.sex,
         pageId: person.pageId,
       },
+      // Nodes are focusable by default, so a keyboard reaches every person
+      // without help — but only the wrapper div is in the tab order, and it
+      // has no text of its own. Without this a screen reader announces
+      // "group, node" thirty times over.
+      ariaLabel: lifespan ? `${name}, ${lifespan}` : name,
     });
   }
 
@@ -97,18 +105,13 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
         y: laid.y - UNION_SIZE / 2,
       },
       data: { endReason: union.endReason },
+      // A union marker is a connector, not a record. Clicking it opens
+      // nothing, and putting it in the tab order would double the number of
+      // stops a keyboard has to make to cross a generation.
       selectable: false,
+      focusable: false,
     });
   }
 
   return { nodes, edges };
-}
-
-function formatLifespan(birth: string | null, death: string | null): string {
-  const b = birth?.slice(0, 4);
-  const d = death?.slice(0, 4);
-  if (!b && !d) return "";
-  if (b && d) return `${b}–${d}`;
-  if (b) return `b. ${b}`;
-  return `d. ${d}`;
 }
