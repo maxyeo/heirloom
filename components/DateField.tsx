@@ -3,7 +3,7 @@
 import { useId, useState } from "react";
 
 import { parseDateInput } from "@/lib/parse-date";
-import { formatQualifiedDate } from "@/lib/person-format";
+import { formatQualifiedDate } from "@/lib/format-date";
 
 /**
  * One date, as one text box (E4-T2, `YEO-39`).
