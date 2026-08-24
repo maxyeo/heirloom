@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { readArticleOutline } from "@/lib/article-outline";
 import { entryHref } from "@/lib/entry-links";
 import {
   entryLinkProps,
@@ -399,5 +400,51 @@ describe("the order this runs in", () => {
     expect(markMissingEntryLinks(safe, new Set())).toBe(
       '<p><a href="/wiki/new?title=Walter" class="new" title="page does not exist">Walter</a></p>',
     );
+  });
+});
+
+/**
+ * E11-T3 (`YEO-73`) and E11-T6 (`YEO-76`) both rewrite the sanitised body, and
+ * the article route chains them: `readArticleOutline` writes heading ids by
+ * running the body back through the sanitiser, and `resolveEntryLinks` then
+ * marks the dead links.
+ *
+ * The order is load-bearing in one direction only. `markMissingEntryLinks`
+ * adds `class` and `title` to an anchor, and the allowlist permits neither, so
+ * a sanitiser pass afterwards strips the red links back out — silently, with
+ * every other test in both files still passing. These assert the chain the
+ * route actually uses, so reordering it fails here rather than in production.
+ */
+describe("chained with the article outline", () => {
+  const BODY_WITH_HEADINGS =
+    "<h2>Marriage</h2>" +
+    `<p>Rose married <a href="${entryHref("walter-hale")}">Walter Hale</a>.</p>` +
+    "<h2>Children</h2>" +
+    `<p>Then <a href="${entryHref("rose-hall")}">Rose Hall</a>.</p>`;
+
+  it("keeps the heading ids and the red links in one body", async () => {
+    const outline = readArticleOutline(sanitizeHtml(BODY_WITH_HEADINGS));
+    const html = await resolveEntryLinks(
+      outline.html,
+      recordingLookup(["rose-hall"]).lookup,
+    );
+
+    for (const heading of outline.headings) {
+      expect(html).toContain(`id="${heading.id}"`);
+    }
+    expect(outline.headings).toHaveLength(2);
+    expect(html).toContain(MISSING_ENTRY_TITLE);
+    expect(html).toContain(newEntryHref("Walter Hale"));
+    expect(html).not.toContain(`>${MISSING_ENTRY_TITLE}<`);
+  });
+
+  it("loses the red links if the outline runs last, which is why it does not", async () => {
+    const marked = await resolveEntryLinks(
+      sanitizeHtml(BODY_WITH_HEADINGS),
+      recordingLookup(["rose-hall"]).lookup,
+    );
+    expect(marked).toContain(MISSING_ENTRY_TITLE);
+
+    expect(readArticleOutline(marked).html).not.toContain(MISSING_ENTRY_TITLE);
   });
 });

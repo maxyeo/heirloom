@@ -253,6 +253,30 @@
    * point: what you type is what the article looks like.
    */
   .wiki-body {
+    /*
+     * Where a section starts, as far as scrolling to it is concerned (E11-T3).
+     *
+     * The header is `sticky`, so it sits over the first `--header-height` of
+     * the page and an anchor scrolled to `top: 0` arrives underneath it.
+     * `scroll-margin-top` is the browser's own answer to that: it applies to
+     * `#fragment` navigation, to `scrollIntoView`, and to the back button
+     * restoring a position, so the contents panel needs no scroll handler of
+     * its own and a link pasted into a message behaves the same way.
+     *
+     * Expressed against the token rather than as a number, because the two
+     * drifting apart is exactly the bug this prevents — and read back *out* of
+     * here by `components/ArticleContents.tsx`, which needs the same offset in
+     * pixels to decide which section is current. One declaration, three uses.
+     *
+     * The extra half-rem is breathing room, not alignment: a heading flush
+     * against the underside of the header reads as clipped.
+     */
+    h2,
+    h3,
+    h4 {
+      scroll-margin-top: calc(var(--header-height) + 0.5rem);
+    }
+
     p {
       margin-block: 0 0.75rem;
     }
