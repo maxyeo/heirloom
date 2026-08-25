@@ -75,17 +75,43 @@ export function GedcomImport() {
     setPreviewed(null);
     setRefusal(null);
     setCancelled(false);
+    // Whatever is in flight is about the old file and will be discarded when
+    // it lands (see `stale`), so the screen should stop saying it is working.
+    setBusy(null);
   }
 
-  async function post(body: FormData): Promise<ImportResponse | null> {
+  /**
+   * Whether an answer that has just arrived is about a file the reader has
+   * since moved on from.
+   *
+   * A request takes as long as it takes and a file input can be changed while
+   * it is out. Without this, choosing a second file during a slow preview
+   * leaves the *first* file's counts on screen under the second file's name —
+   * which is the one confusion this whole screen exists to prevent. Nothing
+   * unsafe could come of it, because the confirming request re-reads the live
+   * input and the endpoint's digest check refuses a mismatch; but "nothing
+   * unsafe" is not the bar for a screen whose job is to be believed.
+   */
+  function stale(chosen: File): boolean {
+    return inputRef.current?.files?.[0] !== chosen;
+  }
+
+  async function post(body: FormData): Promise<ImportResponse> {
+    let response: Response;
     try {
-      const response = await fetch(IMPORT_ENDPOINT, { method: "POST", body });
-      // A 401 from the guard, or anything else that answered without JSON.
-      // `response.json()` on an empty body throws, and a network failure
-      // never gets here at all, so both land in the same place below.
+      response = await fetch(IMPORT_ENDPOINT, { method: "POST", body });
+    } catch {
+      return { error: UNREACHABLE };
+    }
+
+    try {
       return (await response.json()) as ImportResponse;
     } catch {
-      return null;
+      // An answer with no JSON in it. The one that actually happens is the
+      // guard's bare `401` body after a session has expired mid-visit, and
+      // telling that reader to check their connection would send them looking
+      // in the wrong place entirely.
+      return { error: response.status === 401 ? SIGNED_OUT : UNREADABLE };
     }
   }
 
@@ -100,9 +126,9 @@ export function GedcomImport() {
     const body = new FormData();
     body.set(IMPORT_FILE_FIELD, chosen);
     const answer = await post(body);
+    if (stale(chosen)) return;
 
     setBusy(null);
-    if (answer === null) return setRefusal({ error: UNREACHABLE });
     if (!isImportPreview(answer)) return setRefusal(answer);
 
     setPreviewed({
@@ -126,11 +152,21 @@ export function GedcomImport() {
     // disagree, so a confirmation can only ever confirm what was read.
     body.set(IMPORT_CONFIRM_FIELD, previewed.digest);
     const answer = await post(body);
+    if (stale(chosen)) return;
 
     setBusy(null);
-    setRefusal(
-      answer === null ? { error: UNREACHABLE } : (answer as ImportRefusal),
-    );
+    // A preview here would mean the endpoint declined to treat this as a
+    // confirmation. It does not today, and showing the newer reading rather
+    // than casting it to a refusal is the honest thing to do if it ever does.
+    if (isImportPreview(answer)) {
+      return setPreviewed({
+        name: chosen.name,
+        digest: answer.digest,
+        preview: answer.preview,
+      });
+    }
+
+    setRefusal(answer);
   }
 
   /**
@@ -239,9 +275,17 @@ type Previewed = { name: string; digest: string; preview: ImportPreview };
 
 type Busy = null | "reading" | "importing";
 
-/** When `fetch` itself failed, or something answered with no JSON in it. */
+/** When `fetch` itself failed — the request never reached the application. */
 const UNREACHABLE =
-  "The file could not be read. Check the connection and try again — nothing was written.";
+  "The file could not be sent. Check the connection and try again — nothing was written.";
+
+/** When the answer was a `401`, which means the session ran out mid-visit. */
+const SIGNED_OUT =
+  "You have been signed out. Sign in again and try once more — nothing was written.";
+
+/** Any other answer with no JSON in it, which nothing is expected to produce. */
+const UNREADABLE =
+  "The answer could not be read. Try again — nothing was written.";
 
 /**
  * A refusal, including the one that is not the reader's fault.

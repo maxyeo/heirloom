@@ -41,8 +41,23 @@ import { render } from "@/test/render";
 
 type Call = { url: string; body: FormData };
 
+/**
+ * One queued answer.
+ *
+ * `invalid` is an answer with no JSON in it — the guard's bare `401` body is
+ * the one that happens in practice. `defer` holds the answer open until the
+ * test lets it land, which is the only way to be in two states at once.
+ */
+type Answer = {
+  status: number;
+  body?: unknown;
+  invalid?: boolean;
+  defer?: boolean;
+};
+
 let calls: Call[] = [];
-let answers: { status: number; body: unknown }[] = [];
+let answers: Answer[] = [];
+let held: (() => void)[] = [];
 
 /** Let React settle every microtask the last act produced. */
 async function settle(): Promise<void> {
@@ -55,17 +70,27 @@ async function settle(): Promise<void> {
 beforeEach(() => {
   calls = [];
   answers = [];
+  held = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, body: init.body as FormData });
       const answer = answers.shift();
       if (!answer) throw new Error(`No answer queued for ${url}`);
-      return {
+
+      const response = {
         ok: answer.status < 400,
         status: answer.status,
-        json: async () => answer.body,
+        json: async () => {
+          if (answer.invalid) throw new SyntaxError("Unexpected token");
+          return answer.body;
+        },
       } as Response;
+
+      if (!answer.defer) return response;
+      return new Promise<Response>((resolve) => {
+        held.push(() => resolve(response));
+      });
     }),
   );
 });
@@ -273,6 +298,43 @@ describe("the confirm step", () => {
 
     expect(screen.button("Import 5 people")).toBeUndefined();
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("an answer that is not what the screen expected", () => {
+  it("says the session ran out rather than blaming the connection", async () => {
+    // A `401` from the guard carries a bare body, so `response.json()`
+    // throws. Telling that reader to check their connection would send them
+    // looking in entirely the wrong place.
+    const screen = mount();
+    choose(screen.input);
+    answers.push({ status: 401, invalid: true });
+
+    await click(screen.button("Preview this file"));
+
+    expect(screen.host.querySelector('[role="alert"]')?.textContent).toContain(
+      "signed out",
+    );
+  });
+
+  it("discards a preview for a file the reader has moved on from", async () => {
+    // Choosing a second file while the first is still being read. Without a
+    // guard the first file's counts land under the second file's name, which
+    // is the one confusion this screen exists to prevent.
+    const screen = mount();
+    choose(screen.input, "first.ged");
+    answers.push({ status: 200, body: previewAnswer(), defer: true });
+
+    await act(async () => {
+      screen.button("Preview this file")?.click();
+    });
+    choose(screen.input, "second.ged");
+
+    await act(async () => held.shift()?.());
+    await settle();
+
+    expect(screen.button("Import 5 people")).toBeUndefined();
+    expect(screen.host.textContent).not.toContain("John Henry Smith");
   });
 });
 
