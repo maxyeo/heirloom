@@ -7,7 +7,9 @@ reasonable to put decades of somebody's work in here in the first place.
 
 This page covers the **parser** — E6-T1 (`YEO-46`), the read half — and the
 **mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
-(`YEO-47`). The import flow around them is E6-T3 to E6-T5.
+(`YEO-47`), and the **preview** somebody reads before an import happens, which
+is E6-T3 (`YEO-48`). Writing the rows is E6-T4 and reporting on them
+afterwards is E6-T5.
 
 ## The pipeline
 
@@ -280,6 +282,74 @@ and one unreadable birth date would report 4,001 problems.
 reported". They are redundant — the same edges are written on the `FAM` side —
 so reporting them would put "we ignored 240 things" into a report where
 nothing was lost. They are parsed onto the individual instead.
+
+## Previewing an import
+
+> Uploading the wrong file must not be a database restore.
+
+E6-T3 (`YEO-48`) puts a stop between choosing a file and importing it.
+`/import` uploads the `.ged` to `POST /api/import`, which parses it, maps it,
+and answers with counts, a dozen names, and every warning above — and writes
+nothing. A second request, carrying the digest of the file that was previewed,
+is what imports it.
+
+| Module                        | What it owns                                         |
+| ----------------------------- | ---------------------------------------------------- |
+| `lib/import-preview.ts`       | The cap, the counts, the sample, the warning groups  |
+| `lib/import-endpoint.ts`      | The URL and the two field names, shared by both ends |
+| `app/api/import/route.ts`     | The session guard, the multipart form, the branch    |
+| `components/GedcomImport.tsx` | The three stages of the screen                       |
+
+### Nothing on this path can write
+
+`lib/import-preview.ts` is under the same import-closure rule as the parser
+and the mapper, and `lib/gedcom.purity.test.ts` asserts it: no `@/db`, no npm
+package, nothing outside the parser's own closure plus `lib/person-format.ts`.
+
+That is deliberately stronger than "the preview does not write". _Cancelling_
+reaches none of this code either — cancel is the second request never being
+sent, not a request that gets ignored — but a preview that **could** write
+would make the guarantee worth nothing the first time somebody added a
+convenience to it.
+
+### Why the file is uploaded twice
+
+A serverless function keeps nothing between requests, so the confirming
+request carries the file again along with the SHA-256 of the bytes the preview
+described. The endpoint recomputes it and refuses a mismatch with `409`. That
+is what makes "explicit confirm step" a statement about _this file_ rather
+than about a second button press.
+
+The alternative — stash the parsed mapping server-side under a token — needs
+somewhere to stash it, which is either the database the preview must not touch
+or the blob store, and it leaves every cancelled import as something to clean
+up later.
+
+### There is no format sniff
+
+GEDCOM has no magic bytes, and it does not need one. `parseGedcom` is total: a
+file that is not GEDCOM comes back with no records and an issue per line, so
+the preview says _"0 people, 0 unions, 214 lines that are not GEDCOM"_, which
+tells whoever picked it far more than a rejection would. The only things
+refused before parsing are a file too large to buffer and an empty one.
+
+### What the screen shows, and in what order
+
+Counts first, then the names, then warnings worst-first — the character set
+leads, because a file read as the wrong one has every accented name in it
+wrong and nothing else matters until that is settled, and `narrowed` comes
+last, because it is the one group that means _nothing to fix_.
+
+Unknown tags are kept out of that list entirely, under a heading of their own,
+for the reason [Nothing is dropped in silence](#nothing-is-dropped-in-silence)
+gives.
+
+One warning is derived rather than passed through. _People with no name in the
+file_ is counted off the `INDI` records themselves, because the mapper reports
+it as `value` alongside unrelated findings and the only way to pull it back
+out of `issues` would be to match on the wording of a sentence somebody should
+be free to reword. The `value` group then skips one issue per line the derived
+group claims, so one loss does not get two spellings on one screen.
 
 ## Character encoding
 
