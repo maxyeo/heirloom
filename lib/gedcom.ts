@@ -147,8 +147,35 @@ export type GedcomIndividual = {
    * wrong, and the cross-check is only possible if both halves survive.
    */
   familiesAsSpouse: string[];
-  /** `FAMC` — the families this person appears in as a child. See above. */
-  familiesAsChild: string[];
+  /**
+   * `FAMC` — the families this person appears in as a child. See above.
+   *
+   * A list of records rather than of xrefs, unlike `familiesAsSpouse`, because
+   * of where GEDCOM puts `PEDI`. The *edge* is written on the `FAM` side as
+   * `CHIL`; the *kind* of that edge — birth, adopted, foster — is written on
+   * the child's side, under this tag. `union_children.relation` needs both
+   * records to fill one column, so the second half has to survive the parse.
+   * See `lib/gedcom-map.ts`, which is the module that joins them.
+   */
+  familiesAsChild: GedcomChildLink[];
+};
+
+/**
+ * One `FAMC` — a family this person is a child in, and how.
+ *
+ * `pedigree` is the raw `PEDI` value, lower-cased and nothing more. Turning
+ * `birth` into `biological` is a statement about *our* enum rather than about
+ * the file, and this module stops at the last point that is still true of the
+ * file. `lib/gedcom-map.ts` does the translation, and is where an unreadable
+ * value gets reported.
+ */
+export type GedcomChildLink = {
+  /** The family's identifier, without `@`. */
+  family: string;
+  /** `PEDI`, lower-cased, or `null` when the file gave none. */
+  pedigree: string | null;
+  /** The line the `FAMC` sits on, so the report can point at it. */
+  line: number;
 };
 
 /** A partnership and its children — GEDCOM's `FAM`. */
@@ -330,7 +357,7 @@ function readIndividual(
         break;
 
       case "FAMC":
-        collectPointer(child, "INDI.FAMC", individual.familiesAsChild, issues);
+        readChildLink(child, individual.familiesAsChild, issues, unknown);
         break;
 
       default:
@@ -575,13 +602,51 @@ function readEventDate(
 
   event.date = parsed.value;
 
-  if (spanned !== null && spanned.ok && spanned.narrowed !== null) {
-    issues.push({
-      kind: "narrowed",
-      line: node.line,
-      message: spanned.narrowed,
-    });
+  const narrowed =
+    spanned !== null && spanned.ok
+      ? spanned.narrowed
+      : estimateNarrowing(text, label, parsed.value);
+
+  if (narrowed !== null) {
+    issues.push({ kind: "narrowed", line: node.line, message: narrowed });
   }
+}
+
+/** `EST`, which `lib/parse-date.ts` has always read as `about`. */
+const ESTIMATED = /^EST\b\s*/i;
+
+/**
+ * Say so when `EST` became `about` (E6-T2, `YEO-47`).
+ *
+ * The reading itself is older than this ticket and is not changing:
+ * `lib/parse-date.ts` maps `est` onto `about` because `date_qualifier` has
+ * four members and "estimated" is not one of them, and both words mean
+ * *roughly*. What was missing is the report line. `EST 1918` was the one
+ * lossy date form in the whole pipeline that went through without a word,
+ * which made "how much did this import narrow" a question the report could
+ * not answer honestly — `INT`, an endpoint modifier and an unreadable upper
+ * bound all announced themselves, and the oldest loss of the four did not.
+ *
+ * Why here and not in `lib/parse-date.ts`: that module is shared with the
+ * date field a person types into, where there is nowhere for an issue to go
+ * and nobody to read it — an author who typed "est 1918" is looking at the
+ * echo underneath the box, which already says "about 1918". The GEDCOM import
+ * report is the only surface in the application with somewhere to put it.
+ *
+ * Only a *top-level* `EST` reports. `BET EST 1890 AND 1900` is already
+ * reported by the endpoint-modifier rule in `readTwoPointSpan`, and saying it
+ * twice would double-count one loss — which is why the caller reaches for
+ * this only when the text was not a span.
+ */
+function estimateNarrowing(
+  text: string,
+  label: string,
+  value: ParsedDate | null,
+): string | null {
+  if (value === null || !ESTIMATED.test(text)) return null;
+
+  const estimated = text.replace(ESTIMATED, "");
+  return `The ${label} date "${text}" is an estimate, and this schema records dates as exact, about, before or after. "${estimated}" was stored, qualified as "${value.qualifier}"; that it was an estimate rather than an approximation is not stored.`;
 }
 
 /** `BET x AND y` and `FROM x TO y`: two dates, only the lower one stored. */
@@ -637,12 +702,12 @@ function readGedcomDateSpan(
 
   const fromOnly = FROM_ONLY.exec(text);
   if (fromOnly !== null) {
-    return readOnePointSpan("after", fromOnly[1]);
+    return readOnePointSpan(text, label, "after", fromOnly[1]);
   }
 
   const toOnly = TO_ONLY.exec(text);
   if (toOnly !== null) {
-    return readOnePointSpan("before", toOnly[1]);
+    return readOnePointSpan(text, label, "before", toOnly[1]);
   }
 
   const interpreted = INTERPRETED.exec(text);
@@ -739,8 +804,32 @@ function readTwoPointSpan(
   };
 }
 
-/** `FROM x` / `TO y`: one bound, nothing dropped, so no issue is raised. */
+/**
+ * `FROM x` / `TO y`: one bound, which becomes an `after` or `before` date.
+ *
+ * The bound itself is lossless — one date in, one date out, at its own
+ * precision — so the ordinary forms raise nothing.
+ *
+ * **A modifier that says something else is not.** `FROM ABT 1912` and
+ * `FROM EST 1912` both become `after 1912`: the qualifier column has room for one word and
+ * `after` is the one the span form claims, so whatever the bound said about
+ * itself is overwritten. That is the same loss `readTwoPointSpan` reports for
+ * an endpoint of a two-point span — a fuzzy edge on a bound of an interval
+ * has no reader anywhere in this application — and it is reported here for
+ * the same reason, in the same words. Review of E6-T2 (`YEO-47`) found it
+ * going through in silence, which had made "a modifier on a range endpoint is
+ * not stored" a rule that held for `BET ABT 1890 AND 1900` and quietly failed
+ * for `FROM ABT 1890`. One rule, both shapes.
+ *
+ * The redundant spellings are the other half of getting that right, and the
+ * first version of this fix got them wrong: `FROM AFT 1912` and `TO BEF 1918`
+ * agree with the qualifier the span form already stores, so nothing is lost
+ * and nothing is said. Reporting them named one word as both what was stored
+ * and what was not.
+ */
 function readOnePointSpan(
+  text: string,
+  label: string,
   qualifier: "after" | "before",
   boundText: string,
 ): GedcomDateSpan {
@@ -752,10 +841,28 @@ function readOnePointSpan(
     return { ok: false, message: `"${bound}" is not a date.` };
   }
 
+  const value: ParsedDate = { ...parsedBound.value, qualifier };
+  const dropped = parsedBound.value.qualifier;
+
+  // Nothing was dropped when the bound carried no modifier — and equally when
+  // it carried the *same* one the span form stores. `FROM AFT 1912` and
+  // `TO BEF 1918` are the redundant spellings real files contain, and the
+  // stored value is exactly what they said; reporting them produced a
+  // sentence naming one word as both what was stored and what was not. A
+  // report whose value is that it only speaks when something is wrong cannot
+  // afford a false alarm, which is the same reason `lib/gedcom-map.ts`
+  // accumulates its cross-check maps rather than overwriting them.
+  if (dropped === "exact" || dropped === qualifier) {
+    return { ok: true, value, narrowed: null };
+  }
+
   return {
     ok: true,
-    value: { ...parsedBound.value, qualifier },
-    narrowed: null,
+    value,
+    // `qualified as "${qualifier}"` rather than an indefinite article, for the
+    // reason `readInterpretedDate` spells out: `about`/`before`/`after` do not
+    // all take the same one.
+    narrowed: `The ${label} date "${text}" gives one bound, and a bound is already a bound. "${bound}" was stored, qualified as "${qualifier}"; the "${dropped}" on it is not stored.`,
   };
 }
 
@@ -860,6 +967,52 @@ function collectPointer(
   }
 
   into.push(pointer);
+}
+
+/**
+ * `FAMC`, which is a pointer with something hanging off it.
+ *
+ * Not `collectPointer`, and the difference is why `PEDI` was invisible until
+ * now: `collectPointer` reads a node's *value* and never looks at its
+ * children, so every sub-tag of a `FAMC` fell through without even reaching
+ * the unknown-tag list. That breaks the one rule this pipeline has — nothing
+ * a real file contains is dropped in silence — and `PEDI` is the sub-tag that
+ * is not merely unreported but load-bearing: it is the only place
+ * `union_children.relation` can come from.
+ *
+ * So this reads the pointer the same way, keeps `PEDI` verbatim, and hands
+ * everything else to the unknown-tag list under `INDI.FAMC.<TAG>`.
+ */
+function readChildLink(
+  node: GedcomNode,
+  into: GedcomChildLink[],
+  issues: GedcomIssue[],
+  unknown: Sighting[],
+): void {
+  const pointer = readPointer(node.value);
+
+  if (pointer === null) {
+    issues.push({
+      kind: "pointer",
+      line: node.line,
+      message: `INDI.FAMC should point at a record, but says ${describeValue(node.value)}.`,
+    });
+    return;
+  }
+
+  let pedigree: string | null = null;
+
+  for (const child of node.children) {
+    if (child.tag === "PEDI") {
+      // 5.5.1 allows one `PEDI` per `FAMC`, so the first wins and a second is
+      // unread structure rather than a contradiction worth its own vocabulary.
+      pedigree ??= blankToNull((child.value ?? "").toLowerCase());
+      continue;
+    }
+    unknown.push({ path: `INDI.FAMC.${child.tag}`, line: child.line });
+  }
+
+  into.push({ family: pointer, pedigree, line: node.line });
 }
 
 /**

@@ -5,23 +5,30 @@ is how a family tree gets into this application and how it gets back out
 again, and being able to get it back out again is the promise that makes it
 reasonable to put decades of somebody's work in here in the first place.
 
-This page covers the **parser** — E6-T1 (`YEO-46`), the read half. The mapping
-onto `individuals`, `unions` and `union_children` is E6-T2 (`YEO-47`) and the
-import flow around it is E6-T3 to E6-T5.
+This page covers the **parser** — E6-T1 (`YEO-46`), the read half — and the
+**mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
+(`YEO-47`). The import flow around them is E6-T3 to E6-T5.
 
 ## The pipeline
 
-Four modules, each with one job, in the order the bytes move through them:
+Five modules, each with one job, in the order the bytes move through them:
 
-| Module                   | Takes         | Gives                           |
-| ------------------------ | ------------- | ------------------------------- |
-| `lib/ansel.ts`           | bytes         | text                            |
-| `lib/gedcom-encoding.ts` | bytes         | text, and which character set   |
-| `lib/gedcom-lines.ts`    | text          | a tree of tagged nodes          |
-| `lib/gedcom.ts`          | bytes or text | individuals, families, a report |
+| Module                   | Takes         | Gives                                   |
+| ------------------------ | ------------- | --------------------------------------- |
+| `lib/ansel.ts`           | bytes         | text                                    |
+| `lib/gedcom-encoding.ts` | bytes         | text, and which character set           |
+| `lib/gedcom-lines.ts`    | text          | a tree of tagged nodes                  |
+| `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
+| `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
 
-`lib/gedcom-report.ts` holds the vocabulary the last two use to say what they
+`lib/gedcom-report.ts` holds the vocabulary the last three use to say what they
 could not use.
+
+The line between the last two is where the vocabulary changes hands.
+`lib/gedcom.ts` stops at the last point that is still true of the **file** —
+`PEDI` is the word `birth`, a `FAM` is a `FAM`. `lib/gedcom-map.ts` is the
+first point that is true of the **schema** — `birth` becomes `biological`, a
+`FAM` becomes a `unions` row with a `sequence` no file ever mentioned.
 
 The split is not decoration. Each boundary is a place where the thing being
 tested changes shape, so each module's test can be written in the terms that
@@ -30,9 +37,16 @@ grammar, whole files for the parser.
 
 ## The one thing that must stay true
 
-**Nothing here imports anything.** No `@/db`, no React, no `next/*`, no npm
-package — see `lib/gedcom.purity.test.ts`, which walks the whole import
-closure and asserts it.
+**Nothing here reaches the database.** No `@/db`, no React, no `next/*`, no
+npm package at all — see `lib/gedcom.purity.test.ts`, which walks both import
+closures, the parser's and the mapper's, and asserts it.
+
+The mapper's closure is the parser's plus the three E3-T1 validation modules
+(`lib/individual-input.ts`, `lib/union-input.ts`, `lib/child-input.ts`) and
+`lib/row-id.ts` behind them. That is the rule holding rather than bending:
+those modules are pure by construction, and the mapping writing _through_ them
+is the acceptance criterion, so the test asserts their presence as well as the
+absence of everything else.
 
 That is an acceptance criterion rather than a preference, because three later
 tickets rest on it:
@@ -70,8 +84,10 @@ in this schema has two date columns to put them in.
 | `FROM 1912`                      | `after 1912`, year precision, no upper bound  | no — nothing is lost        |
 | `TO 1918`                        | `before 1918`, year precision, no upper bound | no — nothing is lost        |
 | `BET ABT 1890 AND 1900`          | `1890` to `1900` — the `ABT` goes             | yes — the endpoint modifier |
+| `FROM ABT 1912`                  | `after 1912` — the `ABT` goes                 | yes — the endpoint modifier |
 | `BET 1890 AND (some Tuesday)`    | `after 1890` — the upper bound is unreadable  | yes — the upper bound       |
 | `INT 1890 (from baptism record)` | `about 1890`, year precision                  | yes — the phrase            |
+| `EST 1918`                       | `about 1918`, year precision                  | yes — that it was estimated |
 
 The two headline rows are the ticket: **the common range forms now raise no
 issue at all**, because nothing about them is dropped. Each endpoint keeps its
@@ -90,7 +106,8 @@ and the short version sits beside the enum in `db/schema.ts`.
 
 **`narrowed` survived this ticket with a much smaller remit.** It now means
 what its name says and nothing more: the date was read, and something beside
-it was not stored. Three cases, all in the table above. It stays a different
+it was not stored. Four kinds, in five rows of the table above — the endpoint
+modifier appears twice, once for each shape a bound comes in. It stays a different
 kind from `date` for the reason it always did — a `date` issue means the field
 is **blank** and somebody has to go and fix the file, a `narrowed` issue means
 the field is **populated and slightly poorer**, and one report cannot answer
@@ -107,18 +124,135 @@ written, with no issue from this module. Reading a file and validating against
 the schema are different jobs; `validateIndividual` is where an inverted range
 is refused, and E6-T2 is what runs it.
 
+`EST` is the fourth and the odd one out: it is not a range, its reading is
+older than `YEO-88` — `lib/parse-date.ts` has always mapped `est` onto `about`,
+because `date_qualifier` has four members and "estimated" is not one of them —
+and E6-T2 changed nothing about what is stored. What it changed is that the
+loss now has a sentence. `EST 1918` was the only lossy date form in the whole
+pipeline that went through without one, which made "how many dates did this
+import narrow" a question the report could not answer honestly. An `EST` on a
+range endpoint is reported once, by the endpoint rule, not twice.
+
 Two things a range still does not carry. **`FROM x TO y` and `BET x AND y`
 become the same row** — a period ("it lasted from") and a range ("it happened
 somewhere in") are a distinction this schema has no column for, and for a
 birth or a death the period reading is a data-entry habit rather than a claim.
 And an endpoint's own modifier goes, because a fuzzy edge on a bound of an
-interval has no reader anywhere in this application.
+interval has no reader anywhere in this application. That holds for a bound
+standing on its own as much as for one end of a pair: `FROM ABT 1912` becomes
+`after 1912` and says so. Review of E6-T2 found the one-sided forms dropping
+the modifier in silence, which had made this a rule that held for
+`BET ABT 1890 AND 1900` and quietly failed for `FROM ABT 1890` — one rule,
+both shapes.
 
 That leaves one thing worth knowing before E7-T2 (`YEO-52`) is written: **a
 third-party file's `FROM 1912 TO 1918` comes back out as `BET 1912 AND
 1918`.** The round trip that closes is export -> import -> export, which is
 what the test is for — our own output only ever writes `BET ... AND`, so it is
 stable from the first pass.
+
+## The mapping onto the three tables
+
+`lib/gedcom-map.ts` (E6-T2, `YEO-47`) takes a parsed file and gives back rows
+for `individuals`, `unions` and `union_children`, plus the report. It writes
+nothing: E6-T3 has to be able to say what an import _would_ do before it does
+any of it, so deciding what to write and writing it are separate operations,
+and this is the half that decides. E6-T4 is the half that writes.
+
+Most of it really is a rename, which is the point `docs/architecture.md` has
+been making since the data model was chosen:
+
+| GEDCOM      | This schema               |
+| ----------- | ------------------------- |
+| `INDI`      | an `individuals` row      |
+| `FAM`       | a `unions` row            |
+| `HUSB`      | `unions.partner_a_id`     |
+| `WIFE`      | `unions.partner_b_id`     |
+| `CHIL`      | a `union_children` row    |
+| `INDI.PEDI` | `union_children.relation` |
+
+A `FAM` naming only one parent maps with the other column null and no issue
+raised — nullable partner columns are exactly what
+[the data model](architecture.md#data-model) has for a child whose father
+nobody can name.
+
+**The rows carry ids minted here, not by Postgres.** `partner_a_id` and
+`union_children` are foreign keys, so the rows cannot be assembled until the
+ids exist, and `validateUnion` refuses anything not shaped like one of this
+schema's primary keys — which is precisely the check that would have to be
+skipped to pass an xref through instead. `defaultRandom()` in `db/schema.ts`
+is a default, not a constraint. E6-T4 is then one bulk insert with nothing
+left to resolve.
+
+### The four things a file does not say
+
+- **How a union ended.** `DIV` is `divorce` directly. `death` has to be
+  inferred, because a marriage ends when a partner dies and no file records
+  that as an event of the _family_ — it is an event of the person, already in
+  the tree by the time the mapping runs. Divorce wins when a file says both.
+  The inferred `death` deliberately sets **no end date**: the date is recorded
+  once, on the person who died, and copying it onto the union would make two
+  rows that have to be corrected together forever.
+- **Whether they were married.** `MARR` or `DIV` present means `marriage`;
+  neither means `unknown`. A bare `FAM` is GEDCOM's word for two people with
+  children between them and is written for unmarried couples as readily as for
+  married ones, so inferring a wedding from it would put one in the tree that
+  the file never claimed.
+- **`unions.sequence`**, which GEDCOM has no equivalent of at all. Dated
+  families in date order, undated ones after them in file order. Putting the
+  undated last is not an arbitrary tie-break: `addSpouse` already appends a new
+  union one past the highest its partners have, dated or not, so this is the
+  rule the application's own writes use. The number counts down each _person's_
+  own list, so a remarriage is 0, 1, 2 for that person rather than a position
+  in the file.
+- **Which side owns a child link.** `CHIL` is on the family and `PEDI` is on
+  the child's own `FAMC`, so one column needs two records to fill it. `FAM.CHIL`
+  stays authoritative for _which_ links exist; `PEDI` only says what kind.
+  `birth`, `adopted`, `foster` and the non-standard-but-common `step` are read;
+  `sealing` is a religious ordinance rather than a kind of parentage and is
+  recorded as `biological` with a sentence saying so.
+
+### A record the validator refuses is left out
+
+Every row goes through `validateIndividual`, `validateUnion` or
+`validateChildLink` before it is emitted, and their verdicts are final. An
+import is untrusted input in the way a form post is — more so, since nobody
+typed it — and a second, import-only set of rules is how the two paths start
+disagreeing about what a valid row is.
+
+So a person whose death date is before their birth date is **not imported**,
+and every family link to them goes with them: the family keeps its other
+partner and loses this one to a null. That is a real cost, and it is reported
+every time with the sentence the validator gave.
+
+The considered alternative was to drop the offending _field_ and re-validate —
+blank the date, keep the person. It was rejected because it is a recovery
+policy E6-T2 would be inventing on its own, and E6-T4 owns the question it
+belongs to: an all-or-nothing import may decide that any refusal fails the
+whole file, in which case a per-field rescue here is cleverness that never
+runs.
+
+`BET 1900 AND 1890` is where the two halves meet. The parser stores it exactly
+as written and raises nothing, because reading a file and judging it are
+different jobs; `validateIndividual` is what refuses an inverted range, and
+this is what runs it.
+
+### The report is the parser's, extended
+
+`issues` is the file's own list with the mapping's appended, and the file's
+half is passed through **byte for byte** — the same objects, in the same
+order. That matters most for `narrowed`: those four losses are decisions with
+reasons, already worded for the person who has to act on them, and
+re-describing them here would give one loss two spellings in one report with
+no way to tell it was one loss.
+
+The mapping's own additions are `value` (a fact with nowhere to go, a record
+refused) and `pointer` (a `HUSB`, `CHIL`, `FAMS` or `FAMC` naming a record
+that is not in the file, or one whose two halves disagree). The cross-check
+between `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own
+docblock promised: carrying both halves is only worth it if somebody
+eventually compares them. It says nothing about a file whose halves agree,
+which is every well-formed file.
 
 ## Nothing is dropped in silence
 
