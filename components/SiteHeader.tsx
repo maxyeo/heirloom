@@ -50,21 +50,24 @@ export function SiteHeader({
       </Link>
 
       {/*
-        The search slot. **E8-T3** replaces this element with the real search
-        box; it is here now so that the header's proportions are the ones the
-        shell was designed with rather than something that shifts when search
-        lands.
+        The search slot. It was an inert `aria-hidden` box until E8-T2
+        (`YEO-56`), on the reasoning that a control which looks like search
+        and does nothing is a worse promise than one that is not announced at
+        all — which was right for exactly as long as there was nowhere for it
+        to go. `/search` now exists, so the same reasoning points the other
+        way: the honest thing is a link to it.
 
-        Inert and `aria-hidden`: a box that looks like search and does nothing
-        is a worse promise to a screen reader than one that is not announced at
-        all. It is not focusable, so nothing lands on it by tabbing either.
+        **E8-T3** still replaces this with the real box, typing in the header
+        with suggestions underneath. A link is the smallest thing that makes
+        search reachable in the meantime, and it keeps the proportions the
+        shell was designed with either way.
       */}
-      <div
-        aria-hidden="true"
-        className="min-w-0 flex-1 truncate rounded-panel border border-rule-soft px-2 py-1 text-caption text-ink-muted sm:max-w-96"
+      <Link
+        href="/search"
+        className="min-w-0 flex-1 truncate rounded-panel border border-rule-soft px-2 py-1 text-caption text-ink-muted hover:text-ink hover:no-underline sm:max-w-96"
       >
         Search {name}
-      </div>
+      </Link>
 
       <AccountMenu
         name={viewerName}
