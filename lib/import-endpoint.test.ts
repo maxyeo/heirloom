@@ -6,12 +6,12 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
-  IMPORT_PENDING_MESSAGE,
-  IMPORT_PENDING_TICKET,
   type ImportResponse,
+  isImportDone,
   isImportPreview,
 } from "@/lib/import-endpoint";
 import type { ImportPreview } from "@/lib/import-preview";
+import type { ImportReport } from "@/lib/import-report";
 
 /**
  * The import contract (E6-T3, `YEO-48`).
@@ -56,30 +56,38 @@ describe("narrowing an answer", () => {
     preview: {} as ImportPreview,
   } as const;
 
+  const done = {
+    stage: "imported",
+    report: {} as ImportReport,
+  } as const;
+
   it("recognises a preview", () => {
     expect(isImportPreview(preview)).toBe(true);
   });
 
-  it("does not mistake a refusal for one", () => {
+  it("recognises a finished import", () => {
+    expect(isImportDone(done)).toBe(true);
+  });
+
+  it("keeps the two stages apart", () => {
+    // The distinction the whole two-request shape rests on: one of these
+    // wrote nothing and the other wrote everything, and a screen that
+    // confused them would tell somebody their tree was untouched when it was
+    // not.
+    expect(isImportPreview(done)).toBe(false);
+    expect(isImportDone(preview)).toBe(false);
+  });
+
+  it("does not mistake a refusal for either", () => {
     const refusals: ImportResponse[] = [
       { error: "That file is too large." },
-      { error: IMPORT_PENDING_MESSAGE, pendingTicket: IMPORT_PENDING_TICKET },
+      { error: "The import did not finish, and nothing was written." },
     ];
 
-    for (const refusal of refusals)
+    for (const refusal of refusals) {
       expect(isImportPreview(refusal)).toBe(false);
-  });
-});
-
-describe("the seam E6-T4 fills", () => {
-  it("names the ticket and says plainly that nothing was written", () => {
-    // `lib/site-nav.ts` set this convention for the sidebar's one unbuilt
-    // destination: something that looks live and is not is worse than
-    // something that plainly says "later". The property that matters is not
-    // which ticket is named but that the refusal says what happened to the
-    // data, which is nothing.
-    expect(IMPORT_PENDING_TICKET).toMatch(/^E\d+-T\d+$/);
-    expect(IMPORT_PENDING_MESSAGE).toContain("Nothing was written");
+      expect(isImportDone(refusal)).toBe(false);
+    }
   });
 });
 

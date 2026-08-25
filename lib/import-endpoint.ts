@@ -1,3 +1,4 @@
+import type { ImportReport } from "./import-report";
 import type { ImportPreview } from "./import-preview";
 
 /**
@@ -77,30 +78,43 @@ export type ImportPreviewResponse = {
 };
 
 /**
+ * The answer to a confirmed import that ran: the rows are in the tree.
+ *
+ * A stage of its own rather than a bare `200`, because the reader has just
+ * handed over a file they cannot see the inside of and "it worked" is not an
+ * answer to *what did it do*. E6-T5 (`YEO-50`) is what that answer is: the
+ * whole report travels back with the `200`, because it describes bytes that
+ * exist only inside the request that produced it and there is nowhere to go
+ * and ask for it afterwards.
+ */
+export type ImportDoneResponse = {
+  stage: "imported";
+  /**
+   * What the import did, in full: created, skipped, approximated, and the
+   * tags this application does not read.
+   *
+   * Bounded, which matters on this side of the wire — `REPORT_ROWS_SHOWN` in
+   * `lib/import-report.ts` is the reason a file of pure noise cannot produce
+   * a response the platform refuses to send.
+   */
+  report: ImportReport;
+};
+
+/**
  * The answer to anything this endpoint will not do, at any stage.
  *
  * One shape for every refusal — too large, not a multipart form, a digest
- * that does not match — because the screen does the same thing with all of
- * them: show the sentence. The HTTP status carries the distinction for
- * anything that is not a person reading a screen.
+ * that does not match, an import that failed — because the screen does the
+ * same thing with all of them: show the sentence. The HTTP status carries the
+ * distinction for anything that is not a person reading a screen.
  */
 export type ImportRefusal = {
   /** A sentence for the person who picked the file. */
   error: string;
-  /**
-   * The ticket that will make this work, when the refusal is *not yet* rather
-   * than *no*.
-   *
-   * `lib/site-nav.ts` set this convention for the sidebar's unbuilt
-   * destination and the reasoning is the same one: something that looks live
-   * and is not is worse than something that plainly says "later". A refusal
-   * carrying a ticket is not a failure the reader caused and there is nothing
-   * for them to fix; saying so is more useful than an apology.
-   */
-  pendingTicket?: string;
 };
 
-export type ImportResponse = ImportPreviewResponse | ImportRefusal;
+export type ImportResponse =
+  ImportPreviewResponse | ImportDoneResponse | ImportRefusal;
 
 /** Whether an answer is a preview, for a caller narrowing one. */
 export function isImportPreview(
@@ -109,24 +123,9 @@ export function isImportPreview(
   return "stage" in response && response.stage === "preview";
 }
 
-/**
- * The ticket that writes the rows.
- *
- * E6-T3 owns everything up to and including the moment of consent: the
- * upload, the parse, the preview, the cancel, and the confirming request that
- * proves it is confirming *this* file. What it deliberately does not own is
- * the write — E6-T4 (`YEO-49`) is "all or nothing, any failure rolls back
- * completely", and a plain sequence of inserts added here to make a button
- * feel finished is the exact half-imported tree that ticket exists to
- * prevent: it looks like data, so nobody re-runs it.
- *
- * So the confirming branch of `app/api/import/route.ts` answers `501` and
- * names this, and every acceptance criterion of *this* ticket is true in the
- * strongest possible sense — nothing anywhere on this path can write.
- */
-export const IMPORT_PENDING_TICKET = "E6-T4";
-
-/** What the endpoint says when a confirmed import has nowhere to go yet. */
-export const IMPORT_PENDING_MESSAGE =
-  "Nothing was written. Reading a file is finished; writing one is E6-T4, " +
-  "which lands the import as a single transaction that rolls back whole.";
+/** Whether an answer is a finished import, for a caller narrowing one. */
+export function isImportDone(
+  response: ImportResponse,
+): response is ImportDoneResponse {
+  return "stage" in response && response.stage === "imported";
+}
