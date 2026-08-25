@@ -342,12 +342,38 @@ confirming the tree renders before you put a real family in, and useless
 afterwards.
 
 **It deletes every row first**, with no confirmation and nothing to undo it.
-Against anything other than a local host it refuses to run unless
-`SEED_ALLOW_DESTRUCTIVE` names the exact `user@host` pair the connection uses;
-the refusal message prints the value to set, so copy it rather than guess.
-`db/seed-guard.ts` has the reasoning. Run it from your own machine against the
-production database only if the database is genuinely empty, and never again
-after that.
+Run it against the deployed database only if that database is genuinely
+empty, and never again after that.
+
+There is no way to run it from the deploy — it is a local script, pointed at
+production deliberately. Set `PRODUCTION_DATABASE_URL` in your `.env.local` to
+the transaction pooler string, then name the target on the command line:
+
+```bash
+DATABASE_TARGET=production npm run db:seed
+```
+
+`DATABASE_TARGET` is what makes `DATABASE_URL` resolve to that variable for
+this one command, so your everyday `DATABASE_URL` is never edited to reach
+production — the same switch [Reaching production
+deliberately](../README.md#reaching-production-deliberately) describes. Plain
+`npm run db:seed` would wipe whatever your `.env.local` currently points at,
+which for most people is their own development database.
+
+The first attempt will refuse. Against anything other than a local host the
+script requires `SEED_ALLOW_DESTRUCTIVE` to name the exact `user@host` pair
+the connection uses — hostname alone is not enough on Supabase's shared
+pooler, where the project is in the username. The refusal message prints the
+exact value to set, so copy it from there rather than guessing at the format,
+and prefix the command with it:
+
+```bash
+SEED_ALLOW_DESTRUCTIVE=postgres.<project-ref>@<pooler-host> \
+  DATABASE_TARGET=production npm run db:seed
+```
+
+`db/seed-guard.ts` has the reasoning, including why the override names a
+target rather than being a boolean flag.
 
 Most deployments should skip this step entirely and start with an empty wiki.
 
