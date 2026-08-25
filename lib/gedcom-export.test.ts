@@ -19,6 +19,7 @@ import {
   writeGedcom,
 } from "@/lib/gedcom-export";
 import { mapGedcom } from "@/lib/gedcom-map";
+import { rowsFromMapping } from "@/lib/import-rows";
 import { SEXES, type Sex } from "@/lib/individual-input";
 
 /**
@@ -90,7 +91,16 @@ function id(n: number): string {
   return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 }
 
-/** Export, import, and map back — the pipeline, both directions. */
+/**
+ * Export, import, and map back — the pipeline, both directions.
+ *
+ * The flattening is `rowsFromMapping` rather than three `map` calls here,
+ * because that is the one `lib/gedcom-import.ts` inserts from. It used to be
+ * written out, and had already drifted: it spread `union.values` without
+ * `sequence ?? 0`. Harmless, since `mapGedcom` always supplies a number —
+ * and harmless is how this kind of copy starts. E7-T2 (`YEO-52`) split the
+ * function out so there is one answer to "what does an import write".
+ */
 function roundTrip(tree: GedcomExportInput) {
   const text = writeGedcom(tree);
   const mapped = mapGedcom(parseGedcomText(text));
@@ -99,17 +109,7 @@ function roundTrip(tree: GedcomExportInput) {
     text,
     mapped,
     /** The mapped rows, flattened back into the shape the exporter takes. */
-    input: {
-      individuals: mapped.individuals.map((individual) => ({
-        id: individual.id,
-        ...individual.values,
-      })),
-      unions: mapped.unions.map((mappedUnion) => ({
-        id: mappedUnion.id,
-        ...mappedUnion.values,
-      })),
-      unionChildren: mapped.unionChildren,
-    } satisfies GedcomExportInput,
+    input: rowsFromMapping(mapped) satisfies GedcomExportInput,
   };
 }
 
@@ -501,6 +501,67 @@ describe("families", () => {
     });
 
     expect(text).not.toContain("1 MARR");
+  });
+
+  it.each(["unknown", "partnership"] as const)(
+    "writes MARR beside DIV for a %s that ended in divorce",
+    (type) => {
+      /**
+       * Found by E7-T2 (`YEO-52`), which is the ticket that round-trips this
+       * module's output back through the import and compares the bytes.
+       *
+       * `writeMarriage` is documented as the reverse of `unionType` in
+       * `lib/gedcom-map.ts`, and it was not: that function reads `marriage`
+       * from `MARR` **or `DIV`**, on the stated grounds that "nothing
+       * divorces that was not married", while this side considered only the
+       * type and the start date. So a union that was not a `marriage`, had no
+       * start date and ended in a divorce was written as a bare `DIV` — a
+       * file claiming a couple divorced without ever claiming they married,
+       * which no reader can make sense of and which our own importer read
+       * back as a marriage. The second export then grew a `MARR Y` the first
+       * did not have.
+       *
+       * The narrowing is real either way: GEDCOM cannot hold "a partnership
+       * that ended in divorce", so this reads back as a marriage. Writing the
+       * `MARR` is the export saying so in the file rather than leaving the
+       * reader to infer it — which makes the trip close on the first pass
+       * instead of the second, and makes the file mean the same thing to
+       * Gramps as it does to us.
+       */
+      const divorced = {
+        ...married,
+        type,
+        startDate: null,
+        endReason: "divorce",
+        endDate: null,
+      } as const;
+
+      const text = writeGedcom({ ...tree, unions: [divorced] });
+
+      expect(text).toContain("1 MARR Y\r\n1 DIV Y\r\n");
+
+      const { input } = roundTrip({ ...tree, unions: [divorced] });
+      expect(input.unions[0].endReason).toBe("divorce");
+      expect(writeGedcom(input)).toBe(text);
+    },
+  );
+
+  it("writes MARR before a dated DIV too, so the file is not self-contradictory", () => {
+    const text = writeGedcom({
+      ...tree,
+      unions: [
+        {
+          ...married,
+          type: "unknown",
+          startDate: null,
+          endReason: "divorce",
+          endDate: "1920-01-01",
+          endDatePrecision: "year",
+        },
+      ],
+    });
+
+    expect(text).toContain("1 MARR Y\r\n1 DIV\r\n2 DATE 1920\r\n");
   });
 
   it("leaves the column null for a partner the file does not name", () => {

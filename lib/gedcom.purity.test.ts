@@ -46,6 +46,15 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 /**
  * The public entry points. Everything either one reaches is in scope.
  *
+ * Five of them since E7-T2 (`YEO-52`). `lib/import-rows.ts` is the fifth, and
+ * it is the smallest and the one most easily undone: it flattens a mapping
+ * into the rows the three tables take, and it exists on this side of the line
+ * only so that E7-T2 can round-trip an export through *the real import* with
+ * no database. It would be entirely natural for somebody to reach for
+ * `schema` in it one day to widen a column's default, and the round trip
+ * would stop being runnable in `npm test` the moment they did. Being an entry
+ * point here is what makes that a failing test rather than a discovery.
+ *
  * Four of them since E7-T1 (`YEO-51`), and the fourth is what the other three
  * were kept pure *for*. `lib/gedcom-export.ts` writes the rows back out as a
  * file, and E7-T2 (`YEO-52`) round-trips export through import and compares
@@ -76,6 +85,7 @@ const ENTRIES = {
   mapper: join("lib", "gedcom-map.ts"),
   preview: join("lib", "import-preview.ts"),
   exporter: join("lib", "gedcom-export.ts"),
+  importRows: join("lib", "import-rows.ts"),
 } as const;
 
 /**
@@ -279,6 +289,47 @@ describe("the preview's import closure", () => {
     // preview that counted rows its own way would still typecheck, and would
     // quietly start describing an import that E6-T4 does not perform.
     expect(files).toContain(join("lib", "gedcom-map.ts"));
+  });
+});
+
+describe("the import's row-building closure", () => {
+  const { files, packages } = closure(ENTRIES.importRows);
+
+  it("is types and nothing else", () => {
+    // Every one of these is imported for a *type*, which is what makes this
+    // closure so small: the module renames fields and supplies one default.
+    // It decides nothing, so it needs nothing.
+    expect(files.sort()).toEqual(
+      [
+        join("lib", "ansel.ts"),
+        join("lib", "child-input.ts"),
+        join("lib", "field-input.ts"),
+        join("lib", "gedcom-encoding.ts"),
+        join("lib", "gedcom-lines.ts"),
+        join("lib", "gedcom-map.ts"),
+        join("lib", "gedcom-report.ts"),
+        join("lib", "gedcom.ts"),
+        join("lib", "import-rows.ts"),
+        join("lib", "individual-input.ts"),
+        join("lib", "parse-date.ts"),
+        join("lib", "row-id.ts"),
+        join("lib", "union-input.ts"),
+      ].sort(),
+    );
+  });
+
+  it("imports no package at all", () => {
+    expect(packages.filter((name) => !ALLOWED.has(name))).toEqual([]);
+  });
+
+  it("never reaches the database", () => {
+    // `lib/gedcom-import.ts` is the half that does, and it is not in here —
+    // which is the entire reason this module was split out of it.
+    for (const file of files) {
+      expect(read(file)).not.toContain('from "@/db');
+      expect(read(file)).not.toContain('from "./db');
+      expect(read(file)).not.toContain("drizzle-orm");
+    }
   });
 });
 

@@ -25,6 +25,7 @@ through them:
 | `lib/gedcom-lines.ts`    | text          | a tree of tagged nodes                  |
 | `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
+| `lib/import-rows.ts`     | that          | those rows, flattened for `insert`      |
 | `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
 
 And three on the way back out:
@@ -279,6 +280,11 @@ which is every well-formed file.
 `lib/gedcom-import.ts` (E6-T4, `YEO-49`) takes a mapping and writes it into
 `individuals`, `unions` and `union_children` — all of it, or none of it.
 
+It is the transaction and nothing else. The rows themselves come from
+`lib/import-rows.ts`, on the pure side of the database line, so that E7-T2 can
+round-trip an export through the real import without a database — see
+[Proving the export is real](#proving-the-export-is-real).
+
 ### All or nothing is a property of the _write_
 
 The reason the ticket exists: a half-imported tree is worse than no import,
@@ -463,18 +469,28 @@ deliberately does not have, and hiding a broken row rather than surfacing it.
 
 ### What a first export narrows
 
-Three states the schema can hold and GEDCOM cannot. All three lose the same
-thing the import side would have lost anyway, all three are **stable from the
-second pass on**, and none of them is silent in the sense that matters: the
-loss is a property of the format, written down here, rather than of a
+Four states the schema can hold and GEDCOM cannot. All of them lose the same
+thing the import side would have lost anyway, all of them are **stable from
+the first export on**, and none of them is silent in the sense that matters:
+the loss is a property of the format, written down here, rather than of a
 particular file.
 
-| The schema says                       | The file says     | Read back as               |
-| ------------------------------------- | ----------------- | -------------------------- |
-| `type` `partnership`, with a date     | `MARR` and a date | `marriage`                 |
-| `type` `partnership`, undated         | nothing           | `unknown`                  |
-| `end_reason` `separation` / `unknown` | nothing           | `ongoing`, or `death`      |
-| `sequence`                            | nothing           | re-derived from file order |
+| The schema says                        | The file says      | Read back as               |
+| -------------------------------------- | ------------------ | -------------------------- |
+| `type` `partnership`, with a date      | `MARR` and a date  | `marriage`                 |
+| `type` not `marriage`, ended `divorce` | `MARR Y` and `DIV` | `marriage`                 |
+| `type` `partnership`, undated          | nothing            | `unknown`                  |
+| `end_reason` `separation` / `unknown`  | nothing            | `ongoing`, or `death`      |
+| `sequence`                             | nothing            | re-derived from file order |
+
+The second row is the one E7-T2 (`YEO-52`) found, and it was a defect before
+it was a narrowing. `DIV` without `MARR` is a file saying a couple divorced
+and never saying they married — incoherent to any reader, and read back by
+`lib/gedcom-map.ts` as a marriage on the stated grounds that "nothing divorces
+that was not married". So the narrowing was already happening; it was simply
+invisible until the second export, which grew a `MARR Y` the first did not
+have. Writing the `MARR` makes the file state the narrowing rather than leave
+a reader to infer it, and closes the round trip on the first pass.
 
 `end_reason` `divorce` is `DIV` directly, and `death` is deliberately not
 written: `lib/gedcom-map.ts` infers it back from the partners' own death dates,
@@ -512,6 +528,83 @@ submitter record it names — both mandatory in 5.5.1, and both checked by the
 strict validators. The submitter is the application rather than a person:
 nothing in this schema records who exported a file, and inventing a name for
 them would be worse than naming the program that wrote it.
+
+## Proving the export is real
+
+`lib/gedcom-round-trip.test.ts` (E7-T2, `YEO-52`) exports a tree, imports the
+file, and exports it again — and requires the two texts to be **identical, byte
+for byte**. `test/gedcom-round-trip.ts` is the harness and the diff.
+
+Everything else in E7 is plumbing. This is the one that turns "we have an
+export feature" into "the family can actually leave", because an export that
+loses a generation is worse than no export at all: nobody discovers it until
+they need it.
+
+### The property is a fixed point, not a comparison with the input
+
+It is deliberately not "the second export equals the file you imported", and
+it could not be. A first export narrows in the four places above, and a period
+(`FROM 1874 TO 1876`) is stored identically to a range and written back as
+`BET 1874 AND 1876` — so a file using periods is not byte-identical to its own
+first export and never will be.
+
+What the fixed point says instead is that the loss happens **once**. Whatever
+the first export fails to say, it fails to say the same way forever, and a
+family who export, re-import and export again get their file back rather than
+a slightly smaller one each time. Anything the file says in a way the parser
+reads differently shows up on the second pass, which is precisely the defect
+class this catches and the reason a test that only checked "the rows survived"
+would not.
+
+### The middle of the trip is the real import
+
+`lib/gedcom-import.ts` opens a transaction, so a test cannot call it without a
+database and `npm test` must never need one. But a round trip through an
+import nobody runs proves nothing.
+
+So `lib/import-rows.ts` is the part that decides what the rows _are_, split out
+onto the pure side of the line — the same split `lib/import-batches.ts` made
+for the same reason. `lib/gedcom-import.ts` is now the transaction and nothing
+else, every value it writes comes from `rowsFromMapping`, and the round trip
+goes through that same function. `lib/gedcom-round-trip.test.ts` asserts the
+call still exists, because a copy inlined back into the import is how the
+tested pipeline and the real one quietly stop being the same pipeline.
+
+### Failures name the record
+
+A bare byte comparison of two multi-kilobyte files is not a usable failure:
+the reader gets two walls of text and has to count `0 @I…@` lines by hand to
+find out whose record went missing. Since the point of this test is that
+somebody will one day run it against a real family's file, the report is part
+of the deliverable.
+
+`diffGedcom` compares the two exports as **records** rather than as characters
+— a GEDCOM file is a flat list of level-0 records with an identifier on each,
+which is a structure a diff can key on. The four things that can go wrong each
+get a sentence naming the xref:
+
+| Kind      | What it means                                      |
+| --------- | -------------------------------------------------- |
+| `missing` | a record in the first export and not in the second |
+| `added`   | a record in the second export and not in the first |
+| `changed` | the same record, with a line that differs          |
+| `moved`   | the same records, in a different order             |
+
+There is a fifth, `unlocated`, for the case where the two texts differ and no
+record does. It should be unreachable, and it exists so that a blind spot in
+the diff reports itself rather than passing as success.
+
+### What it runs against
+
+The seeded family (`db/seed-family.ts`), because it is the graph the data
+model was designed around and the only one in the repository with a remarriage
+chain — the case where a dropped union severs a branch and still leaves a file
+that looks like a family tree. The dirty third-party fixture, because clean
+input is not the case that breaks. The other fixtures, because they are cheap.
+And 500 seeded generated trees, canonicalised through `validateIndividual` and
+`validateUnion` so the domain is every tree this application can actually
+hold — which is what found the `DIV`-without-`MARR` defect, a combination
+neither fixture happened to contain.
 
 ## Nothing is dropped in silence
 
@@ -679,6 +772,28 @@ to the assertion about them read better than a file you have to open.
 | `continuations-crlf.ged` | `\r\n`, `CONC`, `GIVN`/`SURN`, unknown tags        |
 | `accents-utf8.ged`       | Accented names in UTF-8                            |
 | `accents-ansel.ged`      | The same content, byte for byte, in ANSEL          |
+| `dirty-third-party.ged`  | Everything a real export gets wrong at once        |
+
+`dirty-third-party.ged` is **synthetic**, and that is worth saying plainly: it
+is written to look like the output of a mid-2000s Windows genealogy program
+rather than taken from one. A real family's file is not ours to commit, and
+the public sample files are either trivially clean or a torture test whose
+subject is the parser rather than the round trip.
+
+What makes it a fair subject is that every piece of dirt in it is dirt this
+pipeline has actually met, and `lib/gedcom-round-trip.test.ts` asserts each
+one by the issue it provokes — so the fixture cannot quietly stop being dirty.
+It carries a byte order mark, a `CHAR ANSI` declaration that contradicts it, a
+`GEDC VERS 5.5`, line endings that change from CRLF to LF halfway through, a
+`31 FEB`, a date reading `UNKNOWN`, a range whose bounds are the wrong way
+round, `1 NAME //`, two `NAME` records on one person, a `SEX ?`, a `PEDI
+sealing`, a `CHIL` repeated, a `CHIL` naming a record that does not exist, a
+`CHIL` naming one of the family's own partners, a `FAM` with no partner at
+all, a `FAMC` pointing at a missing family, a `DIV` with no `MARR`, vendor
+tags (`_UID`, `_STAT`, `RFN`, `OBJE`, `CHAN`), a `NOTE` folded over `CONC` and
+`CONT`, places padded with repeated internal spaces, an empty `PLAC`, a
+`FROM x TO y` period, and two people who are identical in every field the
+export sorts on.
 
 The last two are a matched pair, and that is what makes the binary one
 reviewable: the test asserts the two parse to **identical** individuals, so
