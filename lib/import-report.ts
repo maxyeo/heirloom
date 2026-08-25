@@ -57,10 +57,13 @@ import {
  * route serving the file would need either a third upload of the same `.ged`
  * or somewhere to stash the parse — and `lib/import-endpoint.ts` already
  * rejected stashing by name, because it needs a store the preview must not
- * touch and turns a cancelled import into something to clean up later. E7-T3
- * (`YEO-53`) is the opposite case and should not copy this one: the bytes it
- * downloads live in the database, so a route with a `Content-Disposition` is
- * the obvious answer there.
+ * touch and turns a cancelled import into something to clean up later.
+ *
+ * `app/api/export/gedcom/route.ts` (E7-T3, `YEO-53`) is the opposite case and
+ * does the opposite thing — a route handler with a `Content-Disposition`, no
+ * client component, working with JavaScript off. The two are not a
+ * disagreement about downloads: the difference is that its file exists in the
+ * database and this one exists only for the length of one request.
  *
  * ## Pure, and outside the import closures
  *

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { viewerInitials, viewerLabel } from "@/lib/viewer";
 
 /**
@@ -7,7 +9,17 @@ import { viewerInitials, viewerLabel } from "@/lib/viewer";
  * with no hydration cost and it works before — and without — JavaScript. The
  * trade is that it does not close on an outside click; the summary toggles it
  * back, and Escape closes it in browsers that implement that for `<details>`.
- * Worth revisiting if the menu ever holds more than one item.
+ *
+ * ## Why settings is here
+ *
+ * E7-T3 (`YEO-53`) needed a way in to `/settings`, and this menu is the second
+ * item the note above anticipated. It is not in the sidebar: those four links
+ * are the E11 reference mockup's, in the mockup's order, and `lib/site-nav.ts`
+ * is asserted to be exactly them — adding a fifth is a decision about the
+ * shell rather than about settings. `app/tree/page.tsx` makes the same call
+ * for the import link, from the other direction. An account menu is also where
+ * a reader looks for their own settings, which is the better argument of the
+ * two.
  *
  * The sign-out action arrives as a prop. `components/` stays clear of
  * `@/auth`, which is what keeps anything in here mountable in a suite that has
@@ -47,6 +59,15 @@ export function AccountMenu({
             Signed in as {email}
           </p>
         ) : null}
+
+        <p className="mt-2">
+          <Link
+            href="/settings"
+            className="text-note text-link hover:underline"
+          >
+            Settings
+          </Link>
+        </p>
 
         <form action={signOutAction} className="mt-2">
           <button type="submit" className="text-note text-link hover:underline">

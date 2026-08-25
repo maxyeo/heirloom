@@ -9,8 +9,9 @@ This page covers the **parser** — E6-T1 (`YEO-46`), the read half — the
 **mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
 (`YEO-47`), the **preview** somebody reads before an import happens, which is
 E6-T3 (`YEO-48`), the **write**, which is E6-T4 (`YEO-49`), the **report**
-afterwards, which is E6-T5 (`YEO-50`), and the **export** back out, which is
-E7-T1 (`YEO-51`).
+afterwards, which is E6-T5 (`YEO-50`), the **export** back out, which is E7-T1
+(`YEO-51`), and the **download** that puts it in somebody's hands, which is
+E7-T3 (`YEO-53`).
 
 ## The pipeline
 
@@ -27,12 +28,13 @@ through them:
 | `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
 | `lib/import-report.ts`   | all of it     | an account of what the import did       |
 
-And two on the way back out:
+And three on the way back out:
 
-| Module                 | Takes                     | Gives       |
-| ---------------------- | ------------------------- | ----------- |
-| `lib/export-tree.ts`   | the database              | rows        |
-| `lib/gedcom-export.ts` | rows for the three tables | GEDCOM text |
+| Module                   | Takes                     | Gives                  |
+| ------------------------ | ------------------------- | ---------------------- |
+| `lib/export-tree.ts`     | the database              | rows                   |
+| `lib/gedcom-export.ts`   | rows for the three tables | GEDCOM text            |
+| `lib/export-endpoint.ts` | the moment of the request | a filename and headers |
 
 `lib/gedcom-report.ts` holds the vocabulary the reading modules use to say what
 they could not use. The export has no equivalent and needs none: it is writing
@@ -508,10 +510,12 @@ of each section, and `formatImportReport` turns the same value into the plain
 text somebody keeps. Plain text because its reader has a `.ged` open in an
 editor and needs line numbers and xrefs they can search for.
 
-**E7-T3 (`YEO-53`) should not copy this.** The bytes it downloads live in the
-database, so a route with a `Content-Disposition` is the obvious answer there,
-and the reason this one is different is the statelessness rather than a
-preference about downloads.
+**E7-T3 (`YEO-53`) does the opposite, and rightly.** Its bytes live in the
+database, so [downloading it](#downloading-it) is a route handler with a
+`Content-Disposition: attachment` and no client component at all — which even
+works with JavaScript off. The two are not a disagreement about how downloads
+should work: the difference is entirely that one file exists in the database
+and the other exists only for the length of one request.
 
 ## Writing it back out
 
@@ -743,6 +747,38 @@ it as `value` alongside unrelated findings and the only way to pull it back
 out of `issues` would be to match on the wording of a sentence somebody should
 be free to reword. The `value` group then skips one issue per line the derived
 group claims, so one loss does not get two spellings on one screen.
+
+## Downloading it
+
+`/settings` is where a family takes the tree with them (E7-T3, `YEO-53`).
+`app/api/export/gedcom/route.ts` answers the button: session guard,
+`exportTreeAsGedcom()`, and a `Content-Disposition: attachment` on the way
+back. A route handler rather than a Server Action, for a plainer reason than
+[the import screen](#why-the-file-is-uploaded-twice) had — an action returns a
+value to React, and a download needs a URL an `<a>` can point at. No client
+component is involved, and the page works with JavaScript off.
+
+The file is named `family-tree-YYYY-MM-DD.ged`, dated in UTC by
+`lib/export-endpoint.ts`. The date is in the _name_ and deliberately not in the
+_file_: the exporter writes no timestamp, because
+[E7-T2 compares bytes](#deterministic-because-e7-t2-compares-bytes), while a
+folder of downloads is unreadable without one. ISO order so that folder sorts
+chronologically by name.
+
+### The caveat is part of the feature
+
+Someone will treat this file as a backup. It is not one, and the place to say
+so is the page it is downloaded from rather than this document — which is why
+the sentences live in `lib/export-options.ts` beside the link, and why
+`lib/export-options.test.ts` asserts them. A GEDCOM holds the tree and has
+nowhere to put a wiki: not the text of an entry, not the history of edits to
+it, and not a single photograph.
+
+E7-T4 (`YEO-54`) is the export that covers those, and until it lands the note
+says so in as many words rather than pointing at something that is not there.
+The second entry in `exportOptions` is that backup, listed and inert — the
+`lib/site-nav.ts` convention for a destination that does not exist yet — so
+E7-T4 sets an `href`, drops a `pendingTicket`, and rewrites one sentence.
 
 ## Character encoding
 
