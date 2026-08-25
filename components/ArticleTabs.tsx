@@ -43,6 +43,29 @@ import { articleTabsForPath, type ArticleTab } from "@/lib/article-tabs";
  * Escape** — so the two dismissals a menu is expected to have are added below,
  * and they are enhancements rather than the mechanism: with scripting off the
  * menu still opens and the summary still closes it.
+ *
+ * ## Why this Escape listener is not on the shared surface stack
+ *
+ * `YEO-83` collapsed every other `document` Escape handler in the app into
+ * `components/surface-stack.ts`, which registers a surface while it is mounted
+ * and asks only the topmost one. This menu does not fit that shape, and the
+ * reason is the element rather than the ticket. `<details>` holds its own open
+ * bit, and this component deliberately never mirrors it into React state — so
+ * there is no mount and unmount for a registration to hang on. Registering
+ * while the component is merely *rendered* would put a surface on the stack on
+ * every article page whose dismissal does nothing, which is precisely the
+ * "something else answered the Escape" problem the ticket exists to remove.
+ *
+ * Mirroring `.open` into state to get that mount was tried and rejected: the
+ * `toggle` event is queued rather than dispatched synchronously, so React
+ * would learn the menu had opened a task later than the reader did, and the
+ * first Escape after opening it would find nothing registered. A second copy
+ * of the open bit that is briefly wrong is worse than a second listener that
+ * is always right.
+ *
+ * The listener below is therefore the one that stayed, and it is not the
+ * problem the ticket describes: it bails unless *this* menu is open, and this
+ * menu is never on screen at the same time as any of the canvas surfaces.
  */
 
 /** So the overflow trigger and its menu are related by more than adjacency. */
@@ -107,7 +130,8 @@ export function ArticleTabs({ pathname }: { pathname: string }) {
   const menuRef = useRef<HTMLDetailsElement>(null);
 
   /**
-   * Escape closes the overflow menu and puts focus back on the trigger.
+   * Escape closes the overflow menu and puts focus back on the trigger. See
+   * the header for why this one listener is not on the shared surface stack.
    *
    * On the document rather than on the `<details>`, so it works from wherever
    * focus is when the menu is open — including the trigger itself, which is

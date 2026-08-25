@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useRef } from "react";
 
+import { useDismissableSurface } from "@/components/surface-stack";
+
 /**
  * A modal dialogue over the tree canvas: a backdrop, a titled surface, and the
  * three keyboard behaviours `aria-modal="true"` promises.
@@ -11,11 +13,10 @@ import { useEffect, useId, useRef } from "react";
  * E3-T8 (`YEO-36`) wrote this as `RemovalDialog`, private to
  * `components/PersonRemoval.tsx`, because it was the only dialogue on the
  * canvas. E3-T3's edit form is the second, and it wants the same three
- * things for the same reasons — the Escape capture below is not a nicety but
- * a fix for a specific collision with `components/PersonPanel.tsx`, and a
- * second hand-written copy of it is how the two dialogues end up disagreeing
- * about which one Escape closes. So it moved here whole; the removal
- * confirmation is unchanged and still renders exactly this markup.
+ * things for the same reasons — a second hand-written copy of them is how two
+ * dialogues end up disagreeing about which one Escape closes. So it moved here
+ * whole; the removal confirmation is unchanged and still renders exactly this
+ * markup.
  *
  * What deliberately did *not* move is any opinion about what dismissing means.
  * `onClose` is the caller's: the removal dialogue can be dismissed by a stray
@@ -30,19 +31,30 @@ import { useEffect, useId, useRef } from "react";
  * would be clipped to a 320px column. Nothing between here and the viewport
  * sets a transform, so `fixed` means the viewport.
  *
- * ## The Escape key, and why it is captured
+ * ## Escape and Tab, and where they are decided now
  *
- * `components/PersonPanel.tsx` listens for Escape on `document` and closes the
- * panel. Both dialogues that use this are opened from inside that panel, so an
- * Escape meant for the dialogue would bubble to the same listener and close
- * both — the author would dismiss a confirmation and lose the record they were
- * reading in one keystroke.
+ * This dialogue registers itself on the shared surface stack (`YEO-83`) and
+ * declares itself modal. Two things follow, and neither is this file's
+ * arithmetic any more: Escape reaches `onClose` only while this is the
+ * *topmost* surface, and Tab is genuinely confined to `surfaceRef`.
  *
- * A capture-phase listener on `document` runs before any bubble-phase listener
- * on `document`, so stopping propagation here means the panel's handler never
- * sees the event. That is a deliberate coupling to a real behaviour of the
- * panel rather than a defensive flourish, and both dialogues' tests pin it —
- * it is exactly the kind of thing that would quietly stop working.
+ * What that replaced is worth recording, because it is the one-off this ticket
+ * generalised. Both dialogues here open from inside `components/PersonPanel.tsx`,
+ * which used to run a `document` Escape listener of its own — so an Escape
+ * meant for the dialogue closed the record behind it too, and the author lost
+ * the page they were reading while dismissing a confirmation. The fix was a
+ * capture-phase listener here plus `stopPropagation`, which is to say: this
+ * component reached out and silenced a specific other component. It worked for
+ * that pair, in that direction, and did nothing for the three canvas forms
+ * that had no Escape at all. There is one listener now, and nothing to stop.
+ *
+ * The focus trap went the same way, and it was the more serious of the two.
+ * `aria-modal="true"` below tells assistive tech that everything outside is
+ * inert; the hand-written trap wrapped at the two ends of the tab order and
+ * pulled focus in off the heading, but focus sitting on the button *behind*
+ * the backdrop — where a click leaves it — tabbed straight out into the panel
+ * underneath. `nextTrapIndex` in `lib/surface-stack.ts` is that missing branch,
+ * with a test on it.
  */
 export interface ModalDialogProps {
   /**
@@ -53,10 +65,27 @@ export interface ModalDialogProps {
   title: string;
   /** Escape, the backdrop, or whatever the body offers. The caller decides. */
   onClose: () => void;
+  /**
+   * Where focus goes when the dialogue leaves — the button it was opened from
+   * (`YEO-83`).
+   *
+   * The caller's, for the same reason `onClose` is: this component knows the
+   * four exits and nothing about what is behind it. Both callers hold a
+   * `triggerRef` and pass `() => triggerRef.current`, and passing it *here*
+   * rather than focusing the trigger inside their own `onClose` is what makes
+   * the restore cover every exit — including a save that completes and closes
+   * the dialogue without anything going through a dismissal at all.
+   */
+  returnFocus?: () => HTMLElement | null;
   children: React.ReactNode;
 }
 
-export function ModalDialog({ title, onClose, children }: ModalDialogProps) {
+export function ModalDialog({
+  title,
+  onClose,
+  returnFocus,
+  children,
+}: ModalDialogProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   /**
@@ -67,56 +96,19 @@ export function ModalDialog({ title, onClose, children }: ModalDialogProps) {
    */
   const titleId = useId();
 
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-
-      if (event.key !== "Tab") return;
-
-      /**
-       * The focus trap, which `aria-modal="true"` below is otherwise a promise
-       * this dialogue does not keep. Assistive tech reads that attribute as
-       * "everything outside is inert"; a Tab that walks out to the panel
-       * behind the backdrop makes it a lie, and on a confirmation for
-       * something irreversible that is worth more than the fifteen lines it
-       * costs.
-       *
-       * The order is read from the DOM on each Tab rather than cached, because
-       * a dialogue's contents change under it — picking a removal swaps the
-       * whole body, an edit form's Cancel is replaced by a discard prompt, and
-       * a submitting form disables its own buttons.
-       */
-      const focusable = surfaceRef.current?.querySelectorAll<HTMLElement>(
-        "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-      );
-      if (!focusable || focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-
-      // Wrapping in either direction, and also pulling focus back in when it
-      // is on the heading — which is not in the tab order, so neither branch
-      // below would otherwise fire on the first Tab after the dialogue opens.
-      if (
-        event.shiftKey &&
-        (active === first || active === headingRef.current)
-      ) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
+  /**
+   * Escape and Tab, both answered by the one listener the page has. `modal`
+   * is what turns the trap on; `surfaceRef` is what it confines Tab to, read
+   * afresh on every Tab because a dialogue's contents change under it — a
+   * removal choice swaps the whole body, an edit form's Cancel is replaced by
+   * a discard prompt, and a submitting form disables its own buttons.
+   */
+  useDismissableSurface({
+    onDismiss: onClose,
+    modal: true,
+    surfaceRef,
+    returnFocus,
+  });
 
   /**
    * Focus lands on the heading, which reads out what this dialogue is before

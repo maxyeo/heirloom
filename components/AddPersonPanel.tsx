@@ -3,10 +3,10 @@
 import {
   useActionState,
   useCallback,
-  useEffect,
   useId,
   useRef,
   useState,
+  type RefObject,
 } from "react";
 
 import {
@@ -15,6 +15,7 @@ import {
   type IndividualFormField,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
+import { useDismissableSurface } from "@/components/surface-stack";
 import {
   emptyIndividualFormState,
   type IndividualFormState,
@@ -90,14 +91,23 @@ export function AddPersonPanel({
   const panelId = useId();
 
   /**
-   * Focus goes back to the button the panel came from, for the same reason
-   * `FamilyTree` puts it back on the node: the panel is the only thing that
-   * was focusable in this corner, and losing focus to `<body>` when it
-   * unmounts leaves a keyboard user at the top of the document.
+   * Closing is only "stop rendering the form": focus is the form's own to hand
+   * back (`YEO-83`).
+   *
+   * It used to be done here, which covers exactly the exits that are routed
+   * through this callback — today Escape and the Close button — and silently
+   * would not cover a third. `FamilyTree` had the same shape and the bug that
+   * goes with it: the ways out that never touch the owner's own handler. So
+   * `openerRef` goes down to the form instead, and the shared stack puts focus
+   * on it when the form unmounts, however that happened.
+   *
+   * The reason focus goes back at all is the one `FamilyTree` gives for the
+   * node: the button is the only thing that was focusable in this corner, and
+   * losing focus to `<body>` leaves a keyboard user at the top of the
+   * document.
    */
   const close = useCallback(() => {
     setOpen(false);
-    openerRef.current?.focus();
   }, []);
 
   return (
@@ -114,7 +124,12 @@ export function AddPersonPanel({
       </button>
 
       {open ? (
-        <AddPersonForm action={action} onClose={close} panelId={panelId} />
+        <AddPersonForm
+          action={action}
+          onClose={close}
+          panelId={panelId}
+          openerRef={openerRef}
+        />
       ) : null}
     </>
   );
@@ -125,6 +140,21 @@ export interface AddPersonFormProps {
   onClose: () => void;
   /** The id the opening button's `aria-controls` points at. */
   panelId?: string;
+  /**
+   * The button this panel was opened from, for focus to go back to when it
+   * closes (`YEO-83`).
+   *
+   * Named explicitly rather than captured from `document.activeElement` when
+   * the panel mounts, because a button is not reliably focused by being
+   * pressed: jsdom's `element.click()` moves no focus at all, and Safari does
+   * not focus a button on click either. Both would leave this reading whatever
+   * was focused before — which is the sort of thing that works everywhere it
+   * is tested and nowhere it is used.
+   *
+   * Optional, so the form can be mounted on its own; without it, closing
+   * leaves focus wherever the browser put it.
+   */
+  openerRef?: RefObject<HTMLButtonElement | null>;
 }
 
 /**
@@ -140,6 +170,7 @@ export function AddPersonForm({
   action,
   onClose,
   panelId,
+  openerRef,
 }: AddPersonFormProps) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -190,17 +221,18 @@ export function AddPersonForm({
    */
   const confirmation = state.savedId === null ? null : saved;
 
-  // Escape closes, from wherever focus is inside the panel — the same
-  // dismissal `PersonPanel` gives the detail view, so the two panels on this
-  // canvas behave alike.
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  /**
+   * Escape closes, from wherever focus is inside the panel — the same
+   * dismissal `PersonPanel` gives the detail view, so the two panels on this
+   * canvas behave alike. Since `YEO-83` that likeness is literal: both
+   * register on the one stack in `components/surface-stack.ts`, which is what
+   * makes an Escape over this panel close *this* panel and leave the record
+   * behind it open. Before that, both listened and both closed.
+   */
+  useDismissableSurface({
+    onDismiss: onClose,
+    returnFocus: () => openerRef?.current ?? null,
+  });
 
   return (
     <aside

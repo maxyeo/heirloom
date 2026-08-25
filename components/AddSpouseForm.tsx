@@ -1,6 +1,13 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useId, useState } from "react";
+import {
+  useActionState,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import { DateField } from "@/components/DateField";
 import { FormSelect } from "@/components/FormSelect";
@@ -11,6 +18,7 @@ import {
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import { PartnerPicker } from "@/components/PartnerPicker";
+import { useDismissableSurface } from "@/components/surface-stack";
 import type { GraphPerson } from "@/lib/family-graph";
 import { MAX_NOTES_LENGTH } from "@/lib/field-input";
 import { type PartnerCandidate, splitTypedName } from "@/lib/partner-search";
@@ -171,6 +179,34 @@ export function AddSpouseForm({
     FormData
   >(action, emptySpouseFormState);
 
+  const headingRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Escape backs out, exactly as Cancel does (`YEO-83`).
+   *
+   * This form replaces the detail panel in the canvas render, and until this
+   * ticket it had no Escape at all — so opening it turned a key that had just
+   * worked into one that silently did nothing, on a surface that looks like
+   * the panel it replaced. Registering on the shared stack is the whole of the
+   * fix: no listener of its own, and no way for this and the panel to both
+   * answer, since the panel is not mounted while this is.
+   *
+   * No `returnFocus`: backing out remounts the panel, which puts focus on its
+   * own heading. Naming somewhere here would be a second opinion about where
+   * focus goes, arriving in the same commit as the first.
+   */
+  useDismissableSurface({ onDismiss: onCancel });
+
+  /**
+   * And focus moves into the form when it opens, the way the panel moves it
+   * into the record — so every surface on this canvas behaves alike. Without
+   * it a keyboard user presses the button that opens this and is left on an
+   * element that has just been unmounted.
+   */
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
   const [mode, setMode] = useState<PartnerMode>("existing");
   const [selected, setSelected] = useState<PartnerCandidate | null>(null);
   const [partner, setPartner] = useState<IndividualFormValues>(
@@ -234,7 +270,13 @@ export function AddSpouseForm({
       className="absolute inset-x-0 bottom-0 z-10 flex max-h-[75%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
     >
       <div className="flex items-start justify-between gap-2 border-b border-rule-soft px-4 py-3">
-        <div className="min-w-0">
+        {/*
+          `tabIndex={-1}` rather than a heading that is naturally focusable:
+          somewhere to put focus that reads out what this form is, not
+          somewhere to tab to. The same treatment `PersonPanel` gives its own
+          header.
+        */}
+        <div ref={headingRef} tabIndex={-1} className="min-w-0">
           <h2 className="truncate border-0 pb-0 text-h2">Add a spouse</h2>
           <p className="text-caption text-ink-muted">for {person.name}</p>
         </div>

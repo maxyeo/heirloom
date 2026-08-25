@@ -2,7 +2,10 @@
 import { act } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import type { IndividualFormAction } from "@/components/AddPersonPanel";
+import {
+  AddPersonPanel,
+  type IndividualFormAction,
+} from "@/components/AddPersonPanel";
 import { FamilyTree } from "@/components/FamilyTree";
 import type { EntryLink } from "@/lib/entry-link";
 import {
@@ -326,6 +329,68 @@ describe("closing the panel", () => {
 
     expect(panelLabel(host)).toBeNull();
     expect(document.activeElement).toBe(nodeWrapper(host, "rose"));
+  });
+});
+
+/**
+ * Two panels open at once, and one Escape each (`YEO-83`).
+ *
+ * This is the symptom the ticket opens with, and the one E3-T2 (`YEO-30`)
+ * recorded when it added the second panel to this page: every surface ran its
+ * own `document` listener, so an Escape over the add-person panel closed the
+ * record behind it as well. Nothing pinned it, because the two panels are
+ * mounted by different components — the add-person panel lives in the tree
+ * page's header, outside the canvas — and neither file's own test had the
+ * other one on screen.
+ *
+ * So this mounts them the way `app/tree/page.tsx` does, which is the smallest
+ * arrangement in which the bug exists at all.
+ */
+describe("the add-person panel over the detail panel", () => {
+  /** The header and the canvas, as the tree page composes them. */
+  function renderPage(): HTMLElement {
+    return mount(
+      <>
+        <AddPersonPanel action={inertCreate} />
+        <FamilyTree graph={graph()} />
+      </>,
+    );
+  }
+
+  function detailPanel(host: HTMLElement): HTMLElement | null {
+    return host.querySelector<HTMLElement>('aside[aria-label^="Details for"]');
+  }
+
+  function addPersonPanel(host: HTMLElement): HTMLElement | null {
+    return host.querySelector<HTMLElement>('aside[aria-label="Add a person"]');
+  }
+
+  it("closes the add-person panel first and the record second", () => {
+    const host = renderPage();
+    open(host, "rose");
+    click(buttonLabelled(host, "Add person"));
+
+    expect(detailPanel(host)).not.toBeNull();
+    expect(addPersonPanel(host)).not.toBeNull();
+
+    pressEscape();
+
+    // One keystroke, one surface. The record is still open behind it.
+    expect(addPersonPanel(host)).toBeNull();
+    expect(detailPanel(host)).not.toBeNull();
+
+    pressEscape();
+
+    expect(detailPanel(host)).toBeNull();
+    /*
+      And focus is left where the *first* Escape put it: on the button the
+      add-person panel came from. The canvas only rescues focus that the
+      browser dropped on `<body>` when the panel unmounted — a reader who is
+      demonstrably somewhere else is not dragged back to the node. That guard
+      is the hook's, and it is why closing two surfaces in a row does not end
+      in a fight over the cursor.
+    */
+    expect(document.activeElement).toBe(buttonLabelled(host, "Add person"));
   });
 });
 

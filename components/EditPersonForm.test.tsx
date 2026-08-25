@@ -1,16 +1,9 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { EditPerson, type EditPersonProps } from "@/components/EditPersonForm";
+import { PersonPanel } from "@/components/PersonPanel";
 import type { GraphPerson } from "@/lib/family-graph";
 import {
   emptyIndividualFormState,
@@ -23,6 +16,7 @@ import {
   individualInputFromFormData,
   validateIndividual,
 } from "@/lib/individual-input";
+import type { PersonDetail } from "@/lib/person-detail";
 import { render } from "@/test/render";
 
 /**
@@ -228,6 +222,19 @@ function escape(): void {
   });
 }
 
+/** Tab, as an event the surface-stack listener can answer and this file can inspect. */
+function tab(): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key: "Tab",
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    document.dispatchEvent(event);
+  });
+  return event;
+}
+
 /**
  * What the server action would make of a submission: exactly the two calls
  * `updateIndividualAction` makes before it reaches the database.
@@ -261,6 +268,28 @@ describe("opening", () => {
     expect(document.getElementById(labelledBy ?? "")?.textContent).toBe(
       "Edit Rose Hale",
     );
+  });
+});
+
+describe("the Tab trap", () => {
+  /**
+   * `<input type="hidden" name="id">` is this form's very first child, ahead
+   * of every field an author can see, and focus opens on the heading — see
+   * `components/ModalDialog.tsx`. So the first Tab a keyboard user presses is
+   * exactly the case `components/surface-stack.ts`'s `FOCUSABLE_SELECTOR` got
+   * wrong: an unqualified `input` matched the hidden one, `.focus()` on it is
+   * a no-op, and `preventDefault()` had already told the browser not to do
+   * what native Tab would have. The reader was stranded on the heading with
+   * no way to reach a single field.
+   */
+  it("skips the hidden id field and lands on the first real control", () => {
+    const host = mount(rose);
+    open(host);
+
+    const event = tab();
+
+    expect(document.activeElement).toBe(control(host, "givenName"));
+    expect(event.defaultPrevented).toBe(true);
   });
 });
 
@@ -622,60 +651,92 @@ describe("leaving the page", () => {
 
 describe("Escape, and the panel behind it", () => {
   /**
-   * `components/PersonPanel.tsx` listens for Escape on `document` and closes
-   * the panel this dialogue is rendered inside. Without the capture-phase
-   * handler in `ModalDialog`, one Escape would answer the edit form *and*
-   * close the record behind it — so this stands in for the panel's listener
-   * and asserts it never fires.
+   * One Escape, one surface (`YEO-83`).
    *
-   * The identical assertion lives in `components/PersonRemoval.test.tsx`. Both
-   * are worth keeping: they are the two dialogues that rely on the behaviour,
-   * and `ModalDialog` says in its own header that both of them pin it.
+   * This dialogue opens from inside `components/PersonPanel.tsx`, and the
+   * panel closes on Escape too. That used to mean one keystroke answered the
+   * edit form *and* closed the record behind it, and the fix was a
+   * capture-phase listener in `ModalDialog` that silenced the panel's own.
+   *
+   * So the panel is mounted for real underneath rather than stood in for by a
+   * listener asserted never to fire. The old assertion pinned the mechanism;
+   * what the ticket is about is which surface answers, and only a second real
+   * surface can say. The identical pair lives in
+   * `components/PersonRemoval.test.tsx` — both dialogues rely on the
+   * behaviour, and `ModalDialog` says in its own header that both pin it.
    */
-  const panelListener = vi.fn();
+  const closePanel = vi.fn();
 
-  beforeEach(() => {
-    panelListener.mockClear();
-    document.addEventListener("keydown", panelListener);
-  });
+  /** Rose's record, as the panel would have derived it. */
+  const detail: PersonDetail = {
+    id: rose.id,
+    name: "Rose Hale",
+    lifespan: "about 1890–1953",
+    sex: "female",
+    birth: { date: "about 12 April 1890", place: "Cork" },
+    death: { date: "2 November 1953", place: "Dublin" },
+    notes: null,
+    pageId: null,
+    spouses: [],
+    children: [],
+    parents: [],
+  };
 
-  afterEach(() => {
-    document.removeEventListener("keydown", panelListener);
-  });
-
-  it("stops the panel from closing too", () => {
-    const host = mount(rose);
+  /** The edit dialogue, open, in the footer slot the canvas composes it into. */
+  function openOverPanel(): HTMLElement {
+    closePanel.mockClear();
+    const host = render(
+      <PersonPanel
+        detail={detail}
+        onSelectPerson={() => {}}
+        onClose={closePanel}
+        footer={<EditPerson person={rose} action={stubAction()} />}
+      />,
+    );
     open(host);
+    return host;
+  }
 
+  function pressEscape(): void {
     act(() => {
-      host
-        .querySelector("[role='dialog'] button")
-        ?.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-        );
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
     });
+  }
+
+  it("closes the dialogue and leaves the record behind it open", () => {
+    const host = openOverPanel();
+
+    pressEscape();
 
     expect(dialog(host)).toBeNull();
-    expect(panelListener).not.toHaveBeenCalled();
+    expect(closePanel).not.toHaveBeenCalled();
+    expect(host.querySelector("aside")).not.toBeNull();
+  });
+
+  it("hands the next Escape to the panel underneath", () => {
+    // The other half of the same rule: dismissing the dialogue gives
+    // topmost-ness back rather than swallowing every Escape after it.
+    openOverPanel();
+
+    pressEscape();
+    pressEscape();
+
+    expect(closePanel).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the panel out of it even when the warning appears instead", () => {
-    const host = mount(rose);
-    open(host);
+    const host = openOverPanel();
     type(host, "surname", "Doyle");
 
-    act(() => {
-      host
-        .querySelector("[role='dialog'] button")
-        ?.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-        );
-    });
+    pressEscape();
 
     // The worst version of this bug: the dialogue stays open over the warning
     // while the record behind it closes anyway.
     expect(dialog(host)).not.toBeNull();
-    expect(panelListener).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Discard them");
+    expect(closePanel).not.toHaveBeenCalled();
   });
 });
 
