@@ -197,4 +197,22 @@ describe("treeOnboarding", () => {
 
     expect(treeOnboarding(siblings)).toEqual({ stage: "under-way" });
   });
+
+  /**
+   * The row that lists one person as both partners — the malformed shape
+   * `previewPartnerDetachment` already restates both slots to cover. It fills
+   * two columns and joins nobody to anybody, which is why the count is of
+   * distinct people rather than of columns.
+   */
+  it("does not let one person listed twice count as a connection", () => {
+    const selfPaired = graph({
+      people: [person({ id: "rose", givenName: "Rose" })],
+      unions: [union({ id: "u1", partnerAId: "rose", partnerBId: "rose" })],
+    });
+
+    expect(treeOnboarding(selfPaired)).toEqual({
+      stage: "unconnected",
+      person: "Rose Hale",
+    });
+  });
 });
