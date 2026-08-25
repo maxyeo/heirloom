@@ -1,5 +1,5 @@
-import type { ImportedCounts } from "./gedcom-import";
-import type { ImportCounts, ImportPreview } from "./import-preview";
+import type { ImportReport } from "./import-report";
+import type { ImportPreview } from "./import-preview";
 
 /**
  * The contract between the import screen and the import endpoint (E6-T3,
@@ -16,9 +16,7 @@ import type { ImportCounts, ImportPreview } from "./import-preview";
  *
  * Everything here is pure and free of `@/db`, `@/auth` and the DOM, so both
  * ends can import it and `lib/import-endpoint.test.ts` can assert the whole
- * contract against literals in plain Node. The one reference to a module that
- * does reach `@/db` is a type, imported with `import type` and therefore
- * erased — see {@link writtenCounts}, which explains why it is there.
+ * contract against literals in plain Node.
  *
  * ## The two-request shape, and why it is two requests
  *
@@ -84,23 +82,22 @@ export type ImportPreviewResponse = {
  *
  * A stage of its own rather than a bare `200`, because the reader has just
  * handed over a file they cannot see the inside of and "it worked" is not an
- * answer to *what did it do*. E6-T5 (`YEO-50`) is the ticket that says so in
- * full, and {@link ImportDoneResponse.written} is the smallest true version:
- * how many rows reached each table.
+ * answer to *what did it do*. E6-T5 (`YEO-50`) is what that answer is: the
+ * whole report travels back with the `200`, because it describes bytes that
+ * exist only inside the request that produced it and there is nowhere to go
+ * and ask for it afterwards.
  */
 export type ImportDoneResponse = {
   stage: "imported";
   /**
-   * What the import actually wrote, counted off the rows that were inserted.
+   * What the import did, in full: created, skipped, approximated, and the
+   * tags this application does not read.
    *
-   * The same shape as {@link ImportPreview.counts}, which is what makes the
-   * preview checkable against the outcome: the screen said 148 people and the
-   * import says 148 people, in the same three words. `lib/gedcom-import.ts`
-   * counts them in its own vocabulary — the *tables'* names, `individuals` /
-   * `unions` / `unionChildren` — and {@link writtenCounts} is the one place
-   * the two are put side by side.
+   * Bounded, which matters on this side of the wire — `REPORT_ROWS_SHOWN` in
+   * `lib/import-report.ts` is the reason a file of pure noise cannot produce
+   * a response the platform refuses to send.
    */
-  written: ImportCounts;
+  report: ImportReport;
 };
 
 /**
@@ -131,37 +128,4 @@ export function isImportDone(
   response: ImportResponse,
 ): response is ImportDoneResponse {
   return "stage" in response && response.stage === "imported";
-}
-
-/**
- * `lib/gedcom-import.ts`'s counts in the words the screen uses.
- *
- * Two names for three numbers, and both of them are right where they are.
- * `ImportedCounts` is named for the **tables** — `individuals`, `unions`,
- * `unionChildren` — which is what a module whose whole job is three inserts
- * should be counting, and it is the name a reviewer of `db/schema.ts` can
- * check. {@link ImportCounts} is named for the **screen** — people, unions,
- * children — which is what somebody who has just uploaded a family file is
- * looking at.
- *
- * The reconciliation is this function and nothing else. The considered
- * alternative was to make one type an alias of the other and rename the
- * fields at whichever end lost the argument, which trades a translation
- * anybody can read for a vocabulary that is wrong in one of the two places
- * forever. E6-T3 and E6-T4 were built in parallel and each chose the name its
- * own half needed; this is the seam between them, so this is where the
- * translation belongs.
- *
- * The type is imported with `import type` deliberately —
- * `lib/gedcom-import.ts` reaches `@/db`, and this module is imported by
- * `components/GedcomImport.tsx`, which is a client component. `import type`
- * erases entirely, which is the rule `docs/testing.md` states for exactly
- * this hazard.
- */
-export function writtenCounts(imported: ImportedCounts): ImportCounts {
-  return {
-    people: imported.individuals,
-    unions: imported.unions,
-    children: imported.unionChildren,
-  };
 }

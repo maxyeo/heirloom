@@ -8,8 +8,9 @@ reasonable to put decades of somebody's work in here in the first place.
 This page covers the **parser** — E6-T1 (`YEO-46`), the read half — the
 **mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
 (`YEO-47`), the **preview** somebody reads before an import happens, which is
-E6-T3 (`YEO-48`), and the **export** back out, which is E7-T1 (`YEO-51`).
-Writing the rows is E6-T4 and reporting on them afterwards is E6-T5.
+E6-T3 (`YEO-48`), the **write**, which is E6-T4 (`YEO-49`), the **report**
+afterwards, which is E6-T5 (`YEO-50`), and the **export** back out, which is
+E7-T1 (`YEO-51`).
 
 ## The pipeline
 
@@ -24,6 +25,7 @@ through them:
 | `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
 | `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
+| `lib/import-report.ts`   | all of it     | an account of what the import did       |
 
 And two on the way back out:
 
@@ -236,7 +238,9 @@ disagreeing about what a valid row is.
 So a person whose death date is before their birth date is **not imported**,
 and every family link to them goes with them: the family keeps its other
 partner and loses this one to a null. That is a real cost, and it is reported
-every time with the sentence the validator gave.
+every time with the sentence the validator gave — as a `skipped` issue
+carrying the `INDI`'s xref and the name the file gave it, so E6-T5's report
+can say _who_ rather than only _how many_.
 
 The considered alternative was to drop the offending _field_ and re-validate —
 blank the date, keep the person. It was rejected because it is a recovery
@@ -263,13 +267,42 @@ reasons, already worded for the person who has to act on them, and
 re-describing them here would give one loss two spellings in one report with
 no way to tell it was one loss.
 
-The mapping's own additions are `value` (a fact with nowhere to go, a record
-refused) and `pointer` (a `HUSB`, `CHIL`, `FAMS` or `FAMC` naming a record
-that is not in the file, or one whose two halves disagree). The cross-check
-between `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own
-docblock promised: carrying both halves is only worth it if somebody
-eventually compares them. It says nothing about a file whose halves agree,
-which is every well-formed file.
+The mapping's own additions are three kinds:
+
+- **`skipped`** — this application refused a record or a link, so it is not in
+  the tree. Every one of them carries a `GedcomRecordRef`: the tag, the xref,
+  and the name the file gave, as a value rather than a phrase inside the
+  sentence.
+- **`value`** — a fact with nowhere to put it. A `MARR.PLAC`, a person with
+  three names, a `PEDI` nobody recognises.
+- **`pointer`** — a `HUSB`, `CHIL`, `FAMS` or `FAMC` naming a record that is
+  not in the file, or one whose two halves disagree. The cross-check between
+  `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own docblock
+  promised: carrying both halves is only worth it if somebody eventually
+  compares them. It says nothing about a file whose halves agree, which is
+  every well-formed file.
+
+`skipped` was split out of `value` by E6-T5 (`YEO-50`), and the argument is
+the one that split `narrowed` out of `date`. `value` had come to mean two
+things at once — a detail with nowhere to go, and a whole person left out —
+and those are not the same news. `lib/gedcom-report.ts` says the closed set
+exists "so the report can group and count … without matching on sentences",
+and on the question the report most needed to answer it was not doing that
+job: counting the skips meant matching the wording of a sentence written for
+a human to read.
+
+The line between `skipped` and `pointer` is drawn on **cause, not outcome**,
+which keeps the two disjoint. A `CHIL` naming somebody this import refused is
+a skip; a `CHIL` naming a record that is not in the file at all is a pointer,
+because that is precisely what `pointer` has always meant. Both leave the tree
+without that child, and the report shows both — but two kinds that each
+truthfully describe one issue is the failure `lib/gedcom-report.ts` keeps two
+lists to avoid.
+
+Only the mapper raises `skipped`, because only the mapper decides what goes
+into the tree. The parser's own losses — a second `HUSB` on one family, a
+duplicated xref — stay `value` and `pointer`: those are statements about what
+the _file_ says, made before anything has been decided about the tree.
 
 ## The write half
 
@@ -410,6 +443,75 @@ rather than plumbing:
   they are put side by side, and the alternative — aliasing one type to the
   other — would have bought a vocabulary that is wrong at one of the two ends
   forever.
+
+## The report afterwards
+
+`lib/import-report.ts` (E6-T5, `YEO-50`) is the last module on the way in, and
+the only one that answers a question about the past rather than about a file.
+
+The failure it prevents is specific. Real GEDCOM files are dirty; an import
+that says nothing leaves the author assuming everything landed, and the way
+they find out otherwise is that somebody is missing from the tree, months
+later, when the file has moved on and nobody remembers which upload it was.
+
+So an import answers with an account of itself, in the three parts the ticket
+names plus one that is not a fault at all:
+
+| Section               | Comes from                             |
+| --------------------- | -------------------------------------- |
+| What was created      | the counts `importGedcom` returned     |
+| What was skipped      | the `skipped` issues, records and all  |
+| What was approximated | the `narrowed` issues, unchanged       |
+| Tags not read         | the parser's aggregated unknown tags   |
+| Everything else       | `summariseWarnings`, at a larger limit |
+
+### One number is not a restatement
+
+Everything in the report except `created` is the reading described back. That
+one is counted off the rows the **write** inserted, and it has to be: a report
+that recomputed what was written from what was read could never tell anybody
+the two had differed. It is the only reason the counts travel as a parameter
+rather than being derived from the mapping that is right there.
+
+### Every section is printed empty
+
+"Nothing was skipped" is a finding. An absent heading is silence, and silence
+is what this ticket exists to replace — so both the screen and the downloaded
+file render all four sections whether or not there is anything in them.
+
+That is also why the unsupported tags are there at all. Nobody lost them; they
+are still in the `.ged`. But an author will assume this application holds
+their source citations unless it says otherwise, and they will assume it
+hardest on the day they delete the original.
+
+### The cap, and why there is one
+
+`REPORT_ROWS_SHOWN` is 500 per section. That is not tidiness: `lib/gedcom-lines.ts`
+raises one issue per unreadable line, so four mebibytes of something that is
+not GEDCOM is on the order of a hundred thousand issues, each with a sentence.
+The platform caps a function body at 4.5 MB in **either** direction, so an
+uncapped report would fail at the edge on exactly the dirtiest files this epic
+exists for. Every section carries its full `total` beside its rows, so a
+trimmed list is never mistaken for the whole answer.
+
+### The download is built in the browser
+
+The report describes bytes that exist only inside the request that produced
+it. A route serving the file would need either a third upload of the same
+`.ged` or somewhere to stash the parse — and stashing is the thing
+`lib/import-endpoint.ts` rejected by name, because it needs a store the
+preview must not touch and turns a cancelled import into something to clean up
+later.
+
+So the endpoint answers with the whole report inline, the screen shows the top
+of each section, and `formatImportReport` turns the same value into the plain
+text somebody keeps. Plain text because its reader has a `.ged` open in an
+editor and needs line numbers and xrefs they can search for.
+
+**E7-T3 (`YEO-53`) should not copy this.** The bytes it downloads live in the
+database, so a route with a `Content-Disposition` is the obvious answer there,
+and the reason this one is different is the statelessness rather than a
+preference about downloads.
 
 ## Writing it back out
 

@@ -1,3 +1,4 @@
+import type { ImportedCounts } from "@/lib/gedcom-import";
 import { importGedcom } from "@/lib/gedcom-import";
 import {
   IMPORT_CONFIRM_FIELD,
@@ -5,14 +6,15 @@ import {
   type ImportDoneResponse,
   type ImportPreviewResponse,
   type ImportRefusal,
-  writtenCounts,
 } from "@/lib/import-endpoint";
 import {
   checkGedcomUpload,
   gedcomDigest,
+  type ImportCounts,
   MAX_REQUEST_BYTES,
   readGedcom,
 } from "@/lib/import-preview";
+import { buildImportReport } from "@/lib/import-report";
 import { requireSessionOr401 } from "@/lib/session";
 
 /**
@@ -53,7 +55,15 @@ import { requireSessionOr401 } from "@/lib/session";
  * the `mapping`, with every id minted and every foreign key resolved — and
  * closing it is a prerequisite for E6-T5 rather than a change of its own:
  * there is no *post-import* report until an import can run.
+ *
+ * ## What a confirmed import answers with
+ *
+ * The whole report (E6-T5, `YEO-50`), not a status. `lib/import-report.ts`
+ * builds it and says why it travels inline: it describes bytes that exist
+ * only inside this request, so there is nowhere to go and ask for it
+ * afterwards.
  */
+
 /**
  * How long the platform lets a confirmed import run, in seconds.
  *
@@ -120,16 +130,21 @@ export async function POST(request: Request) {
 
   /**
    * Read once, whichever stage this is. The preview is what a previewing
-   * request answers with; the `mapping` beside it — destructured by E6-T4 —
-   * is what a confirmed one writes. Parsing the file twice would be two
-   * chances for the screen somebody approved and the rows that get written to
-   * describe different things.
+   * request answers with, the `mapping` beside it is what a confirmed one
+   * writes, and the report afterwards is built from the same value again.
+   * Parsing the file twice would be two chances for the screen somebody
+   * approved, the rows that get written, and the account of what happened to
+   * describe three slightly different things.
    */
-  const { mapping, preview } = readGedcom(bytes);
+  const read = readGedcom(bytes);
 
   const confirm = form.get(IMPORT_CONFIRM_FIELD);
   if (confirm === null) {
-    const answer: ImportPreviewResponse = { stage: "preview", digest, preview };
+    const answer: ImportPreviewResponse = {
+      stage: "preview",
+      digest,
+      preview: read.preview,
+    };
     return Response.json(answer);
   }
 
@@ -170,9 +185,9 @@ export async function POST(request: Request) {
    * request and needs no record; this one is a fault, and the only place it
    * can be seen afterwards is the platform's log.
    */
-  let imported;
+  let imported: ImportedCounts;
   try {
-    imported = await importGedcom(mapping);
+    imported = await importGedcom(read.mapping);
   } catch (error) {
     console.error("GEDCOM import failed:", error);
     return refuse(
@@ -185,11 +200,47 @@ export async function POST(request: Request) {
     );
   }
 
+  /**
+   * Built *after* the `try` closes, and that placement is the point of it.
+   * Assembling the report is pure and cannot fail, but if it ever did inside
+   * that block it would answer "nothing was written" about a transaction that
+   * had already committed — a lie in the one direction this whole flow exists
+   * to make impossible.
+   */
   const answer: ImportDoneResponse = {
     stage: "imported",
-    written: writtenCounts(imported),
+    report: buildImportReport(read, writtenCounts(imported)),
   };
   return Response.json(answer);
+}
+
+/**
+ * `lib/gedcom-import.ts`'s counts in the words the rest of the flow uses.
+ *
+ * Two names for three numbers, and both are right where they are. E6-T4
+ * counts in the **tables'** words — `individuals`, `unions`, `unionChildren`
+ * — which is what a module whose whole job is three inserts should be
+ * counting, and what a reviewer holding `db/schema.ts` can check. E6-T3
+ * counts in the **screen's** — people, unions, children — which is what
+ * somebody who has just uploaded a family file is reading.
+ *
+ * The translation lives here because this route is the only place that holds
+ * both, and because putting it anywhere further down would drag a type from a
+ * module that reaches `drizzle-orm` into the pure half of the pipeline. The
+ * specifier scan in `lib/gedcom.purity.test.ts` does not distinguish an
+ * `import type` from a real one, so "no module on the read side names the
+ * write side" stays a rule that holds rather than one that happens to.
+ *
+ * The rejected alternative was to alias one type to the other and rename the
+ * fields at whichever end lost the argument, which buys a vocabulary that is
+ * wrong at one of the two ends forever.
+ */
+function writtenCounts(imported: ImportedCounts): ImportCounts {
+  return {
+    people: imported.individuals,
+    unions: imported.unions,
+    children: imported.unionChildren,
+  };
 }
 
 /** One shape for every refusal; see {@link ImportRefusal}. */

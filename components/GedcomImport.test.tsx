@@ -11,7 +11,8 @@ import {
   type ImportDoneResponse,
   type ImportPreviewResponse,
 } from "@/lib/import-endpoint";
-import type { ImportCounts, ImportPreview } from "@/lib/import-preview";
+import type { ImportPreview } from "@/lib/import-preview";
+import type { ImportReport } from "@/lib/import-report";
 import { render } from "@/test/render";
 
 /**
@@ -123,11 +124,25 @@ function previewAnswer(
   return { stage: "preview", digest, preview };
 }
 
+/** A report with just enough in it to be recognisable on the screen. */
+function reportOf(overrides: Partial<ImportReport> = {}): ImportReport {
+  return {
+    created: { people: 5, unions: 2, children: 2 },
+    found: { people: 5, unions: 2 },
+    encoding: "utf-8",
+    misdeclaredEncoding: null,
+    skipped: { total: 0, rows: [] },
+    approximated: { total: 0, rows: [] },
+    warnings: [],
+    unsupportedTags: { total: 0, rows: [] },
+    unsupportedTagOccurrences: 0,
+    ...overrides,
+  };
+}
+
 /** The answer to a confirmed import that ran. */
-function importedAnswer(
-  written: ImportCounts = { people: 5, unions: 2, children: 2 },
-): ImportDoneResponse {
-  return { stage: "imported", written };
+function importedAnswer(report: ImportReport = reportOf()): ImportDoneResponse {
+  return { stage: "imported", report };
 }
 
 function mount() {
@@ -310,6 +325,102 @@ describe("the confirm step", () => {
       "nothing was written",
     );
     expect(screen.host.textContent).not.toContain("What was imported");
+  });
+
+  it("names the record and the reason for every skip it shows", async () => {
+    // The acceptance criterion, on the surface the reader actually sees.
+    const screen = await previewed();
+    answers.push({
+      status: 200,
+      body: importedAnswer(
+        reportOf({
+          created: { people: 4, unions: 2, children: 2 },
+          found: { people: 5, unions: 2 },
+          skipped: {
+            total: 1,
+            rows: [
+              {
+                kind: "skipped",
+                line: 812,
+                message: "The death date is before the birth date.",
+                record: { tag: "INDI", xref: "I42", label: "Ada Reed" },
+              },
+            ],
+          },
+        }),
+      ),
+    });
+
+    await click(screen.button("Import 5 people"));
+
+    const text = screen.host.textContent ?? "";
+    expect(text).toContain("What was skipped");
+    expect(text).toContain("INDI I42 (Ada Reed)");
+    expect(text).toContain("line 812");
+    expect(text).toContain("The death date is before the birth date.");
+  });
+
+  it("says every section is empty rather than leaving it out", async () => {
+    // Silence is the wrong answer, and an absent heading is silence. A reader
+    // who is told nothing was skipped knows something; a reader shown no
+    // heading at all has to guess whether the question was asked.
+    const screen = await previewed();
+    answers.push({ status: 200, body: importedAnswer() });
+
+    await click(screen.button("Import 5 people"));
+
+    const text = screen.host.textContent ?? "";
+    expect(text).toContain("Every record in the file is in the tree");
+    expect(text).toContain(
+      "Every date was stored exactly as the file wrote it",
+    );
+    expect(text).toContain(
+      "Every tag in the file is one this application reads",
+    );
+  });
+
+  it("shows the first few rows of a long section and offers the rest", async () => {
+    const screen = await previewed();
+    answers.push({
+      status: 200,
+      body: importedAnswer(
+        reportOf({
+          unsupportedTags: {
+            total: 40,
+            rows: Array.from({ length: 40 }, (_, index) => ({
+              path: `INDI.X${index}`,
+              tag: `X${index}`,
+              count: 1,
+              firstLine: index + 1,
+            })),
+          },
+          unsupportedTagOccurrences: 40,
+        }),
+      ),
+    });
+
+    await click(screen.button("Import 5 people"));
+
+    const text = screen.host.textContent ?? "";
+    expect(text).toContain("Tags this application does not read — 40 kinds");
+    expect(text).toContain("in the download");
+    // The screen is a summary and the file is the report. Rendering forty
+    // rows here would make the download pointless and the screen unreadable.
+    expect(text).not.toContain("INDI.X39");
+  });
+
+  it("offers the whole report as a file, because it is longer than a screen", async () => {
+    const screen = await previewed();
+    answers.push({ status: 200, body: importedAnswer() });
+
+    await click(screen.button("Import 5 people"));
+
+    // Only that the way out exists. What the file *says* is decided by
+    // `formatImportReport` and asserted in `lib/import-report.test.ts`, where
+    // it is a string rather than a browser download — jsdom implements
+    // neither `URL.createObjectURL` nor a navigation from `a.click()`, so a
+    // test that drove the button here would pass for the wrong reason.
+    expect(screen.button("Download the full report")).toBeDefined();
   });
 
   it("takes the preview down when a different file is chosen", async () => {

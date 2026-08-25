@@ -9,9 +9,9 @@ import {
   type ImportResponse,
   isImportDone,
   isImportPreview,
-  writtenCounts,
 } from "@/lib/import-endpoint";
 import type { ImportPreview } from "@/lib/import-preview";
+import type { ImportReport } from "@/lib/import-report";
 
 /**
  * The import contract (E6-T3, `YEO-48`).
@@ -58,7 +58,7 @@ describe("narrowing an answer", () => {
 
   const done = {
     stage: "imported",
-    written: { people: 2, unions: 1, children: 1 },
+    report: {} as ImportReport,
   } as const;
 
   it("recognises a preview", () => {
@@ -88,18 +88,6 @@ describe("narrowing an answer", () => {
       expect(isImportPreview(refusal)).toBe(false);
       expect(isImportDone(refusal)).toBe(false);
     }
-  });
-});
-
-describe("the two vocabularies for three numbers", () => {
-  it("reads the tables' counts as the screen's", () => {
-    // E6-T3 named these for the screen and E6-T4 for the tables, and the
-    // translation is the seam between them. Asserted as literals because a
-    // field that lands in the wrong slot — unions and children swapped — is
-    // a report that typechecks and lies.
-    expect(
-      writtenCounts({ individuals: 148, unions: 62, unionChildren: 201 }),
-    ).toEqual({ people: 148, unions: 62, children: 201 });
   });
 });
 

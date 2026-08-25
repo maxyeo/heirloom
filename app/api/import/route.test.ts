@@ -222,11 +222,32 @@ describe("confirming", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as ImportDoneResponse;
     expect(body.stage).toBe("imported");
-    // The tables' counts, in the screen's words. `writtenCounts` is the one
-    // place the two vocabularies meet and `lib/import-endpoint.test.ts` pins
-    // the mapping itself; what this asserts is that the route puts the
-    // import's answer through it rather than the preview's prediction.
-    expect(body.written).toEqual({ people: 1, unions: 0, children: 0 });
+    // The report is the answer, and `lib/import-report.test.ts` is where its
+    // contents are decided. What only this file can show is that `created`
+    // comes from the *write* — the mock says one individual and no unions,
+    // and the counts say so in the screen's three words rather than the
+    // tables'.
+    expect(body.report.created).toEqual({ people: 1, unions: 0, children: 0 });
+  });
+
+  it("counts what was written rather than what was predicted", async () => {
+    // The one number in the report that is not a restatement of the preview.
+    // A report that echoed the prediction could never tell anybody the
+    // prediction was wrong, which is the only thing it is there for.
+    importGedcom.mockResolvedValue({
+      individuals: 0,
+      unions: 0,
+      unionChildren: 0,
+    });
+
+    const response = await POST(
+      upload(TREE, { confirm: await digestOf(TREE) }),
+    );
+
+    const body = (await response.json()) as ImportDoneResponse;
+    expect(body.report.created.people).toBe(0);
+    // …while the file itself still had somebody in it.
+    expect(body.report.found.people).toBe(1);
   });
 
   it("hands the write the mapping this very request was read from", async () => {

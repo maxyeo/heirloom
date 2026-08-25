@@ -10,7 +10,7 @@ import {
   type MappedUnion,
   mapGedcom,
 } from "@/lib/gedcom-map";
-import type { GedcomIssue } from "@/lib/gedcom-report";
+import type { GedcomIssue, GedcomSkip } from "@/lib/gedcom-report";
 
 /**
  * The GEDCOM → schema mapping (E6-T2, `YEO-47`).
@@ -59,6 +59,13 @@ function union(mapping: GedcomMapping, xref: string): MappedUnion {
 
 function messages(issues: readonly GedcomIssue[], kind: string): string[] {
   return issues.filter((issue) => issue.kind === kind).map((i) => i.message);
+}
+
+/** The skips, narrowed so their `record` is reachable. */
+function skips(issues: readonly GedcomIssue[]): GedcomSkip[] {
+  return issues.filter(
+    (issue): issue is GedcomSkip => issue.kind === "skipped",
+  );
 }
 
 /** One `INDI` with a birth date, which is most of what a date test needs. */
@@ -750,9 +757,17 @@ describe("records the validation layer refuses", () => {
 2 DATE 1900`);
 
     expect(mapping.individuals).toEqual([]);
-    expect(messages(mapping.issues, "value")).toEqual([
+    expect(messages(mapping.issues, "skipped")).toEqual([
       expect.stringContaining("before the birth date"),
     ]);
+    // "Each skip names the GEDCOM record and the reason" (E6-T5, `YEO-50`),
+    // and the record is a value rather than a phrase inside the sentence, so
+    // a report can group and count without reading English.
+    expect(skips(mapping.issues)[0].record).toEqual({
+      tag: "INDI",
+      xref: "I1",
+      label: "A One",
+    });
   });
 
   it("leaves out a person whose range is written backwards", () => {
@@ -764,7 +779,7 @@ describe("records the validation layer refuses", () => {
 2 DATE BET 1900 AND 1890`);
 
     expect(mapping.individuals).toEqual([]);
-    expect(messages(mapping.issues, "value")).toEqual([
+    expect(messages(mapping.issues, "skipped")).toEqual([
       expect.stringContaining("before the lower bound"),
     ]);
   });
@@ -791,8 +806,15 @@ describe("records the validation layer refuses", () => {
       partnerBId: person(mapping, "I2").id,
     });
     expect(mapping.unionChildren).toHaveLength(1);
-    expect(messages(mapping.issues, "value")).toContainEqual(
+    expect(messages(mapping.issues, "skipped")).toContainEqual(
       expect.stringContaining("could not be recorded, so this family has no"),
+    );
+    // The link is skipped as its own record, naming the partner who is not
+    // there rather than the family that survived without them.
+    expect(skips(mapping.issues)).toContainEqual(
+      expect.objectContaining({
+        record: { tag: "FAM.HUSB", xref: "I1", label: "A One" },
+      }),
     );
   });
 
@@ -804,9 +826,16 @@ describe("records the validation layer refuses", () => {
 
     expect(mapping.unions).toEqual([]);
     expect(mapping.unionChildren).toEqual([]);
-    expect(messages(mapping.issues, "value")).toEqual([
+    expect(messages(mapping.issues, "skipped")).toEqual([
       expect.stringContaining("at least one partner"),
     ]);
+    // A family has no name for the label to carry, and the xref is what
+    // names it. `null` rather than an invented description.
+    expect(skips(mapping.issues)[0].record).toEqual({
+      tag: "FAM",
+      xref: "F1",
+      label: null,
+    });
   });
 
   it("leaves out a family whose two partners are the same person", () => {
@@ -817,7 +846,7 @@ describe("records the validation layer refuses", () => {
 1 WIFE @I1@`);
 
     expect(mapping.unions).toEqual([]);
-    expect(messages(mapping.issues, "value")).toEqual([
+    expect(messages(mapping.issues, "skipped")).toEqual([
       expect.stringContaining("union with themselves"),
     ]);
   });
@@ -834,7 +863,7 @@ describe("records the validation layer refuses", () => {
 
     expect(mapping.unions).toHaveLength(1);
     expect(mapping.unionChildren).toEqual([]);
-    expect(messages(mapping.issues, "value")).toEqual([
+    expect(messages(mapping.issues, "skipped")).toEqual([
       expect.stringContaining("also a partner"),
     ]);
   });
@@ -851,9 +880,14 @@ describe("records the validation layer refuses", () => {
 1 CHIL @I2@`);
 
     expect(mapping.unionChildren).toHaveLength(1);
-    expect(messages(mapping.issues, "value")).toEqual([
+    expect(messages(mapping.issues, "skipped")).toEqual([
       expect.stringContaining("more than once"),
     ]);
+    expect(skips(mapping.issues)[0].record).toEqual({
+      tag: "FAM.CHIL",
+      xref: "I2",
+      label: "B Two",
+    });
   });
 });
 

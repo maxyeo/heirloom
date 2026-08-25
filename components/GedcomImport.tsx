@@ -6,13 +6,23 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
-  type ImportDoneResponse,
   type ImportRefusal,
   type ImportResponse,
   isImportDone,
   isImportPreview,
 } from "@/lib/import-endpoint";
-import type { ImportPreview, ImportWarning } from "@/lib/import-preview";
+import {
+  EXAMPLES_SHOWN,
+  type ImportPreview,
+  type ImportWarning,
+} from "@/lib/import-preview";
+import type { GedcomRecordRef } from "@/lib/gedcom-report";
+import {
+  formatImportReport,
+  type ImportReport,
+  importReportFilename,
+  type ReportRows,
+} from "@/lib/import-report";
 
 /**
  * Upload a `.ged`, read what it would do, then decide (E6-T3, `YEO-48`).
@@ -57,13 +67,37 @@ import type { ImportPreview, ImportWarning } from "@/lib/import-preview";
  * between requests, and the alternative (stashing the parsed file server-side
  * under a token) needs somewhere to stash it and something to clean up after
  * every cancelled import.
+ *
+ * ## The fourth stage, and the download (E6-T5, `YEO-50`)
+ *
+ * An import that has run answers with an account of itself, and this screen
+ * shows the top of it: what was created, what was skipped, what was
+ * approximated, and the tags this application does not read. It is
+ * deliberately the *top* — a real file's report is longer than a screen, so
+ * each section shows its first few rows against its full count and the
+ * download is the whole thing.
+ *
+ * The file is built here rather than fetched, because the report describes
+ * bytes that exist only in the request that produced it; `lib/import-report.ts`
+ * gives the argument in full. `formatImportReport` is where the text is
+ * decided, so this component only has to hand the browser a blob.
+ *
+ * ## What stops a file being imported twice
+ *
+ * Nothing else does, and it matters more now than it could before: until the
+ * write was wired, `docs/architecture.md`'s known limitation — "importing the
+ * same file twice imports everybody twice" — was unreachable. Two things
+ * stand in the way and both are on this screen. `busy` disables the button
+ * while the request is out, and a finished import takes the preview down,
+ * which takes the Import button with it. There is no duplicate detection
+ * behind them; E6 says so in `docs/epics.md` under *Not in this epic*.
  */
 export function GedcomImport() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [previewed, setPreviewed] = useState<Previewed | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
-  const [imported, setImported] = useState<ImportDoneResponse | null>(null);
+  const [imported, setImported] = useState<Imported | null>(null);
   const [refusal, setRefusal] = useState<ImportRefusal | null>(null);
   const [cancelled, setCancelled] = useState(false);
 
@@ -146,7 +180,9 @@ export function GedcomImport() {
     // produces this and nothing should — the branch exists so that the day
     // something does, the reader is told their tree changed rather than shown
     // an empty screen.
-    if (isImportDone(answer)) return setImported(answer);
+    if (isImportDone(answer)) {
+      return setImported({ name: chosen.name, report: answer.report });
+    }
 
     setRefusal(answer);
   }
@@ -183,9 +219,11 @@ export function GedcomImport() {
     if (isImportDone(answer)) {
       // The preview goes with it. It described a decision that has now been
       // made, and leaving "what this file would add" on screen beside what it
-      // did add is two answers to one question.
+      // did add is two answers to one question — and, since the Import button
+      // lives on the preview, taking it down is also what stops a second
+      // press importing the same file twice (see the docblock above).
       setPreviewed(null);
-      return setImported(answer);
+      return setImported({ name: chosen.name, report: answer.report });
     }
 
     setRefusal(answer);
@@ -265,14 +303,7 @@ export function GedcomImport() {
       {refusal ? <Refusal refusal={refusal} /> : null}
 
       {imported ? (
-        <section className="mt-4">
-          <h2>What was imported</h2>
-          <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
-            <Count label="People" value={imported.written.people} />
-            <Count label="Unions" value={imported.written.unions} />
-            <Count label="Children" value={imported.written.children} />
-          </dl>
-        </section>
+        <ImportedBody report={imported.report} fileName={imported.name} />
       ) : null}
 
       {previewed ? (
@@ -314,7 +345,20 @@ export function GedcomImport() {
 /** The file that was read, and the answer it produced. */
 type Previewed = { name: string; digest: string; preview: ImportPreview };
 
+/**
+ * The file that was imported, and the account of what that did.
+ *
+ * The name is kept beside the report rather than inside it because the report
+ * is built on the server, which knows the bytes and not what the reader calls
+ * them. It is the heading of the downloaded file, so it has to survive to
+ * {@link formatImportReport}.
+ */
+type Imported = { name: string; report: ImportReport };
+
 type Busy = null | "reading" | "importing";
+
+/** How many rows of each report section the screen shows before the download. */
+const ROWS_ON_SCREEN = EXAMPLES_SHOWN;
 
 /** When `fetch` itself failed — the request never reached the application. */
 const UNREACHABLE =
@@ -463,7 +507,20 @@ function Count({ label, value }: { label: string; value: number }) {
  * file — "12/03/1890 could mean March or December" — and rewriting them here
  * would give one problem two spellings on one screen.
  */
-function WarningGroup({ warning }: { warning: ImportWarning }) {
+function WarningGroup({
+  warning,
+  shown = warning.examples.length,
+}: {
+  warning: ImportWarning;
+  /**
+   * How many examples to render. The preview's groups arrive already trimmed
+   * to five, so it passes nothing; the report's arrive with up to
+   * `REPORT_ROWS_SHOWN` in them and the screen shows the first few of those.
+   */
+  shown?: number;
+}) {
+  const examples = warning.examples.slice(0, shown);
+
   return (
     <li>
       <p className="text-caption">
@@ -471,14 +528,14 @@ function WarningGroup({ warning }: { warning: ImportWarning }) {
         {warning.count}
       </p>
       <ul className="text-note text-ink-muted">
-        {warning.examples.map((example, index) => (
+        {examples.map((example, index) => (
           <li key={index}>
             {example.line > 0 ? `Line ${example.line}: ` : null}
             {example.message}
           </li>
         ))}
-        {warning.count > warning.examples.length ? (
-          <li>and {warning.count - warning.examples.length} more</li>
+        {warning.count > examples.length ? (
+          <li>and {warning.count - examples.length} more</li>
         ) : null}
       </ul>
     </li>
@@ -503,6 +560,202 @@ function describeRefused(
   }
 
   return `${parts.join(" and ")} cannot be imported and would be left out.`;
+}
+
+/**
+ * The report: what the import did, and the button that downloads all of it.
+ *
+ * Every section is rendered even when it is empty, which is the same rule
+ * `formatImportReport` follows and for the same reason. "Nothing was skipped"
+ * is a finding; an absent heading is silence, and silence is what this ticket
+ * exists to replace.
+ */
+function ImportedBody({
+  report,
+  fileName,
+}: {
+  report: ImportReport;
+  fileName: string;
+}) {
+  /**
+   * The download, assembled at the moment it is asked for.
+   *
+   * An object URL rather than a `data:` URI because a report can be hundreds
+   * of kilobytes, and revoked immediately after the click because the blob is
+   * held alive by the URL alone — leaving it would keep every report of every
+   * import in memory for as long as the page is open.
+   */
+  function download() {
+    const text = formatImportReport(report, {
+      fileName,
+      importedAt: new Date(),
+    });
+    const url = URL.createObjectURL(
+      new Blob([text], { type: "text/plain;charset=utf-8" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = importReportFilename(fileName);
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <section className="mt-4">
+      <h2>What was imported</h2>
+      <p className="text-caption text-ink-muted">{fileName}</p>
+
+      <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
+        <Count label="People" value={report.created.people} />
+        <Count label="Unions" value={report.created.unions} />
+        <Count label="Children" value={report.created.children} />
+      </dl>
+      <p className="mt-1 text-caption text-ink-muted">
+        {countable(report.created.people, "person", "people")} of{" "}
+        {report.found.people} in the file, and {report.created.unions} of{" "}
+        {report.found.unions} unions.
+      </p>
+
+      {report.misdeclaredEncoding ? (
+        <p className="mt-1 text-caption">
+          The file says it is {report.misdeclaredEncoding} and its own bytes say
+          it is {report.encoding}. It was read as {report.encoding} — check the
+          accented names in the tree.
+        </p>
+      ) : null}
+
+      <ReportSection
+        title="What was skipped"
+        section={report.skipped}
+        empty="Nothing. Every record in the file is in the tree."
+        lead="Each of these was in the file and is not in the tree."
+        noun={["record", "records"]}
+        row={(skip, index) => (
+          <li key={index}>
+            <code>{describeSkippedRecord(skip.record)}</code>
+            {skip.line > 0 ? `, line ${skip.line}` : null}
+            <span className="block text-ink-muted">{skip.message}</span>
+          </li>
+        )}
+      />
+
+      <ReportSection
+        title="What was approximated"
+        section={report.approximated}
+        empty="Nothing. Every date was stored exactly as the file wrote it."
+        lead="Stored, and slightly poorer than the file wrote it. Nothing here needs fixing unless the lost detail mattered to you."
+        noun={["date", "dates"]}
+        row={(example, index) => (
+          <li key={index} className="text-ink-muted">
+            {example.line > 0 ? `Line ${example.line}: ` : null}
+            {example.message}
+          </li>
+        )}
+      />
+
+      <ReportSection
+        title="Tags this application does not read"
+        section={report.unsupportedTags}
+        empty="None. Every tag in the file is one this application reads."
+        lead={`${countable(report.unsupportedTagOccurrences, "line", "lines")} of valid GEDCOM with nowhere to go. Nothing is wrong with them and they are still in your file; they are simply outside what this records.`}
+        noun={["kind", "kinds"]}
+        row={(tag) => (
+          <li key={tag.path} className="text-ink-muted">
+            <code>{tag.path}</code> — {tag.count}
+            {tag.count === 1 ? " time" : " times"}, first at line{" "}
+            {tag.firstLine}
+          </li>
+        )}
+      />
+
+      {report.warnings.length > 0 ? (
+        <>
+          <h3 className="mt-4 text-note text-ink-muted">
+            Everything else worth knowing
+          </h3>
+          <ul className="space-y-2">
+            {report.warnings.map((warning) => (
+              <WarningGroup
+                key={warning.kind}
+                warning={warning}
+                shown={ROWS_ON_SCREEN}
+              />
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-rule pt-3">
+        <button
+          type="button"
+          onClick={download}
+          className="rounded-panel border border-rule bg-wash px-3 py-1 text-note font-medium hover:bg-paper"
+        >
+          Download the full report
+        </button>
+        <span className="text-note text-ink-muted">
+          Longer than this screen, and the only copy — nothing keeps it after
+          you leave.
+        </span>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * One section of the report: its count, its first few rows, and how many rows
+ * are only in the download.
+ *
+ * The heading carries the total rather than the number of rows below it, so a
+ * section that has been trimmed twice — once by `REPORT_ROWS_SHOWN` on the
+ * way here and once by {@link ROWS_ON_SCREEN} on the way to the screen — is
+ * still honest about how much there was.
+ */
+function ReportSection<T>({
+  title,
+  section,
+  empty,
+  lead,
+  noun,
+  row,
+}: {
+  title: string;
+  section: ReportRows<T>;
+  empty: string;
+  lead: string;
+  noun: [string, string];
+  row: (item: T, index: number) => React.ReactNode;
+}) {
+  const shown = section.rows.slice(0, ROWS_ON_SCREEN);
+
+  return (
+    <>
+      <h3 className="mt-4 text-note text-ink-muted">
+        {title} — {countable(section.total, noun[0], noun[1])}
+      </h3>
+      {section.total === 0 ? (
+        <p className="text-caption text-ink-muted">{empty}</p>
+      ) : (
+        <>
+          <p className="text-caption text-ink-muted">{lead}</p>
+          <ul className="text-caption">
+            {shown.map(row)}
+            {section.total > shown.length ? (
+              <li className="text-ink-muted">
+                and {section.total - shown.length} more, in the download
+              </li>
+            ) : null}
+          </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+/** `INDI I42 (Ada Reed)` — the record a skip is about, in the file's terms. */
+function describeSkippedRecord(record: GedcomRecordRef): string {
+  const named = [record.tag, record.xref].filter(Boolean).join(" ");
+  return record.label === null ? named : `${named} (${record.label})`;
 }
 
 /** "1 person", "3 people". */

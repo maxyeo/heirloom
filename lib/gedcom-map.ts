@@ -201,14 +201,24 @@ export function mapGedcom(file: GedcomFile): GedcomMapping {
   const individuals: MappedIndividual[] = [];
   const byXref = new Map<string, MappedIndividual>();
   const sourceByXref = new Map<string, GedcomIndividual>();
-  const knownIndividuals = new Set<string>();
+  const knownIndividuals = new Map<string, GedcomIndividual>();
 
   for (const individual of file.individuals) {
-    // Unconditional, and the only one of the three that is: this set answers
+    // Unconditional, and the only one of the three that is: this map answers
     // "was this identifier in the file at all", which is what separates a
     // broken pointer from a pointer to somebody this import refused. A
     // refused record is still a record the file contained.
-    if (individual.xref !== null) knownIndividuals.add(individual.xref);
+    //
+    // A map rather than a set of xrefs since E6-T5 (`YEO-50`), and for one
+    // reason: a skip has to name the record it left out, and the only place
+    // a *refused* person's name still exists is the `INDI` the file gave.
+    // `byXref` cannot answer — the whole point is that the person is not in
+    // it — and `sourceByXref` is deliberately populated only for records that
+    // validated. First writer wins, matching `byXref` above, so a duplicated
+    // xref names the same record here as everywhere else.
+    if (individual.xref !== null && !knownIndividuals.has(individual.xref)) {
+      knownIndividuals.set(individual.xref, individual);
+    }
 
     const values = mapIndividual(individual, issues);
     if (values === null) continue;
@@ -364,8 +374,13 @@ function mapIndividual(
 
   for (const issue of checked.issues) {
     issues.push({
-      kind: "value",
+      kind: "skipped",
       line: individual.line,
+      record: {
+        tag: "INDI",
+        xref: individual.xref,
+        label: primary?.full ?? null,
+      },
       message: `This person could not be recorded, so they and every family link to them were left out. ${issue.message}`,
     });
   }
@@ -377,7 +392,7 @@ function mapIndividual(
 function mapFamily(
   family: GedcomFamily,
   byXref: ReadonlyMap<string, MappedIndividual>,
-  knownIndividuals: ReadonlySet<string>,
+  knownIndividuals: ReadonlyMap<string, GedcomIndividual>,
   sequence: number,
   issues: GedcomIssue[],
 ): UnionFields | null {
@@ -427,8 +442,9 @@ function mapFamily(
 
   for (const issue of checked.issues) {
     issues.push({
-      kind: "value",
+      kind: "skipped",
       line: family.line,
+      record: { tag: "FAM", xref: family.xref, label: null },
       message: `This family could not be recorded, so it and its children's links to it were left out. ${issue.message}`,
     });
   }
@@ -501,7 +517,7 @@ function resolvePartner(
   tag: "HUSB" | "WIFE",
   xref: string | null,
   byXref: ReadonlyMap<string, MappedIndividual>,
-  knownIndividuals: ReadonlySet<string>,
+  knownIndividuals: ReadonlyMap<string, GedcomIndividual>,
   issues: GedcomIssue[],
 ): MappedIndividual | null {
   if (xref === null) return null;
@@ -509,12 +525,26 @@ function resolvePartner(
   const mapped = byXref.get(xref);
   if (mapped !== undefined) return mapped;
 
+  const role = tag === "HUSB" ? "husband" : "wife";
+
+  if (knownIndividuals.has(xref)) {
+    issues.push({
+      kind: "skipped",
+      line: family.line,
+      record: {
+        tag: `FAM.${tag}`,
+        xref,
+        label: nameInFile(knownIndividuals, xref),
+      },
+      message: `FAM.${tag} names ${xref}, who could not be recorded, so this family has no ${role}.`,
+    });
+    return null;
+  }
+
   issues.push({
-    kind: knownIndividuals.has(xref) ? "value" : "pointer",
+    kind: "pointer",
     line: family.line,
-    message: knownIndividuals.has(xref)
-      ? `FAM.${tag} names ${xref}, who could not be recorded, so this family has no ${tag === "HUSB" ? "husband" : "wife"}.`
-      : `FAM.${tag} names ${xref}, which is not a record in this file, so this family has no ${tag === "HUSB" ? "husband" : "wife"}.`,
+    message: `FAM.${tag} names ${xref}, which is not a record in this file, so this family has no ${role}.`,
   });
 
   return null;
@@ -535,7 +565,7 @@ function mapChildren(
   union: MappedUnion,
   byXref: ReadonlyMap<string, MappedIndividual>,
   sourceByXref: ReadonlyMap<string, GedcomIndividual>,
-  knownIndividuals: ReadonlySet<string>,
+  knownIndividuals: ReadonlyMap<string, GedcomIndividual>,
   issues: GedcomIssue[],
 ): MappedChild[] {
   const rows: MappedChild[] = [];
@@ -545,13 +575,24 @@ function mapChildren(
     const child = byXref.get(xref);
 
     if (child === undefined) {
-      issues.push({
-        kind: knownIndividuals.has(xref) ? "value" : "pointer",
-        line: family.line,
-        message: knownIndividuals.has(xref)
-          ? `FAM.CHIL names ${xref}, who could not be recorded, so they are not a child of this family.`
-          : `FAM.CHIL names ${xref}, which is not a record in this file, so it was left out.`,
-      });
+      issues.push(
+        knownIndividuals.has(xref)
+          ? {
+              kind: "skipped",
+              line: family.line,
+              record: {
+                tag: "FAM.CHIL",
+                xref,
+                label: nameInFile(knownIndividuals, xref),
+              },
+              message: `FAM.CHIL names ${xref}, who could not be recorded, so they are not a child of this family.`,
+            }
+          : {
+              kind: "pointer",
+              line: family.line,
+              message: `FAM.CHIL names ${xref}, which is not a record in this file, so it was left out.`,
+            },
+      );
       continue;
     }
 
@@ -560,8 +601,13 @@ function mapChildren(
     // silence: a file that names one child twice may have meant two.
     if (seen.has(child.id)) {
       issues.push({
-        kind: "value",
+        kind: "skipped",
         line: family.line,
+        record: {
+          tag: "FAM.CHIL",
+          xref,
+          label: nameInFile(knownIndividuals, xref),
+        },
         message: `FAM.CHIL names ${xref} more than once, and a child belongs to a family once, so the repeat was left out.`,
       });
       continue;
@@ -576,8 +622,13 @@ function mapChildren(
       child.id === union.values.partnerBId
     ) {
       issues.push({
-        kind: "value",
+        kind: "skipped",
         line: family.line,
+        record: {
+          tag: "FAM.CHIL",
+          xref,
+          label: nameInFile(knownIndividuals, xref),
+        },
         message: `FAM.CHIL names ${xref}, who is also a partner in this family, so the link was left out.`,
       });
       continue;
@@ -592,8 +643,13 @@ function mapChildren(
     if (!checked.ok) {
       for (const issue of checked.issues) {
         issues.push({
-          kind: "value",
+          kind: "skipped",
           line: family.line,
+          record: {
+            tag: "FAM.CHIL",
+            xref,
+            label: nameInFile(knownIndividuals, xref),
+          },
           message: `${xref} could not be recorded as a child of this family. ${issue.message}`,
         });
       }
@@ -609,6 +665,26 @@ function mapChildren(
   }
 
   return rows;
+}
+
+/**
+ * What the file calls a record, for a skip that has to name it.
+ *
+ * The file's own `NAME` line rather than anything this application would
+ * render, and that is the point: a skip is read beside the `.ged` it came
+ * from, so the string that helps is the string somebody can search their file
+ * for. It is also the only one available — a refused person never became a
+ * row, so there are no `given_name` and `surname` columns to format.
+ *
+ * `null` when the file names the record nothing, which is ordinary: an `INDI`
+ * with no `NAME` is how a program records somebody known only to have
+ * existed, and the xref beside it still says which record it was.
+ */
+function nameInFile(
+  knownIndividuals: ReadonlyMap<string, GedcomIndividual>,
+  xref: string,
+): string | null {
+  return knownIndividuals.get(xref)?.names[0]?.full ?? null;
 }
 
 /**
