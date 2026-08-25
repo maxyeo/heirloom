@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeBlockKind,
   describeContentDiffSummary,
   diffContent,
+  diffEntryContent,
   extractContentBlocks,
   hasContentChanges,
   summariseContentDiff,
@@ -399,5 +401,85 @@ describe("describeContentDiffSummary", () => {
     expect(describeContentDiffSummary(summariseContentDiff(rows))).toBe(
       "1 addition, 1 removal and 1 move.",
     );
+  });
+});
+
+/**
+ * The hatnote (E11-T9, `YEO-79`) is content, and it lives in its own column
+ * rather than in the body — so the diff has to reach it explicitly or a
+ * hatnote-only save writes a revision that reports no change.
+ */
+describe("diffEntryContent", () => {
+  it("reports a hatnote that was added", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: "<p>One.</p>" },
+      { bodyHtml: "<p>One.</p>", hatnote: "Not the ship." },
+    );
+
+    expect(rows).toEqual([
+      { status: "added", block: { kind: "hatnote", text: "Not the ship." } },
+      { status: "unchanged", block: { kind: "paragraph", text: "One." } },
+    ]);
+    expect(hasContentChanges(rows)).toBe(true);
+  });
+
+  it("reports a hatnote that was cleared", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: "<p>One.</p>", hatnote: "Not the ship." },
+      { bodyHtml: "<p>One.</p>" },
+    );
+
+    expect(rows[0]).toEqual({
+      status: "removed",
+      block: { kind: "hatnote", text: "Not the ship." },
+    });
+  });
+
+  it("leads with the hatnote, because that is where the page reads it", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: "<h2>Life</h2>", hatnote: "See also." },
+      { bodyHtml: "<h2>Life</h2>", hatnote: "See also." },
+    );
+
+    expect(rows.map((row) => row.block.kind)).toEqual(["hatnote", "heading2"]);
+    expect(hasContentChanges(rows)).toBe(false);
+  });
+
+  it("does not mistake a hatnote for a paragraph saying the same words", () => {
+    // Two blocks are the same only when kind *and* text match, so moving a
+    // sentence out of the hatnote and into the lead is a real edit rather than
+    // an unchanged row.
+    const rows = diffEntryContent(
+      { bodyHtml: "", hatnote: "Not the ship." },
+      { bodyHtml: "<p>Not the ship.</p>" },
+    );
+
+    expect(rows.map((row) => row.status)).toEqual(["removed", "added"]);
+  });
+
+  it("compares what a reader sees, not the markup", () => {
+    // Re-pointing a link without changing a word is not a change, exactly as
+    // it is not one for a paragraph in the body.
+    const rows = diffEntryContent(
+      { bodyHtml: "", hatnote: '<a href="/wiki/a">Rose</a> Hall' },
+      { bodyHtml: "", hatnote: '<a href="/wiki/b">Rose</a> Hall' },
+    );
+
+    expect(hasContentChanges(rows)).toBe(false);
+  });
+
+  it("narrows a stored hatnote that predates the narrowing", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: "", hatnote: "<p>Not the <strong>ship</strong>.</p>" },
+      { bodyHtml: "", hatnote: "Not the ship." },
+    );
+
+    expect(hasContentChanges(rows)).toBe(false);
+  });
+});
+
+describe("describeBlockKind", () => {
+  it("names the hatnote in the interface", () => {
+    expect(describeBlockKind("hatnote")).toBe("Hatnote");
   });
 });

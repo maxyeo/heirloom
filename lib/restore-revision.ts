@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { normaliseHatnote } from "@/lib/hatnote";
 import { isRevisionId } from "@/lib/revision-format";
 import { getRevisionById } from "@/lib/revisions";
 import { sanitizeHtml } from "@/lib/sanitize-html";
@@ -126,6 +127,7 @@ export async function restoreRevision(
         id: schema.pages.id,
         title: schema.pages.title,
         bodyHtml: schema.pages.bodyHtml,
+        hatnote: schema.pages.hatnote,
       })
       .from(schema.pages)
       .where(eq(schema.pages.slug, input.slug))
@@ -162,6 +164,15 @@ export async function restoreRevision(
      */
     const title = source.title.trim();
     const bodyHtml = sanitizeHtml(source.bodyHtml);
+    /**
+     * And the hatnote (E11-T9, `YEO-79`), narrowed on the way back in for the
+     * reason the body is sanitised on the way back in: a stored revision is
+     * not safe merely for being in the database, and restore is precisely the
+     * operation that makes an old row the live page again. `normaliseHatnote`
+     * is idempotent, so for every revision this application wrote it costs a
+     * parse and changes nothing.
+     */
+    const hatnote = normaliseHatnote(source.hatnote);
 
     /**
      * `revisions.title` is `not null` and every writer trims before inserting,
@@ -195,7 +206,11 @@ export async function restoreRevision(
      * page is the row being written, so it is the row that decides whether the
      * write would change anything.
      */
-    if (page.title === title && page.bodyHtml === bodyHtml) {
+    if (
+      page.title === title &&
+      page.bodyHtml === bodyHtml &&
+      page.hatnote === hatnote
+    ) {
       return { status: "unchanged", pageId: page.id };
     }
 
@@ -209,6 +224,7 @@ export async function restoreRevision(
       pageId: page.id,
       title,
       bodyHtml,
+      hatnote,
       editedBy: input.restoredBy,
       restoredFrom: source.id,
     });
@@ -229,6 +245,7 @@ export async function restoreRevision(
       .set({
         title,
         bodyHtml,
+        hatnote,
         updatedAt: sql`now()`,
         updatedBy: input.restoredBy,
       })

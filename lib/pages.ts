@@ -29,12 +29,22 @@ import { compareEntriesByTitle } from "@/lib/page-index";
  * `updatedAt`/`updatedBy` are the deliberate omission — those *are* content,
  * and the "last edited by" line belongs to the article chrome (E11-T2), which
  * is where the column and its formatting should arrive together.
+ *
+ * `hatnote` is here alongside `bodyHtml` because it is the other half of what
+ * an entry says (E11-T9, `YEO-79`) — the line above the lead, stored in its
+ * own column so that it is apparatus rather than prose. Both of this type's
+ * consumers need it: the read route renders it, and the editor prefills a
+ * field with it. It arrives **as stored**, which is not necessarily normalised
+ * — `normaliseHatnote` runs on the way out, exactly as `sanitizeHtml` does for
+ * the body, because a row written by `db:seed` or by hand has been through
+ * neither.
  */
 export type WikiEntry = {
   id: string;
   slug: string;
   title: string;
   bodyHtml: string;
+  hatnote: string;
 };
 
 /**
@@ -61,6 +71,7 @@ export async function getPageBySlug(
       slug: schema.pages.slug,
       title: schema.pages.title,
       bodyHtml: schema.pages.bodyHtml,
+      hatnote: schema.pages.hatnote,
     })
     .from(schema.pages)
     .where(eq(schema.pages.slug, slug))

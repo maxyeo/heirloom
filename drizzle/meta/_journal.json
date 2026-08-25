@@ -50,6 +50,13 @@
       "when": 1787683690287,
       "tag": "0006_import_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787686546499,
+      "tag": "0007_hatnote",
+      "breakpoints": true
     }
   ]
 }

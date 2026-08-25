@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { normaliseHatnote } from "@/lib/hatnote";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 
 /**
@@ -70,6 +71,15 @@ export async function writeRevision(
     pageId: string;
     title: string;
     bodyHtml: string;
+    /**
+     * The hatnote as it stands at this revision (E11-T9, `YEO-79`), already
+     * through `normaliseHatnote`. Required rather than optional, and that is
+     * the point: an optional hatnote here would ship green and quietly write
+     * `''` on every save that forgot it, which is a line of authored text
+     * disappearing from history without an error anywhere. `lib/create-page.ts`
+     * passes `""` explicitly, because a new entry genuinely has none.
+     */
+    hatnote: string;
     editedBy: string;
     /**
      * The revision this content was copied forward from, when the caller is
@@ -90,6 +100,7 @@ export async function writeRevision(
       pageId: entry.pageId,
       title: entry.title,
       bodyHtml: entry.bodyHtml,
+      hatnote: entry.hatnote,
       createdBy: entry.editedBy,
       restoredFromId: entry.restoredFrom ?? null,
     })
@@ -105,6 +116,18 @@ export type SavePageEdit = {
   title: string;
   /** TipTap output. Sanitised here before it reaches either table. */
   bodyHtml: string;
+  /**
+   * The hatnote, as the field submitted it (E11-T9, `YEO-79`). Normalised
+   * here, before it reaches either table, on the same terms as the body.
+   *
+   * Optional, and it is the one field here that is: `undefined` means "this
+   * caller has no opinion", which is what a direct POST written against the
+   * older shape of this action sends. It is read as an empty hatnote, so the
+   * failure is a visible missing line rather than a silent type error — see
+   * `savePageAction`, which is where a caller that *does* have an opinion is
+   * required to state it as a string.
+   */
+  hatnote?: string;
 };
 
 export type SavePageInput = SavePageEdit & {
@@ -148,6 +171,16 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
 
   const bodyHtml = sanitizeHtml(input.bodyHtml);
 
+  /**
+   * Narrowed to text and links here rather than trusted from the field, for
+   * exactly the reason `bodyHtml` is sanitised here: this is a server action's
+   * argument, and the constrained editor in front of it is a convenience for
+   * the author, not a boundary. See `lib/hatnote.ts` — the narrowing is a
+   * transform over `sanitizeHtml`'s own output, so there is no second
+   * allowlist to keep in step with the first.
+   */
+  const hatnote = normaliseHatnote(input.hatnote);
+
   return db.transaction(async (tx): Promise<SavePageResult> => {
     /**
      * `FOR UPDATE` holds the row until this transaction commits, which is what
@@ -164,6 +197,7 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
         id: schema.pages.id,
         title: schema.pages.title,
         bodyHtml: schema.pages.bodyHtml,
+        hatnote: schema.pages.hatnote,
       })
       .from(schema.pages)
       .where(eq(schema.pages.slug, input.slug))
@@ -183,7 +217,11 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
      * predates the sanitiser (a seed, a manual `UPDATE`) does count as changed,
      * because saving it genuinely rewrites it.
      */
-    if (page.title === title && page.bodyHtml === bodyHtml) {
+    if (
+      page.title === title &&
+      page.bodyHtml === bodyHtml &&
+      page.hatnote === hatnote
+    ) {
       return { status: "unchanged", pageId: page.id };
     }
 
@@ -191,6 +229,7 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
       pageId: page.id,
       title,
       bodyHtml,
+      hatnote,
       editedBy: input.editedBy,
     });
 
@@ -206,6 +245,7 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
       .set({
         title,
         bodyHtml,
+        hatnote,
         updatedAt: sql`now()`,
         updatedBy: input.editedBy,
       })

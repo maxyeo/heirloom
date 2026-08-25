@@ -427,4 +427,72 @@ describe("restoreRevision", () => {
     expect(await readPage(OTHER_PAGE)).toMatchObject({ title: "Untouched" });
     expect(await readRevisions(OTHER_PAGE)).toHaveLength(0);
   });
+
+  /**
+   * The hatnote (E11-T9, `YEO-79`). This is the case the column on `revisions`
+   * exists for: without it, restore would put the paragraphs back and leave
+   * the line above them saying whatever the last save left — succeeding, and
+   * being lossy, with nothing anywhere reporting it.
+   */
+  describe("the hatnote", () => {
+    /**
+     * The one revision in this entry's history that carries a hatnote.
+     *
+     * A helper rather than a `find(...)!` at two call sites: the tests below
+     * are about restore, and a missing fixture row should fail as a sentence
+     * saying the fixture is wrong rather than as a `TypeError` inside the
+     * function under test.
+     */
+    async function revisionCarryingAHatnote() {
+      const found = (await readRevisions()).find(
+        (revision) => revision.hatnote !== "",
+      );
+      if (!found) throw new Error("fixture wrote no revision with a hatnote");
+      return found;
+    }
+
+    it("goes back with the rest of the content", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V2,
+        hatnote: "For the house, see elsewhere.",
+        editedBy: AUTHOR,
+      });
+      await savePage({ slug: SLUG, ...V2, hatnote: "", editedBy: AUTHOR });
+      expect((await readPage()).hatnote).toBe("");
+
+      const withHatnote = await revisionCarryingAHatnote();
+
+      const result = await restoreRevision({
+        slug: SLUG,
+        revisionId: withHatnote.id,
+        restoredBy: RESTORER,
+      });
+
+      expect(result).toMatchObject({ status: "restored" });
+      expect((await readPage()).hatnote).toBe("For the house, see elsewhere.");
+    });
+
+    it("counts a hatnote-only difference as something to restore", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V2,
+        hatnote: "Only the hatnote moved.",
+        editedBy: AUTHOR,
+      });
+      await savePage({ slug: SLUG, ...V2, hatnote: "", editedBy: AUTHOR });
+
+      const target = await revisionCarryingAHatnote();
+
+      // Title and body are identical between the two, so the no-op rule would
+      // refuse this restore if it did not look at the hatnote.
+      await expect(
+        restoreRevision({
+          slug: SLUG,
+          revisionId: target.id,
+          restoredBy: RESTORER,
+        }),
+      ).resolves.toMatchObject({ status: "restored" });
+    });
+  });
 });

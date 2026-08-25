@@ -322,4 +322,102 @@ describe("savePage", () => {
       bodyHtml: page.bodyHtml,
     });
   });
+
+  /**
+   * The hatnote (E11-T9, `YEO-79`), which is authored text and therefore has
+   * to travel with the rest of it — into the row, into history, and into the
+   * no-op rule that decides whether an edit happened at all.
+   */
+  describe("the hatnote", () => {
+    it("writes it to the page and to the revision together", async () => {
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        hatnote: '<p>Not the <a href="/wiki/ship">ship</a>.</p>',
+        editedBy: EDITOR,
+      });
+
+      const page = await readPage();
+      const revisions = await readRevisions();
+
+      // Narrowed on the way in: the wrapper `<p>` is gone and the link is not.
+      expect(page.hatnote).toBe('Not the <a href="/wiki/ship">ship</a>.');
+      expect(revisions).toHaveLength(1);
+      expect(revisions[0].hatnote).toBe(page.hatnote);
+    });
+
+    it("counts a hatnote-only edit as a change", async () => {
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        hatnote: "For the house, see elsewhere.",
+        editedBy: EDITOR,
+      });
+
+      // Nothing else moved, so without the hatnote in the comparison this
+      // would report `unchanged` and the line would never reach the row.
+      expect(result).toMatchObject({ status: "saved" });
+      expect(await readRevisions()).toHaveLength(1);
+    });
+
+    it("counts re-saving the same hatnote as no change at all", async () => {
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        hatnote: "For the house, see elsewhere.",
+        editedBy: EDITOR,
+      });
+
+      // The comparison is against the value that *would be written*, so a
+      // hatnote that only differs by a wrapper the narrowing removes is the
+      // same hatnote — and pressing save must not append a history row.
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        hatnote: "<p>For the house, see elsewhere.</p>",
+        editedBy: EDITOR,
+      });
+
+      expect(result).toMatchObject({ status: "unchanged" });
+      expect(await readRevisions()).toHaveLength(1);
+    });
+
+    it("clears one when the field comes back empty", async () => {
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        hatnote: "Temporary.",
+        editedBy: EDITOR,
+      });
+
+      // What the editor posts for an emptied field: `<p></p>`, not `""`. It
+      // has to reach the column as the empty string, or the line above the
+      // lead never goes away.
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        hatnote: "<p></p>",
+        editedBy: EDITOR,
+      });
+
+      expect((await readPage()).hatnote).toBe("");
+    });
+
+    it("stores nothing for a caller that does not mention it", async () => {
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: "<p>No opinion about hatnotes.</p>",
+        editedBy: EDITOR,
+      });
+
+      expect((await readPage()).hatnote).toBe("");
+    });
+  });
 });

@@ -249,6 +249,29 @@
 
 @layer components {
   /*
+   * `.hatnote` is the indented italic line above the lead paragraph (E11-T9),
+   * and it is MediaWiki's class name and MediaWiki's three declarations,
+   * borrowed for the reason docs/product.md gives for borrowing the whole
+   * skin: a reader who has met a hatnote on Wikipedia already knows this line
+   * is not the article and is there to send them somewhere else.
+   *
+   * The indent is `padding-inline-start` rather than `padding-left`, and the
+   * bottom margin rather than a top one, so that stacking two hatnotes — the
+   * author's and the automatic one — spaces them evenly and leaves exactly one
+   * gap above the first paragraph.
+   *
+   * Outside `.wiki-body` on purpose. The hatnote is not article prose: it is
+   * rendered above the body from its own column, it never reaches the editor
+   * canvas, and scoping it inside the article's own stylesheet would say it
+   * was part of what the author typed into it.
+   */
+  .hatnote {
+    font-style: italic;
+    padding-inline-start: 1.6em;
+    margin-bottom: 0.5em;
+  }
+
+  /*
    * `.wiki-body` is the article body — the equivalent of MediaWiki's
    * `.mw-parser-output`. Everything here is scoped rather than global because
    * Tailwind's preflight strips list markers on purpose, and the wiki chrome

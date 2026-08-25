@@ -57,6 +57,27 @@ const EXEMPT = new Set([
    * it should be deleted the day that stops being true.
    */
   join("components", "AppShell.tsx"),
+  /**
+   * The hatnote (E11-T9, `YEO-79`). Exempt for the *opposite* reason to
+   * `AppShell` above: its `__html` has been through the allowlist, and it must
+   * not be put through it again here.
+   *
+   * `app/wiki/[slug]/page.tsx` normalises the stored hatnote — which is
+   * `sanitizeHtml` twice over, see `lib/hatnote.ts` — and then hands the
+   * result to `markMissingEntryLinks`, which adds the `class` and `title` that
+   * paint a link to a missing entry red. The allowlist permits neither
+   * attribute on an `a`. So a `sanitizeHtml` call *inside this component*
+   * would not be a belt-and-braces second pass; it would silently delete the
+   * red links, which is precisely the ordering trap `lib/red-links.ts`
+   * documents and `lib/red-links.test.ts` asserts against for the body.
+   *
+   * What keeps this honest is that the component renders what it is given and
+   * derives no markup of its own: the automatic half of the hatnote is React
+   * elements through `entryLinkProps`, not a string. The day it starts
+   * building HTML from a database value, this exemption is hiding something
+   * and should go.
+   */
+  join("components", "ArticleHatnote.tsx"),
 ]);
 
 function sourceFiles(): string[] {
@@ -90,11 +111,25 @@ describe("dangerouslySetInnerHTML call sites", () => {
   });
 
   it("routes every one of them through the sanitiser", () => {
+    /**
+     * The two ways into the one allowlist. `normaliseHatnote` is not a second
+     * sanitiser and does not count as an alternative to the first — it *is*
+     * `sanitizeHtml`, run twice with a structural flatten between the passes
+     * (`lib/hatnote.ts`) — so a file that renders a hatnote it narrowed itself
+     * satisfies this guard for the same reason a file that sanitises a body
+     * does. Adding a genuinely different entry point here would be the thing
+     * to argue about; adding another spelling of this one is not.
+     */
+    const entryPoints: readonly [module: string, call: RegExp][] = [
+      ["@/lib/sanitize-html", /\bsanitizeHtml\s*\(/],
+      ["@/lib/hatnote", /\bnormaliseHatnote\s*\(/],
+    ];
+
     const offenders = callSites.filter((file) => {
       const source = readFileSync(join(repoRoot, file), "utf8");
-      return (
-        !source.includes('from "@/lib/sanitize-html"') ||
-        !/\bsanitizeHtml\s*\(/.test(source)
+      return !entryPoints.some(
+        ([module, call]) =>
+          source.includes(`from "${module}"`) && call.test(source),
       );
     });
 

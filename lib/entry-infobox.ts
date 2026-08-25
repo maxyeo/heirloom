@@ -1,7 +1,7 @@
 import { inArray } from "drizzle-orm";
 
 import { db, schema } from "@/db";
-import { getEntryPerson } from "@/lib/entry-person";
+import type { EntryPerson } from "@/lib/entry-person";
 import { type FamilyGraph, getFamilyGraph } from "@/lib/family-graph";
 import { derivePersonInfobox, type PersonInfobox } from "@/lib/person-infobox";
 
@@ -17,13 +17,19 @@ import { derivePersonInfobox, type PersonInfobox } from "@/lib/person-infobox";
 /**
  * The box for an entry, or null when the entry is not about a person.
  *
- * ## Why it starts from `getEntryPerson`
+ * ## Why the subject arrives as an argument
  *
  * E2-T3 (`YEO-26`) already reads `individuals.page_id` backwards to answer
  * "who is this entry about", including the tie-break that keeps the answer
  * stable when two rows claim one entry. Finding the subject in the graph by
  * `pageId` here would be a second reverse lookup with a second opinion about
- * that tie, so this asks the existing one and uses the id it returns.
+ * that tie, so this takes the answer rather than asking again.
+ *
+ * It used to take a `pageId` and call `getEntryPerson` itself. E11-T9
+ * (`YEO-79`) is what changed it: the automatic hatnote needs the same subject
+ * — it is "who else is called this" — and a second call would have been a
+ * second scan of `individuals` on every person's entry to re-derive a row the
+ * render already had. One lookup, in the route, handed to both.
  *
  * ## Why the whole graph, when the header card deliberately did not
  *
@@ -48,13 +54,13 @@ import { derivePersonInfobox, type PersonInfobox } from "@/lib/person-infobox";
  * route puts these slugs through the same `findExistingSlugs` call the article
  * body uses so that one set decides blue or red for both.
  *
- * @param pageId the entry's `pages.id`
+ * @param subject the person this entry is about, from `getEntryPerson`, or
+ *   `undefined` when the entry is about a place, an heirloom or a story
  * @returns the box, or null when nobody is linked to this entry
  */
 export async function readEntryInfobox(
-  pageId: string,
+  subject: EntryPerson | undefined,
 ): Promise<PersonInfobox | null> {
-  const subject = await getEntryPerson(pageId);
   if (!subject) return null;
 
   // Deliberately sequential, not a `Promise.all`. Most entries in a family

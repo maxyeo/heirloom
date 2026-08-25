@@ -5,10 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
   BLOCK_STYLES,
   EDITOR_INPUT_OPTIONS,
+  HATNOTE_STARTER_KIT_OPTIONS,
+  HATNOTE_TOOLBAR_ITEMS,
   HEADING_LEVELS,
   STARTER_KIT_OPTIONS,
   TOOLBAR_ITEMS,
   createEntryExtensions,
+  createHatnoteExtensions,
   normaliseLinkHref,
 } from "@/lib/editor-extensions";
 import {
@@ -293,5 +296,64 @@ describe("links", () => {
         );
       }
     });
+  });
+});
+
+/**
+ * The hatnote field (E11-T9, `YEO-79`), whose whole specification is a
+ * subtraction: "plain text plus links; not a full editor surface".
+ *
+ * Checked the same DOM-free way the body is, and for the same reason —
+ * `getSchema()` builds the real ProseMirror schema from the real extension
+ * list, which is the authoritative answer to what markup this editor can
+ * produce. An extension left on by accident is a keyboard shortcut that emits
+ * something `normaliseHatnote` then flattens away on save, which the author
+ * experiences as the field eating their formatting.
+ */
+describe("the hatnote editor", () => {
+  it("offers exactly one control, and it is Link", () => {
+    expect(HATNOTE_TOOLBAR_ITEMS.map((item) => item.id)).toEqual(["link"]);
+  });
+
+  it("offers the *same* Link control the body does", () => {
+    // Derived rather than restated, so the two fields cannot end up with
+    // different labels or different tooltips for one action.
+    expect(HATNOTE_TOOLBAR_ITEMS[0]).toBe(
+      TOOLBAR_ITEMS.find((item) => item.id === "link"),
+    );
+  });
+
+  it("produces one paragraph, text, and links — and nothing else", () => {
+    const schema = getSchema(createHatnoteExtensions());
+    const names = [
+      ...Object.keys(schema.nodes),
+      ...Object.keys(schema.marks),
+    ].sort();
+
+    // `doc`, `paragraph` and `text` are structural. `link` is the feature.
+    // Everything that would put a tag in the stored line is absent, which is
+    // what makes "plain text plus links" a property of the editor rather than
+    // a rule the save path has to clean up after.
+    expect(names).toEqual(["doc", "link", "paragraph", "text"]);
+  });
+
+  it("keeps the body's link configuration rather than a copy of it", () => {
+    expect(HATNOTE_STARTER_KIT_OPTIONS.link).toBe(STARTER_KIT_OPTIONS.link);
+  });
+
+  it("switches off every control the field has no button for", () => {
+    expect(HATNOTE_STARTER_KIT_OPTIONS.bold).toBe(false);
+    expect(HATNOTE_STARTER_KIT_OPTIONS.italic).toBe(false);
+    expect(HATNOTE_STARTER_KIT_OPTIONS.bulletList).toBe(false);
+    expect(HATNOTE_STARTER_KIT_OPTIONS.heading).toBe(false);
+    // One line: with `hardBreak` on, shift+Enter would put a `<br>` in a field
+    // whose stored form has no room for one.
+    expect(HATNOTE_STARTER_KIT_OPTIONS.hardBreak).toBe(false);
+  });
+
+  it("hands out a fresh extension array per editor", () => {
+    // There are genuinely two editors on the edit page now, and a Tiptap
+    // extension instance carries per-editor storage.
+    expect(createHatnoteExtensions()).not.toBe(createHatnoteExtensions());
   });
 });

@@ -50,10 +50,16 @@ export async function savePageAction(
   if (
     typeof edit?.slug !== "string" ||
     typeof edit.title !== "string" ||
-    typeof edit.bodyHtml !== "string"
+    typeof edit.bodyHtml !== "string" ||
+    // Absent is allowed and anything-but-a-string is not (E11-T9, `YEO-79`).
+    // The editor always sends it; a caller that omits it is saying "no
+    // hatnote", which `savePage` reads as the empty one. A number or an object
+    // arriving here is a caller that thinks this field means something else,
+    // and that is worth refusing rather than coercing.
+    (edit.hatnote !== undefined && typeof edit.hatnote !== "string")
   ) {
     throw new TypeError(
-      "savePageAction expects a slug, title and bodyHtml, all strings.",
+      "savePageAction expects a slug, title and bodyHtml, all strings, and an optional hatnote.",
     );
   }
 
@@ -61,6 +67,7 @@ export async function savePageAction(
     slug: edit.slug,
     title: edit.title,
     bodyHtml: edit.bodyHtml,
+    hatnote: edit.hatnote,
     editedBy,
   });
 
