@@ -113,6 +113,27 @@ import type { UnionFields } from "./union-input";
  * `lib/export-tree.ts` is the thin half that reads the rows.
  */
 
+/**
+ * ## It writes what it is given, and does not validate
+ *
+ * The round trip closes for every tree this application can produce, which is
+ * every tree that went through `validateIndividual`, `validateUnion` and
+ * `validateChildLink` — and, where a row can be written *around* them by hand,
+ * this module still writes a file that says what a reader will read: a place
+ * is collapsed and a name trimmed exactly as the parser would, a `FAM` with no
+ * partner is not written because it is a record about nobody, and a `CHIL`
+ * naming one of the family's own partners is not written because no reader can
+ * resolve that contradiction.
+ *
+ * What it does **not** do is repair a row whose *values* the schema refuses. A
+ * birth recorded as `BET 1900 AND 1890`, or a person in a union with
+ * themselves, is written faithfully and then declined by `validateIndividual`
+ * or `validateUnion` on the way back in, with a sentence on the import report
+ * saying so. Silently reversing the bounds or dropping the partner would be
+ * this module inventing a recovery policy that the import side deliberately
+ * does not have, and hiding a broken row rather than surfacing it.
+ */
+
 /** An `individuals` row. A Drizzle row satisfies this as it comes back. */
 export type ExportIndividual = IndividualFields & { id: string };
 
@@ -223,6 +244,7 @@ export function writeGedcom(tree: GedcomExportInput): string {
 
   const links = orderChildren(
     tree.unionChildren,
+    unions,
     positionOfUnion,
     positionOfIndividual,
   );
@@ -365,18 +387,36 @@ function writeIndividual(
  * which is what the row says.
  */
 function writeName(lines: string[], individual: ExportIndividual): void {
-  const surname = individual.surname;
+  const given = trimmed(individual.givenName);
+  const surname = trimmed(individual.surname);
 
-  const full = [
-    individual.givenName === "" ? null : individual.givenName,
-    surname === null ? null : `/${surname}/`,
-  ]
+  const full = [given, surname === null ? null : `/${surname}/`]
     .filter((part) => part !== null)
     .join(" ");
 
   emit(lines, 1, "NAME", full);
-  if (individual.givenName !== "") emit(lines, 2, "GIVN", individual.givenName);
+  if (given !== null) emit(lines, 2, "GIVN", given);
   if (surname !== null) emit(lines, 2, "SURN", surname);
+}
+
+/**
+ * A name as the parser will read it back, which is to say trimmed.
+ *
+ * `lib/gedcom.ts` reads `NAME`, `GIVN` and `SURN` through `blankToNull`, and
+ * `readText` in `lib/field-input.ts` trims on the way into the column too — so
+ * a stored name with a leading space is a row written around the validators.
+ * Written verbatim it would come back trimmed and the second export would
+ * disagree with the first, which is the round trip E7-T2 (`YEO-52`) tests.
+ *
+ * Trimmed and not collapsed, unlike a place: the parser does not collapse a
+ * name, so `John  Henry` with two spaces survives the trip exactly as stored
+ * and there is nothing here to repair.
+ */
+function trimmed(value: string | null): string | null {
+  if (value === null) return null;
+
+  const text = value.trim();
+  return text === "" ? null : text;
 }
 
 /**
@@ -405,11 +445,42 @@ type ExportEvent = ExportDate & { place: string | null };
  */
 function writeEvent(lines: string[], tag: string, event: ExportEvent): void {
   const date = writeGedcomDate(event);
-  if (date === null && event.place === null) return;
+  const place = writePlace(event.place);
+
+  if (date === null && place === null) return;
 
   emit(lines, 1, tag);
   if (date !== null) emit(lines, 2, "DATE", date);
-  if (event.place !== null) emit(lines, 2, "PLAC", event.place);
+  if (place !== null) emit(lines, 2, "PLAC", place);
+}
+
+/**
+ * A place, in the form the parser will read it back as.
+ *
+ * `lib/gedcom.ts` reads `PLAC` through `collapse` — runs of whitespace become
+ * one space — and `readText` in `lib/field-input.ts`, which is what a place
+ * goes through on the way *into* the column, only trims. So a place can
+ * legitimately be stored as `Whitby,  Yorkshire`, with two spaces, or with a
+ * tab or a newline in it, and writing that out verbatim makes the round trip
+ * E7-T2 (`YEO-52`) tests fail on the second pass: the first export writes two
+ * spaces, the import collapses them, and the second export writes one.
+ *
+ * Collapsing here rather than widening the parser, because the parser is
+ * right. A place is one line of text in every genealogy program there has ever
+ * been, and `1 PLAC` is a line-oriented tag whose leading and trailing spaces
+ * no two readers agree about. What this loses is a run of whitespace inside a
+ * place name, which is a typo in every case anybody can name; what it buys is
+ * that the file says exactly what every reader will read out of it.
+ *
+ * `null` for a place that is nothing but whitespace, which `readText` already
+ * refuses on the way in. Writing a bare `2 PLAC` for it would be a third
+ * spelling of "no place recorded" and would not survive the trip either.
+ */
+function writePlace(place: string | null): string | null {
+  if (place === null) return null;
+
+  const collapsed = place.replace(/\s+/g, " ").trim();
+  return collapsed === "" ? null : collapsed;
 }
 
 /** One `FAM` record. */
@@ -634,10 +705,16 @@ function orderUnions(
 ): readonly ExportUnion[] {
   const place = (partnerId: string | null): number =>
     partnerId === null
-      ? Number.MAX_SAFE_INTEGER
-      : (positionOfIndividual.get(partnerId) ?? Number.MAX_SAFE_INTEGER);
+      ? UNPLACED
+      : (positionOfIndividual.get(partnerId) ?? UNPLACED);
 
-  return stableSort(unions, (union) => [
+  const written = unions.filter(
+    (union) =>
+      place(union.partnerAId) !== UNPLACED ||
+      place(union.partnerBId) !== UNPLACED,
+  );
+
+  return stableSort(written, (union) => [
     place(union.partnerAId),
     place(union.partnerBId),
     union.startDate ?? "",
@@ -659,14 +736,49 @@ function orderUnions(
  */
 function orderChildren(
   links: readonly ExportChild[],
+  unions: readonly ExportUnion[],
   positionOfUnion: ReadonlyMap<string, number>,
   positionOfIndividual: ReadonlyMap<string, number>,
 ): readonly ExportChild[] {
-  return stableSort(links, (link) => [
-    positionOfUnion.get(link.unionId) ?? Number.MAX_SAFE_INTEGER,
-    positionOfIndividual.get(link.childId) ?? Number.MAX_SAFE_INTEGER,
+  const unionById = new Map(unions.map((union) => [union.id, union]));
+  const seen = new Set<string>();
+
+  const written = links.filter((link) => {
+    const union = unionById.get(link.unionId);
+    if (union === undefined) return false;
+
+    // `union_children` is keyed on the pair, so a repeat is not a row that can
+    // exist — and a second `CHIL` naming the same person is one
+    // `lib/gedcom-map.ts` refuses by name on the way back in.
+    const pair = `${link.unionId}\u0000${link.childId}`;
+    if (seen.has(pair)) return false;
+    seen.add(pair);
+
+    // A person cannot be a child of a family they are a partner in. Writing
+    // both would put `1 WIFE @I2@` and `1 CHIL @I2@` in one record — a
+    // contradiction no reader can resolve, and one `lib/gedcom-map.ts` refuses
+    // by name on the way back in, so the link would not survive the trip
+    // either. `lib/save-child.ts` refuses it on the typed path as
+    // `child-is-partner`; this is the same rule, applied where the file is
+    // written rather than where a form is posted.
+    return (
+      link.childId !== union.partnerAId && link.childId !== union.partnerBId
+    );
+  });
+
+  return stableSort(written, (link) => [
+    positionOfUnion.get(link.unionId) ?? UNPLACED,
+    positionOfIndividual.get(link.childId) ?? UNPLACED,
   ]);
 }
+
+/**
+ * Where a row sorts when it has no place in the order at all — a union whose
+ * partners this tree does not contain, or a link naming a record that is not
+ * here. Last, so that a broken foreign key cannot shift the numbering of the
+ * records that are intact.
+ */
+const UNPLACED = Number.MAX_SAFE_INTEGER;
 
 /** A sort key: the fields to compare, in order, before falling back to input order. */
 type SortKey = readonly (string | number)[];

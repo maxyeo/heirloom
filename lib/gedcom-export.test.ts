@@ -656,14 +656,211 @@ describe("long and multi-line values", () => {
 
   it("folds a newline with CONT rather than CONC", () => {
     // Getting these the wrong way round is the classic GEDCOM bug: `CONC`
-    // rejoins with nothing, `CONT` with a newline.
+    // rejoins with nothing, `CONT` with a newline. A name rather than a place,
+    // because the parser does not collapse a name — so this is a value that
+    // genuinely reaches the `CONT` path and survives the trip.
     const text = writeGedcom({
-      individuals: [person({ birthPlace: "Whitby\nYorkshire" })],
+      individuals: [person({ givenName: "John\nHenry", surname: null })],
       unions: [],
       unionChildren: [],
     });
 
-    expect(text).toContain("2 PLAC Whitby\r\n3 CONT Yorkshire\r\n");
+    expect(text).toContain("2 GIVN John\r\n3 CONT Henry\r\n");
+  });
+
+  it("recovers a folded value character for character", () => {
+    const place = "Q".repeat(400);
+
+    const text = writeGedcom({
+      individuals: [person({ birthPlace: place })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(parseGedcomText(text).individuals[0].birth?.place).toBe(place);
+  });
+
+  it("does not split inside a surrogate pair", () => {
+    // Walking UTF-16 units instead of code points would cut an astral
+    // character in half and produce two replacement characters.
+    const name = "\u{1F600}".repeat(150);
+
+    const text = writeGedcom({
+      individuals: [person({ givenName: name, surname: null })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).not.toContain("\uFFFD");
+    expect(parseGedcomText(text).individuals[0].names[0].given).toBe(name);
+  });
+});
+
+describe("values written as the parser will read them", () => {
+  // The round trip is a byte comparison, so a value the parser normalises has
+  // to be normalised on the way out or the second export disagrees with the
+  // first. These are all rows written around the validators — `readText` trims
+  // on the way into the column — but the file still has to say what a reader
+  // will read out of it.
+
+  it("collapses whitespace in a place, which is what the parser does to it", () => {
+    const text = writeGedcom({
+      individuals: [person({ birthPlace: "Whitby,  Yorkshire" })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("2 PLAC Whitby, Yorkshire\r\n");
+  });
+
+  it.each([
+    ["a double space", "Whitby,  Yorkshire"],
+    ["a tab", "Whitby,\tYorkshire"],
+    ["a newline", "Whitby\nYorkshire"],
+  ])(
+    "round-trips a place containing %s unchanged on the second pass",
+    (_label, place) => {
+      const tree: GedcomExportInput = {
+        individuals: [person({ id: id(1), birthPlace: place })],
+        unions: [],
+        unionChildren: [],
+      };
+
+      const first = writeGedcom(tree);
+      expect(writeGedcom(roundTrip(tree).input)).toBe(first);
+    },
+  );
+
+  it("trims a name but does not collapse it", () => {
+    // The parser trims `GIVN` and `SURN` and does not collapse them, so
+    // `John  Henry` is a name that survives the trip exactly as stored.
+    const text = writeGedcom({
+      individuals: [
+        person({ givenName: "  John  Henry  ", surname: " Smith " }),
+      ],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("2 GIVN John  Henry\r\n");
+    expect(text).toContain("2 SURN Smith\r\n");
+  });
+});
+
+describe("rows that could only have been written around the validators", () => {
+  const alive = person({ id: id(1), givenName: "John", surname: "Smith" });
+  const kid = person({ id: id(2), givenName: "Edward", surname: "Smith" });
+
+  it("writes no FAM for a union with no partner this tree contains", () => {
+    // `validateUnion` refuses one — "A union needs at least one partner" — so
+    // the record would say nothing about anybody and would not survive the
+    // trip. Dropping it before the xrefs are handed out is what keeps it from
+    // shifting the numbering of the families that are intact.
+    const text = writeGedcom({
+      individuals: [alive],
+      unions: [union({ id: id(50), type: "marriage" })],
+      unionChildren: [],
+    });
+
+    expect(text).not.toContain(" FAM");
+    expect(text).not.toContain("1 MARR");
+  });
+
+  it("keeps the family numbering contiguous when a union is dropped", () => {
+    const text = writeGedcom({
+      individuals: [alive],
+      unions: [
+        union({ id: id(50), type: "marriage" }),
+        union({ id: id(51), partnerAId: alive.id, type: "marriage" }),
+      ],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("0 @F1@ FAM\r\n");
+    expect(text).not.toContain("@F2@");
+    expect(text).toContain("1 FAMS @F1@\r\n");
+  });
+
+  it("writes no CHIL for a person who is a partner in the same family", () => {
+    // `1 WIFE @I2@` beside `1 CHIL @I2@` is a contradiction no reader can
+    // resolve, and `lib/gedcom-map.ts` refuses it by name on the way back in.
+    const text = writeGedcom({
+      individuals: [alive, kid],
+      unions: [
+        union({
+          id: id(50),
+          partnerAId: alive.id,
+          partnerBId: kid.id,
+          type: "marriage",
+        }),
+      ],
+      unionChildren: [
+        { unionId: id(50), childId: kid.id, relation: "biological" },
+      ],
+    });
+
+    expect(text).not.toContain("1 CHIL");
+    expect(text).not.toContain("1 FAMC");
+  });
+
+  it("writes one CHIL for a child link repeated", () => {
+    // `union_children` is keyed on the pair, so a repeat is not a row that can
+    // exist in the first place.
+    const text = writeGedcom({
+      individuals: [alive, kid],
+      unions: [union({ id: id(50), partnerAId: alive.id, type: "marriage" })],
+      unionChildren: [
+        { unionId: id(50), childId: kid.id, relation: "adopted" },
+        { unionId: id(50), childId: kid.id, relation: "foster" },
+      ],
+    });
+
+    expect(text.match(/1 CHIL /g)).toHaveLength(1);
+    expect(text.match(/2 PEDI /g)).toHaveLength(1);
+  });
+
+  it("skips a link naming a record this tree does not contain", () => {
+    const text = writeGedcom({
+      individuals: [alive],
+      unions: [union({ id: id(50), partnerAId: alive.id, type: "marriage" })],
+      unionChildren: [
+        { unionId: id(50), childId: id(99), relation: "biological" },
+      ],
+    });
+
+    expect(text).not.toContain("1 CHIL");
+  });
+
+  it("writes a value the schema refuses rather than quietly repairing it", () => {
+    // An inverted range. `validateIndividual` is what refuses it, and it does
+    // so on the way back in with a sentence on the report — reversing the
+    // bounds here would hide a broken row instead of surfacing it.
+    const text = writeGedcom({
+      individuals: [
+        person({
+          birthDate: "1900-01-01",
+          birthDatePrecision: "year",
+          birthDateUpper: "1890-01-01",
+          birthDateUpperPrecision: "year",
+        }),
+      ],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("2 DATE BET 1900 AND 1890\r\n");
+  });
+
+  it("never throws, whatever the row says", () => {
+    expect(() =>
+      writeGedcom({
+        individuals: [person({ birthDate: "not-a-date", givenName: "" })],
+        unions: [union({ id: id(50), partnerAId: id(99) })],
+        unionChildren: [
+          { unionId: id(98), childId: id(97), relation: "biological" },
+        ],
+      }),
+    ).not.toThrow();
   });
 });
 

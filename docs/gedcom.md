@@ -319,6 +319,35 @@ texts to be identical. Three things follow.
 The xrefs are then positional — `I1`, `F1` — which is what makes them stable
 without being derived from an id that is not.
 
+### It writes what it is given, and does not validate
+
+The round trip closes for every tree this application can produce — which is
+every tree that went through `validateIndividual`, `validateUnion` and
+`validateChildLink`. Where a row can be written _around_ those by hand, the
+export still writes a file that says what a reader will read:
+
+- A **place is collapsed** exactly as the parser collapses it. `readText` only
+  trims on the way into the column, so `Whitby,  Yorkshire` with two spaces is
+  a storable value — and written verbatim it would come back with one space and
+  the second export would disagree with the first.
+- A **name is trimmed** and deliberately _not_ collapsed, because the parser
+  trims a name and does not collapse one. `John  Henry` survives the trip
+  exactly as stored.
+- A **`FAM` with no partner is not written.** `validateUnion` refuses one — a
+  union needs at least one partner — so the record would say nothing about
+  anybody. It is dropped before the xrefs are handed out, so it cannot shift
+  the numbering of the families that are intact.
+- A **`CHIL` naming one of the family's own partners is not written.**
+  `1 WIFE @I2@` beside `1 CHIL @I2@` is a contradiction no reader can resolve,
+  and the mapping refuses it by name on the way back in.
+
+What the export does **not** do is repair a row whose _values_ the schema
+refuses. A birth recorded as `BET 1900 AND 1890`, or a person in a union with
+themselves, is written faithfully and then declined by the validators on the
+way back in, with a sentence on the import report saying so. Silently reversing
+the bounds would be the export inventing a recovery policy the import side
+deliberately does not have, and hiding a broken row rather than surfacing it.
+
 ### What a first export narrows
 
 Three states the schema can hold and GEDCOM cannot. All three lose the same
