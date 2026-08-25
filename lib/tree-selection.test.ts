@@ -9,6 +9,7 @@ import {
   PERSON_PARAM,
   linkedPersonId,
   personSearch,
+  treeHref,
   withSelection,
 } from "@/lib/tree-selection";
 
@@ -111,6 +112,20 @@ describe("personSearch", () => {
 
   it("accepts the search string with or without its question mark", () => {
     expect(personSearch("person=rose", "walter")).toBe("?person=walter");
+  });
+});
+
+describe("treeHref", () => {
+  it("builds the deep link off the one parameter contract", () => {
+    expect(treeHref("rose")).toBe(`/tree?${PERSON_PARAM}=rose`);
+  });
+
+  it("encodes an id that needs escaping", () => {
+    // Not a shape any id in the schema takes, but the point of routing this
+    // through `personSearch` — and, underneath it, `URLSearchParams` — is
+    // that this function never has to know that: whatever the id is, the
+    // query string it produces is well-formed.
+    expect(treeHref("a b&c")).toBe(`/tree?${PERSON_PARAM}=a+b%26c`);
   });
 });
 

@@ -83,6 +83,30 @@ export function personSearch(search: string, personId: string | null): string {
 }
 
 /**
+ * The deep link to `personId` on the tree (E2-T4), for anywhere outside the
+ * tree itself that names a person — first, `/search` (E8-T2, `YEO-56`).
+ *
+ * Built from `personSearch("", personId)` rather than from a template of its
+ * own, so the `?person=` contract has exactly one description in the
+ * codebase: this function decides *that* the parameter exists and what it is
+ * called, `personSearch` decides how it composes with whatever else is
+ * already in a query string, and nothing outside either one is allowed to
+ * spell out `?person=` for itself. A search result linking to
+ * `` `/tree?person=${id}` `` by hand would still work today and silently stop
+ * working the day this parameter's name changed underneath it.
+ *
+ * `personSearch` already encodes the id — it hands the value to
+ * `URLSearchParams.set`, which percent-encodes it — so a result whose id
+ * needs escaping still lands on a valid URL.
+ *
+ * @param personId who the link should open the tree on
+ * @returns the path and query string, e.g. `/tree?person=<id>`
+ */
+export function treeHref(personId: string): string {
+  return `/tree${personSearch("", personId)}`;
+}
+
+/**
  * `nodes` with exactly `personId` selected, and `null` for nothing selected.
  *
  * Returns the array it was given when the selection is already right, and

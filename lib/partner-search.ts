@@ -1,5 +1,6 @@
 import type { GraphPerson } from "./family-graph";
 import { formatLifespan } from "./format-date";
+import { foldName, literalTermRank } from "./name-match";
 import { formatPersonName } from "./person-format";
 
 /**
@@ -34,6 +35,13 @@ import { formatPersonName } from "./person-format";
  *   any order, is what makes a year usable as a disambiguator between two
  *   people with the same name — which is the case the picker exists to get
  *   right, since choosing the wrong Thomas silently marries the wrong couple.
+ *
+ * Accent folding and the three-tier ranking below moved to
+ * `lib/name-match.ts` for E8-T2 (`YEO-56`), which needed both again for
+ * `/search` and had a third kind of tolerance to add beside them. This
+ * module's own ranking is unchanged by that move — it calls `foldName` and
+ * `literalTermRank` exactly where it used to call its own private `fold` and
+ * `termRank`.
  */
 
 /** A person as the picker offers them: enough to choose between two Thomases. */
@@ -65,51 +73,6 @@ export type SearchPartnersOptions = {
 const DEFAULT_LIMIT = 8;
 
 /**
- * Strip accents and case so that "jose" finds "José".
- *
- * NFD splits an accented character into its base letter and a combining mark;
- * removing the marks leaves the base letters. The combining range is written
- * out as `\u0300-\u036f` rather than as `\p{Diacritic}` because unicode
- * property escapes need an ES2018 target and this project compiles to ES2017.
- */
-function fold(text: string): string {
-  return text
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-/**
- * How well one person answers one term, lower being better, `null` being not
- * at all.
- *
- * Three tiers, and the order is what makes the list feel like it is answering
- * the question rather than filtering an array: a name that *starts* with what
- * was typed first, then a later word in the name that does, then anything
- * that merely contains it somewhere. Typing "ros" puts Rosalind above
- * Ambrose, because a name beginning with what you typed is what you meant.
- *
- * A given name and a surname are both tier 0 when either begins with the
- * term. That is deliberate: "hale" and "thomas" are equally good ways to ask
- * for Thomas Hale, and ranking one above the other would only be guessing at
- * which half of a name the author reached for.
- */
-function termRank(haystacks: readonly string[], term: string): number | null {
-  let best: number | null = null;
-
-  for (const hay of haystacks) {
-    let rank: number | null = null;
-    if (hay.startsWith(term)) rank = 0;
-    else if (hay.includes(` ${term}`)) rank = 1;
-    else if (hay.includes(term)) rank = 2;
-
-    if (rank !== null && (best === null || rank < best)) best = rank;
-  }
-
-  return best;
-}
-
-/**
  * Search the people already on the tree.
  *
  * An empty query is not an empty answer: it returns the first `limit` people
@@ -129,7 +92,7 @@ export function searchPartners(
   const { excludeIds = [], limit = DEFAULT_LIMIT } = options;
   const excluded = new Set(excludeIds);
 
-  const terms = fold(query).split(/\s+/).filter(Boolean);
+  const terms = foldName(query).split(/\s+/).filter(Boolean);
 
   const scored: { candidate: PartnerCandidate; rank: number; sort: string }[] =
     [];
@@ -148,10 +111,10 @@ export function searchPartners(
      * alongside a name to tell two people of that name apart.
      */
     const haystacks = [
-      fold(name),
-      fold(person.surname ?? ""),
-      fold(person.birthDate ?? ""),
-      fold(person.deathDate ?? ""),
+      foldName(name),
+      foldName(person.surname ?? ""),
+      foldName(person.birthDate ?? ""),
+      foldName(person.deathDate ?? ""),
     ].filter(Boolean);
 
     // Every term has to match something, in any order. One that matches
@@ -159,7 +122,7 @@ export function searchPartners(
     let rank = 0;
     let matched = true;
     for (const term of terms) {
-      const termScore = termRank(haystacks, term);
+      const termScore = literalTermRank(haystacks, term);
       if (termScore === null) {
         matched = false;
         break;
@@ -183,7 +146,7 @@ export function searchPartners(
        * escape, never as a literal byte — a raw NUL makes git treat the
        * whole file as binary and `gh pr diff` refuse to show it.
        */
-      sort: `${fold(name)}\0${person.id}`,
+      sort: `${foldName(name)}\0${person.id}`,
     });
   }
 
