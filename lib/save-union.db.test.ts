@@ -341,3 +341,115 @@ describe("when somebody has gone", () => {
     expect(await unionsFor(rose)).toEqual([]);
   });
 });
+
+describe("date ranges (YEO-88)", () => {
+  /**
+   * The database half of the highest-consequence risk in the ticket: a range
+   * is two columns per bound, and the individual side of the write path
+   * already has `EditPersonForm.test.tsx`'s round trip guarding it. This is
+   * the union side of the same guarantee, proved against real Postgres
+   * rather than mocked — `lib/union-input.test.ts` already proves the
+   * validator's rules in isolation; what only a real database can show is
+   * that both new columns actually round-trip through their real enums.
+   */
+  it("stores a start-date range, both bounds and both precisions intact", async () => {
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+
+    const { unionId } = await add(
+      submission({
+        personId: rose,
+        partnerId: thomas,
+        union: {
+          startDate: "1912-01-01",
+          startDatePrecision: "year",
+          startDateUpper: "1913-06-01",
+          startDateUpperPrecision: "month",
+        },
+      }),
+    );
+
+    const [union] = await db
+      .select()
+      .from(schema.unions)
+      .where(eq(schema.unions.id, unionId));
+
+    // Mixed precision (year lower, month upper) is what proves the second
+    // precision column genuinely carries its own value rather than mirroring
+    // the first.
+    expect(union).toMatchObject({
+      startDate: "1912-01-01",
+      startDateQualifier: "exact",
+      startDatePrecision: "year",
+      startDateUpper: "1913-06-01",
+      startDateUpperPrecision: "month",
+    });
+  });
+
+  it("stores an end-date range, both bounds and both precisions intact", async () => {
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+
+    const { unionId } = await add(
+      submission({
+        personId: rose,
+        partnerId: thomas,
+        union: {
+          endDate: "1938-03-01",
+          endDatePrecision: "month",
+          endDateUpper: "1939-01-01",
+          endDateUpperPrecision: "year",
+          endReason: "divorce",
+        },
+      }),
+    );
+
+    const [union] = await db
+      .select()
+      .from(schema.unions)
+      .where(eq(schema.unions.id, unionId));
+
+    // `endDateUpper` is the upper bound of the *end date*, and has nothing to
+    // do with `endReason` — the name collision ("end" appears in both) is
+    // the one a future reader will trip on, so this pins them as independent:
+    // the range round-trips exactly as given, and the reason is still the
+    // reason the caller chose, not something the range write overwrote.
+    expect(union).toMatchObject({
+      endDate: "1938-03-01",
+      endDateQualifier: "exact",
+      endDatePrecision: "month",
+      endDateUpper: "1939-01-01",
+      endDateUpperPrecision: "year",
+      endReason: "divorce",
+    });
+  });
+
+  it("takes the column defaults for a union with no range at all", async () => {
+    // The "migration changes the meaning of nothing" claim, asserted for
+    // unions the way `lib/save-individual.db.test.ts` already asserts it for
+    // people: a row written without touching the new columns reads back
+    // `upper === null` and `upperPrecision === "day"`.
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+
+    const { unionId } = await add(
+      submission({
+        personId: rose,
+        partnerId: thomas,
+        union: { startDate: "1912-06-04" },
+      }),
+    );
+
+    const [union] = await db
+      .select()
+      .from(schema.unions)
+      .where(eq(schema.unions.id, unionId));
+
+    expect(union).toMatchObject({
+      startDateUpper: null,
+      startDateUpperPrecision: "day",
+      endDateUpper: null,
+      endDateUpperPrecision: "day",
+    });
+  });
+});
