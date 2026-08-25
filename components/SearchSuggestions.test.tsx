@@ -11,6 +11,7 @@ import {
   idleSuggestionState,
   requestFailed,
   responseArrived,
+  suggestionOptions,
   typed,
   type SuggestionState,
 } from "@/lib/suggestion-state";
@@ -298,5 +299,57 @@ describe("a request in flight over results already on screen", () => {
         .querySelector('[role="listbox"]')
         ?.getAttribute("aria-busy"),
     ).toBe("false");
+  });
+});
+
+describe("a failure on top of an answer already on screen", () => {
+  /**
+   * The inverse of invariant 2, and the more dangerous half. `requestFailed`
+   * keeps `shown` so that a *stale* failure cannot clobber correct results —
+   * which means a failure for the **current** query arrives with the previous
+   * query's answer still cached behind it. Rendering those rows would show a
+   * sighted reader confident, wrong results for what they just typed, while
+   * telling a screen-reader user through the live region that search is down.
+   *
+   * Both halves are asserted, because fixing only one is the bug again in a
+   * different shape.
+   */
+  const afterFailure = requestFailed(typed(bothGroups, "rosemary"), "rosemary");
+
+  it("does not show the previous query's results as the answer", () => {
+    const host = show(afterFailure);
+
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(host.textContent).not.toContain("Rose Hale");
+    expect(host.textContent).not.toContain("The Hale family");
+  });
+
+  it("says so where it can be seen, not only where it is announced", () => {
+    expect(show(afterFailure).textContent).toContain(
+      "Search is not answering just now",
+    );
+  });
+
+  it("does not offer a way to see more of an answer it does not have", () => {
+    expect(show(afterFailure).textContent).not.toContain("See all results");
+  });
+});
+
+describe("the rows the keyboard can reach are the rows on screen", () => {
+  /**
+   * `suggestionOptions` offers nothing to arrow through unless the status is
+   * `results`, so anything rendered as an `option` outside that status would
+   * be clickable by mouse and unreachable by keyboard — an operability
+   * failure rather than a cosmetic one. The counts are asserted against each
+   * other rather than against a literal, so the two cannot drift apart.
+   */
+  it.each([
+    ["a settled answer", bothGroups],
+    ["a request in flight over one", typed(bothGroups, "rosem")],
+    ["a failure over one", requestFailed(typed(bothGroups, "rosem"), "rosem")],
+    ["nothing typed", idleSuggestionState],
+  ])("agrees with suggestionOptions for %s", (_label, state) => {
+    const rendered = show(state).querySelectorAll('[role="option"]');
+    expect(rendered).toHaveLength(suggestionOptions(state).length);
   });
 });

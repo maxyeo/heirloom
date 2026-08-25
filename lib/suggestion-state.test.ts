@@ -250,6 +250,33 @@ describe("the rows a keyboard can reach", () => {
     expect(suggestionOptions(state)).toEqual([]);
   });
 
+  /**
+   * Rows that are still on screen while the next answer loads (invariant 3)
+   * stay usable: they are real links to real people, and a better answer
+   * being on its way does not make them inert. Drawing them and not listing
+   * them here would make them mouse-only.
+   */
+  it("keeps the rows reachable while the next answer is in flight", () => {
+    const loading = typed(withBoth, "rosem");
+    expect(loading.status).toBe("loading");
+    expect(suggestionOptions(loading).map((o) => o.key)).toEqual([
+      "person-a",
+      "person-b",
+      "entry-e1",
+    ]);
+  });
+
+  /**
+   * But not the footer, which names the *current* query — offering "See all
+   * results for “rosem”" above the rows for "rose" would be a lie, and it is
+   * the one row whose target depends on the query rather than on a result.
+   */
+  it("withholds the way to the full page until the answer has settled", () => {
+    expect(
+      suggestionOptions(typed(withBoth, "rosem")).map((o) => o.key),
+    ).not.toContain(SEE_ALL_OPTION_KEY);
+  });
+
   it("moves down and up, wrapping at both ends", () => {
     const options = suggestionOptions(withBoth);
     expect(nextOptionKey(options, null, 1)).toBe("person-a");

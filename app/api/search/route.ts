@@ -1,5 +1,6 @@
 import {
-  SUGGESTION_LIMIT,
+  MIN_SUGGESTION_QUERY,
+  SUGGESTION_FETCH_LIMIT,
   emptySuggestions,
   readSearchQuery,
   toSuggestions,
@@ -92,15 +93,23 @@ export async function GET(request: Request): Promise<Response> {
   const query = readSearchQuery(new URL(request.url).searchParams);
 
   /**
-   * An empty query is answered, not refused.
+   * Too short to be worth asking about — answered, not refused.
    *
-   * `components/SearchBox.tsx` will not ask — `shouldRequest` stops short of
-   * `MIN_SUGGESTION_QUERY` — so this is only reachable by a hand-typed URL or
-   * a repeated `?q=`. A 400 there would turn something harmless into an error
-   * state the client has to have copy for; 200 with nothing in it is the same
-   * answer both backends would give, bought without the round trip.
+   * `components/SearchBox.tsx` will not ask, because `shouldRequest` applies
+   * the same floor, so this is only reachable by a hand-typed URL or a
+   * repeated `?q=`. The floor is enforced **here as well as there** because
+   * the client is not a trust boundary and, more to the point, is not the
+   * only caller: this is a GET anybody signed in can issue, and
+   * `searchPeopleByName` reads the whole `individuals` table on every call
+   * with no debounce in front of it. A rule that exists to bound cost has to
+   * live where the cost is paid. See `MIN_SUGGESTION_QUERY` for why one
+   * character is not an answer in the first place.
+   *
+   * 200 with nothing in it rather than a 400: it is the same answer both
+   * backends would give, bought without the round trip, and a 400 would turn
+   * something harmless into an error state the client needs copy for.
    */
-  if (query === "") return json(emptySuggestions(query));
+  if (query.length < MIN_SUGGESTION_QUERY) return json(emptySuggestions(query));
 
   /**
    * Two reads of two tables that have nothing to do with each other, issued
@@ -108,12 +117,15 @@ export async function GET(request: Request): Promise<Response> {
    * awaiting them in sequence would make the answer as slow as the sum of
    * them for no reason.
    *
-   * `SUGGESTION_LIMIT + 1` from each, so `toSuggestions` can tell "exactly
-   * five matched" from "five of forty" and say which. See its docblock.
+   * `SUGGESTION_FETCH_LIMIT` from each — one more than is shown — so that
+   * `toSuggestions` can tell "exactly five matched" from "five of forty" and
+   * say which. Both backends get the same number, because two groups that
+   * disagreed about depth would read as a defect in whichever came up
+   * shorter (`lib/entry-search.ts`).
    */
   const [people, entries] = await Promise.all([
-    searchPeopleByName(query, { limit: SUGGESTION_LIMIT + 1 }),
-    searchEntries(query, { limit: SUGGESTION_LIMIT + 1 }),
+    searchPeopleByName(query, { limit: SUGGESTION_FETCH_LIMIT }),
+    searchEntries(query, { limit: SUGGESTION_FETCH_LIMIT }),
   ]);
 
   return json(toSuggestions(query, people, entries));

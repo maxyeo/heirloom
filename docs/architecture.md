@@ -454,6 +454,10 @@ The pieces, and where each decision lives:
   typist and still below the ~250ms at which an interface starts to feel like
   it is thinking. It is not a nicety: `searchPeopleByName` reads the whole
   `individuals` table per call, and this ticket put it on a per-keystroke path.
+- **A two-character floor, enforced at both ends.** The box declines to ask,
+  and the handler declines to answer. The client is not the only caller — this
+  is a GET any signed-in person can issue, with no debounce in front of it —
+  and a rule that exists to bound cost has to live where the cost is paid.
 - **Staleness is decided by the question, not by a counter.** The payload
   echoes back the query it answers, and `lib/suggestion-state.ts` discards any
   response that is not the question currently in the box. That is strictly

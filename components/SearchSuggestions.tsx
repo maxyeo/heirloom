@@ -86,7 +86,6 @@ export function SearchSuggestions({
   const shown = state.shown;
   const people = shown?.people ?? [];
   const entries = shown?.entries ?? [];
-  const hasResults = people.length > 0 || entries.length > 0;
 
   /**
    * Results stay on screen while the next request is in flight — see
@@ -95,6 +94,39 @@ export function SearchSuggestions({
    * attribute saying a better answer is coming.
    */
   const busy = state.status === "loading";
+
+  /**
+   * Whether to draw the rows at all — and it is a question about the
+   * **status**, not only about whether `shown` happens to hold something.
+   *
+   * `requestFailed` deliberately keeps `shown`, so that a failure for a query
+   * that has since been retyped cannot clobber results that are still
+   * correct (invariant 2). The consequence, if this branched on `shown`
+   * alone, is the inverse bug and a worse one: a request for the *current*
+   * query fails, `shown` still holds the previous query's answer, and the
+   * panel renders those rows as though they were the answer to what was just
+   * typed — with the error sentence reaching only the live region, so a
+   * screen-reader user is told search is down while a sighted user is shown
+   * confident, wrong results.
+   *
+   * So `error` and `empty` fall through to `quietMessage` no matter what is
+   * cached behind them. `loading` keeps its rows, which is the whole of
+   * invariant 3.
+   */
+  const hasResults =
+    (state.status === "results" || state.status === "loading") &&
+    (people.length > 0 || entries.length > 0);
+
+  /**
+   * The "See all results" row exists only for a settled answer, which makes
+   * this exactly `suggestionOptions`' own condition — and that agreement is
+   * the point rather than a coincidence. `suggestionOptions` returns `[]` for
+   * any other status, so a row rendered here while loading would be visible
+   * and clickable by mouse and unreachable by keyboard, which is an
+   * operability failure rather than a cosmetic one. It would also be a lie:
+   * "See all results for “rosemary”" sitting above the rows for "rose".
+   */
+  const showSeeAll = state.status === "results";
 
   return (
     <div className="max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain rounded-panel border border-rule bg-paper p-2 shadow-lg">
@@ -185,18 +217,20 @@ export function SearchSuggestions({
             The disclosure that keeps `SUGGESTION_LIMIT` honest: this panel
             shows five per group where `/search` shows twenty, and it says so
             rather than implying it is the whole answer. Present whenever
-            there is an answer at all — not only when a group overflowed —
+            there is a settled answer — not only when a group overflowed —
             because the page is also where the snippets have room to breathe.
           */}
-          <Option
-            id={optionId(SEE_ALL_OPTION_KEY)}
-            href={`/search?q=${encodeURIComponent(state.query)}`}
-            selected={activeKey === SEE_ALL_OPTION_KEY}
-          >
-            <span className="text-caption text-link">
-              {`See all results for “${state.query}”`}
-            </span>
-          </Option>
+          {showSeeAll ? (
+            <Option
+              id={optionId(SEE_ALL_OPTION_KEY)}
+              href={`/search?q=${encodeURIComponent(state.query)}`}
+              selected={activeKey === SEE_ALL_OPTION_KEY}
+            >
+              <span className="text-caption text-link">
+                {`See all results for “${state.query}”`}
+              </span>
+            </Option>
+          ) : null}
         </div>
       ) : (
         // No listbox at all rather than an empty one: an expanded listbox

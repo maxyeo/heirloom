@@ -120,6 +120,17 @@ function subscribeToNothing(): () => void {
   return () => {};
 }
 
+/**
+ * What the server renders, and what hydration starts from: nothing, because
+ * the server cannot know the platform. Module scope, like its two siblings —
+ * an inline `() => null` would be a fresh closure on every render, which is
+ * harmless here (React consults it only during the hydration pass) but is one
+ * more thing a reader has to convince themselves of.
+ */
+function noKeyboardHint(): null {
+  return null;
+}
+
 function readKeyboardHint(): string | null {
   const nav = navigator as NavigatorWithUserAgentData;
   return keyboardHint(
@@ -150,7 +161,11 @@ function readKeyboardHint(): string | null {
  * genuine mismatch somewhere else gets hidden for a year.
  */
 function useKeyboardHint(): string | null {
-  return useSyncExternalStore(subscribeToNothing, readKeyboardHint, () => null);
+  return useSyncExternalStore(
+    subscribeToNothing,
+    readKeyboardHint,
+    noKeyboardHint,
+  );
 }
 
 export function SearchBox({ siteName }: { siteName: string }) {
@@ -259,6 +274,15 @@ export function SearchBox({ siteName }: { siteName: string }) {
    */
   useEffect(() => {
     const query = state.query;
+    /**
+     * `stateRef.current` is `state` as of **this** commit, not a later one:
+     * the assignment above is an effect of this component with no dependency
+     * array, and React runs a component's effects in declaration order, so it
+     * has already run for this render by the time this one does. So this is
+     * the same `state` the line above destructured, read through a ref only
+     * so that this effect can depend on the query alone and not re-run — and
+     * re-fire the debounce — when an answer arrives for it.
+     */
     if (!shouldRequest(stateRef.current, query)) return;
 
     const controller = new AbortController();

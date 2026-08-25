@@ -208,28 +208,51 @@ export const SEE_ALL_OPTION_KEY = "see-all";
 /**
  * Every row a keystroke can reach, in the order it is rendered.
  *
- * Empty unless there is actually an answer on screen. That covers the two
- * cases that would otherwise be navigable and shouldn't be: an `empty`
- * status has no rows at all, and it deliberately carries **no "See all
- * results"** either — sending somebody to a page that will also be empty is
- * a dead end dressed as an escape hatch.
+ * **This must match what `components/SearchSuggestions.tsx` actually draws**,
+ * exactly, in every status. A row that is drawn but not listed here is
+ * clickable with a mouse and unreachable with a keyboard, which is an
+ * operability failure rather than a cosmetic one; a row listed here but not
+ * drawn puts `aria-activedescendant` on an id that resolves to nothing. The
+ * component derives its two conditions from the same two below, and
+ * `components/SearchSuggestions.test.tsx` asserts the counts against each
+ * other so the pair cannot drift.
+ *
+ * Two conditions, because the rows and the footer answer to different ones:
+ *
+ * - **The result rows** are reachable while the status is `results` *or*
+ *   `loading`. Loading keeps the previous answer on screen (invariant 3), and
+ *   rows that are on screen have to be usable — they are real links to real
+ *   people, and the fact that a better answer is coming does not make them
+ *   inert. `error` and `empty` are excluded: whatever `shown` still holds
+ *   behind them is not an answer to the query being asked.
+ * - **"See all results"** only for a settled `results`. It names the current
+ *   query, so offering it beside a stale list would be a lie; and after an
+ *   `empty` it would send somebody to a page that will also be empty, which
+ *   is a dead end dressed as an escape hatch.
  *
  * The keys are prefixed by group rather than being the ids alone: a person
  * and an entry are different tables and nothing stops them sharing a uuid.
  */
 export function suggestionOptions(state: SuggestionState): SuggestionOption[] {
-  if (state.status !== "results" || state.shown === null) return [];
+  const shown = state.shown;
+  if (shown === null) return [];
+  if (state.status !== "results" && state.status !== "loading") return [];
 
-  return [
-    ...state.shown.people.map((match) => ({
+  const rows = [
+    ...shown.people.map((match) => ({
       key: `person-${match.id}`,
       href: match.href,
     })),
-    ...state.shown.entries.map((match) => ({
+    ...shown.entries.map((match) => ({
       key: `entry-${match.id}`,
       href: match.href,
     })),
-    { key: SEE_ALL_OPTION_KEY, href: searchPageUrl(state.shown.query) },
+  ];
+
+  if (state.status !== "results") return rows;
+  return [
+    ...rows,
+    { key: SEE_ALL_OPTION_KEY, href: searchPageUrl(shown.query) },
   ];
 }
 

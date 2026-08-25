@@ -64,6 +64,22 @@ export const SEARCH_QUERY_PARAM = "q";
 export const SUGGESTION_LIMIT = 5;
 
 /**
+ * How many each backend is actually asked for: one more than is shown.
+ *
+ * Named here, beside the limit and beside `toSuggestions` which reads it,
+ * rather than written as `SUGGESTION_LIMIT + 1` at the call site in
+ * `app/api/search/route.ts`. The pairing is the whole mechanism for the
+ * "See all results" disclosure — ask for exactly five and the extra row that
+ * distinguishes "five matched" from "five of forty" is never fetched, so
+ * `peopleHasMore` is false forever and the dropdown silently starts implying
+ * it is the whole answer. That is a failure with no symptom, which is the
+ * kind worth making structural: the constant and the truncation now live one
+ * line apart and are pinned against each other by
+ * `lib/search-endpoint.test.ts`.
+ */
+export const SUGGESTION_FETCH_LIMIT = SUGGESTION_LIMIT + 1;
+
+/**
  * The shortest query worth asking the database about.
  *
  * One character is the beginning of a name, not a name, and both backends

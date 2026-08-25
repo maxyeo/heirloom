@@ -5,6 +5,7 @@ import type { PersonMatch } from "@/lib/people-search";
 import {
   MIN_SUGGESTION_QUERY,
   SEARCH_QUERY_PARAM,
+  SUGGESTION_FETCH_LIMIT,
   SUGGESTION_LIMIT,
   emptySuggestions,
   parseSearchSuggestions,
@@ -197,5 +198,30 @@ describe("the limits", () => {
   it("shows fewer per group than the results page does", () => {
     expect(SUGGESTION_LIMIT).toBe(5);
     expect(MIN_SUGGESTION_QUERY).toBe(2);
+  });
+
+  /**
+   * The pairing the "See all results" disclosure rests on, pinned so it
+   * cannot be broken silently. Asking for exactly `SUGGESTION_LIMIT` would
+   * never fetch the row that distinguishes "five matched" from "five of
+   * forty" — `hasMore` would be false forever and the dropdown would start
+   * implying it is the whole answer, with no symptom anywhere.
+   */
+  it("asks each backend for exactly one more than it shows", () => {
+    expect(SUGGESTION_FETCH_LIMIT).toBe(SUGGESTION_LIMIT + 1);
+
+    const full = Array.from({ length: SUGGESTION_FETCH_LIMIT }, (_, i) =>
+      person(`p${i}`),
+    );
+    const result = toSuggestions(
+      "rose",
+      full,
+      full.map((_, i) => entry(`e${i}`)),
+    );
+
+    // A full fetch is exactly what "there is more" has to look like.
+    expect(result.peopleHasMore).toBe(true);
+    expect(result.entriesHasMore).toBe(true);
+    expect(result.people).toHaveLength(SUGGESTION_LIMIT);
   });
 });
