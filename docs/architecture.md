@@ -826,6 +826,14 @@ grants write and delete on the store, and never appears in the repository.
   either the file's own `_UID`/`REFN` where a program wrote one, or a
   reader-facing merge step of the kind E3-T10 already has for unions.
 
+  Worth knowing that this became _reachable_ with E6-T5 (`YEO-50`), which
+  wired the confirming branch of `app/api/import/route.ts` to the write; until
+  then it answered `501` and no import could happen at all. Two things stand
+  between a reader and a duplicated tree and both are on the screen rather
+  than in the data: the button is disabled while the request is out, and a
+  finished import takes the preview down, which takes the Import button with
+  it. Neither is a guarantee, which is why this stays on this list.
+
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.

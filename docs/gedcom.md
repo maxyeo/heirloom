@@ -8,10 +8,10 @@ reasonable to put decades of somebody's work in here in the first place.
 This page covers the **parser** — E6-T1 (`YEO-46`), the read half — the
 **mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
 (`YEO-47`), the **preview** somebody reads before an import happens, which is
-E6-T3 (`YEO-48`), the **export** back out, which is E7-T1 (`YEO-51`), and
-the **download** that puts it in somebody's hands, which is E7-T3
-(`YEO-53`). Writing the rows is E6-T4 and reporting on them afterwards is
-E6-T5.
+E6-T3 (`YEO-48`), the **write**, which is E6-T4 (`YEO-49`), the **report**
+afterwards, which is E6-T5 (`YEO-50`), the **export** back out, which is E7-T1
+(`YEO-51`), and the **download** that puts it in somebody's hands, which is
+E7-T3 (`YEO-53`).
 
 ## The pipeline
 
@@ -25,7 +25,9 @@ through them:
 | `lib/gedcom-lines.ts`    | text          | a tree of tagged nodes                  |
 | `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
+| `lib/import-rows.ts`     | that          | those rows, flattened for `insert`      |
 | `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
+| `lib/import-report.ts`   | all of it     | an account of what the import did       |
 
 And three on the way back out:
 
@@ -239,7 +241,9 @@ disagreeing about what a valid row is.
 So a person whose death date is before their birth date is **not imported**,
 and every family link to them goes with them: the family keeps its other
 partner and loses this one to a null. That is a real cost, and it is reported
-every time with the sentence the validator gave.
+every time with the sentence the validator gave — as a `skipped` issue
+carrying the `INDI`'s xref and the name the file gave it, so E6-T5's report
+can say _who_ rather than only _how many_.
 
 The considered alternative was to drop the offending _field_ and re-validate —
 blank the date, keep the person. It was rejected because it is a recovery
@@ -266,18 +270,52 @@ reasons, already worded for the person who has to act on them, and
 re-describing them here would give one loss two spellings in one report with
 no way to tell it was one loss.
 
-The mapping's own additions are `value` (a fact with nowhere to go, a record
-refused) and `pointer` (a `HUSB`, `CHIL`, `FAMS` or `FAMC` naming a record
-that is not in the file, or one whose two halves disagree). The cross-check
-between `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own
-docblock promised: carrying both halves is only worth it if somebody
-eventually compares them. It says nothing about a file whose halves agree,
-which is every well-formed file.
+The mapping's own additions are three kinds:
+
+- **`skipped`** — this application refused a record or a link, so it is not in
+  the tree. Every one of them carries a `GedcomRecordRef`: the tag, the xref,
+  and the name the file gave, as a value rather than a phrase inside the
+  sentence.
+- **`value`** — a fact with nowhere to put it. A `MARR.PLAC`, a person with
+  three names, a `PEDI` nobody recognises.
+- **`pointer`** — a `HUSB`, `CHIL`, `FAMS` or `FAMC` naming a record that is
+  not in the file, or one whose two halves disagree. The cross-check between
+  `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own docblock
+  promised: carrying both halves is only worth it if somebody eventually
+  compares them. It says nothing about a file whose halves agree, which is
+  every well-formed file.
+
+`skipped` was split out of `value` by E6-T5 (`YEO-50`), and the argument is
+the one that split `narrowed` out of `date`. `value` had come to mean two
+things at once — a detail with nowhere to go, and a whole person left out —
+and those are not the same news. `lib/gedcom-report.ts` says the closed set
+exists "so the report can group and count … without matching on sentences",
+and on the question the report most needed to answer it was not doing that
+job: counting the skips meant matching the wording of a sentence written for
+a human to read.
+
+The line between `skipped` and `pointer` is drawn on **cause, not outcome**,
+which keeps the two disjoint. A `CHIL` naming somebody this import refused is
+a skip; a `CHIL` naming a record that is not in the file at all is a pointer,
+because that is precisely what `pointer` has always meant. Both leave the tree
+without that child, and the report shows both — but two kinds that each
+truthfully describe one issue is the failure `lib/gedcom-report.ts` keeps two
+lists to avoid.
+
+Only the mapper raises `skipped`, because only the mapper decides what goes
+into the tree. The parser's own losses — a second `HUSB` on one family, a
+duplicated xref — stay `value` and `pointer`: those are statements about what
+the _file_ says, made before anything has been decided about the tree.
 
 ## The write half
 
 `lib/gedcom-import.ts` (E6-T4, `YEO-49`) takes a mapping and writes it into
 `individuals`, `unions` and `union_children` — all of it, or none of it.
+
+It is the transaction and nothing else. The rows themselves come from
+`lib/import-rows.ts`, on the pure side of the database line, so that E7-T2 can
+round-trip an export through the real import without a database — see
+[Proving the export is real](#proving-the-export-is-real).
 
 ### All or nothing is a property of the _write_
 
@@ -353,9 +391,13 @@ The criterion asks for the import to finish inside Vercel's function timeout
 _or_ to run in chunks that are individually safe to retry. Those are not both
 available: chunks that commit independently are exactly the half-imported tree
 this ticket exists to prevent. So the import completes in one invocation, and
-whichever route comes to call it must set `maxDuration` — that is a
-requirement on the route rather than something already wired, since
-`maxDuration` is a route-segment export and E6-T4 deliberately adds no route.
+whichever route comes to call it must set `maxDuration` — a requirement on the
+route rather than something E6-T4 could wire itself, since `maxDuration` is a
+route-segment export and that ticket deliberately adds no route.
+
+`app/api/import/route.ts` is that route, and E6-T5 (`YEO-50`) is what set the
+number: **60 seconds**, which is the ceiling on the plan this deploys to and
+comfortably above what the four-mebibyte upload cap can produce.
 
 What makes overrunning it safe is the transaction rather than the number. A
 function killed mid-import never reaches `commit`, so the tree is untouched
@@ -376,6 +418,110 @@ correctly. Both are deliberately absent from `lib/gedcom-import.ts` today,
 because it has nothing to refuse: every decision was made before the
 transaction opened, so anything that goes wrong inside it is a genuine fault
 and is left to propagate.
+
+## The seam between reading and writing
+
+E6-T3 and E6-T4 were built in parallel, which left one line between them
+unwritten: the confirming branch of `app/api/import/route.ts` answered `501`
+and named E6-T4 rather than calling `importGedcom`. E6-T5 (`YEO-50`) closed
+it, because there is no _post-import_ report until an import can run.
+
+The seam really was the one line the note promised. `readGedcom` already
+returns the `mapping` beside the preview — parsed once, so the rows that get
+written are the rows that were summarised — and every id in it was minted and
+every foreign key resolved before it left `lib/gedcom-map.ts`. What closing it
+needed beyond the call was three small things, and each of them is a decision
+rather than plumbing:
+
+- **`maxDuration` on the route**, which the section above covers.
+- **A `catch` around the write.** `lib/gedcom-import.ts` argues that faults
+  should propagate, and they still do — up to the route, which is the layer
+  that owns the sentence a reader sees. An uncaught throw is a bare platform
+  `500` with no JSON in it, and the screen's fallback for that reads "the
+  answer could not be read", which sends somebody looking at their connection
+  when the truth is that their tree is untouched. The transaction is what
+  makes the honest sentence available: an exception _means_ nothing was
+  written.
+- **One translation between two vocabularies.** E6-T3 named its counts for the
+  screen (`people`, `unions`, `children`) and E6-T4 named its counts for the
+  tables (`individuals`, `unions`, `unionChildren`). Both are right where they
+  are — a module whose whole job is three inserts should count in the tables'
+  words, and somebody who has just uploaded a family file is not reading
+  `db/schema.ts`. `writtenCounts` in `lib/import-endpoint.ts` is the one place
+  they are put side by side, and the alternative — aliasing one type to the
+  other — would have bought a vocabulary that is wrong at one of the two ends
+  forever.
+
+## The report afterwards
+
+`lib/import-report.ts` (E6-T5, `YEO-50`) is the last module on the way in, and
+the only one that answers a question about the past rather than about a file.
+
+The failure it prevents is specific. Real GEDCOM files are dirty; an import
+that says nothing leaves the author assuming everything landed, and the way
+they find out otherwise is that somebody is missing from the tree, months
+later, when the file has moved on and nobody remembers which upload it was.
+
+So an import answers with an account of itself, in the three parts the ticket
+names plus one that is not a fault at all:
+
+| Section               | Comes from                             |
+| --------------------- | -------------------------------------- |
+| What was created      | the counts `importGedcom` returned     |
+| What was skipped      | the `skipped` issues, records and all  |
+| What was approximated | the `narrowed` issues, unchanged       |
+| Tags not read         | the parser's aggregated unknown tags   |
+| Everything else       | `summariseWarnings`, at a larger limit |
+
+### One number is not a restatement
+
+Everything in the report except `created` is the reading described back. That
+one is counted off the rows the **write** inserted, and it has to be: a report
+that recomputed what was written from what was read could never tell anybody
+the two had differed. It is the only reason the counts travel as a parameter
+rather than being derived from the mapping that is right there.
+
+### Every section is printed empty
+
+"Nothing was skipped" is a finding. An absent heading is silence, and silence
+is what this ticket exists to replace — so both the screen and the downloaded
+file render all four sections whether or not there is anything in them.
+
+That is also why the unsupported tags are there at all. Nobody lost them; they
+are still in the `.ged`. But an author will assume this application holds
+their source citations unless it says otherwise, and they will assume it
+hardest on the day they delete the original.
+
+### The cap, and why there is one
+
+`REPORT_ROWS_SHOWN` is 500 per section. That is not tidiness: `lib/gedcom-lines.ts`
+raises one issue per unreadable line, so four mebibytes of something that is
+not GEDCOM is on the order of a hundred thousand issues, each with a sentence.
+The platform caps a function body at 4.5 MB in **either** direction, so an
+uncapped report would fail at the edge on exactly the dirtiest files this epic
+exists for. Every section carries its full `total` beside its rows, so a
+trimmed list is never mistaken for the whole answer.
+
+### The download is built in the browser
+
+The report describes bytes that exist only inside the request that produced
+it. A route serving the file would need either a third upload of the same
+`.ged` or somewhere to stash the parse — and stashing is the thing
+`lib/import-endpoint.ts` rejected by name, because it needs a store the
+preview must not touch and turns a cancelled import into something to clean up
+later.
+
+So the endpoint answers with the whole report inline, the screen shows the top
+of each section, and `formatImportReport` turns the same value into the plain
+text somebody keeps. Plain text because its reader has a `.ged` open in an
+editor and needs line numbers and xrefs they can search for.
+
+**E7-T3 (`YEO-53`) does the opposite, and rightly.** Its bytes live in the
+database, so [downloading it](#downloading-it) is a route handler with a
+`Content-Disposition: attachment` and no client component at all — which even
+works with JavaScript off. The two are not a disagreement about how downloads
+should work: the difference is entirely that one file exists in the database
+and the other exists only for the length of one request.
 
 ## Writing it back out
 
@@ -463,18 +609,28 @@ deliberately does not have, and hiding a broken row rather than surfacing it.
 
 ### What a first export narrows
 
-Three states the schema can hold and GEDCOM cannot. All three lose the same
-thing the import side would have lost anyway, all three are **stable from the
-second pass on**, and none of them is silent in the sense that matters: the
-loss is a property of the format, written down here, rather than of a
+Four states the schema can hold and GEDCOM cannot. All of them lose the same
+thing the import side would have lost anyway, all of them are **stable from
+the first export on**, and none of them is silent in the sense that matters:
+the loss is a property of the format, written down here, rather than of a
 particular file.
 
-| The schema says                       | The file says     | Read back as               |
-| ------------------------------------- | ----------------- | -------------------------- |
-| `type` `partnership`, with a date     | `MARR` and a date | `marriage`                 |
-| `type` `partnership`, undated         | nothing           | `unknown`                  |
-| `end_reason` `separation` / `unknown` | nothing           | `ongoing`, or `death`      |
-| `sequence`                            | nothing           | re-derived from file order |
+| The schema says                        | The file says      | Read back as               |
+| -------------------------------------- | ------------------ | -------------------------- |
+| `type` `partnership`, with a date      | `MARR` and a date  | `marriage`                 |
+| `type` not `marriage`, ended `divorce` | `MARR Y` and `DIV` | `marriage`                 |
+| `type` `partnership`, undated          | nothing            | `unknown`                  |
+| `end_reason` `separation` / `unknown`  | nothing            | `ongoing`, or `death`      |
+| `sequence`                             | nothing            | re-derived from file order |
+
+The second row is the one E7-T2 (`YEO-52`) found, and it was a defect before
+it was a narrowing. `DIV` without `MARR` is a file saying a couple divorced
+and never saying they married — incoherent to any reader, and read back by
+`lib/gedcom-map.ts` as a marriage on the stated grounds that "nothing divorces
+that was not married". So the narrowing was already happening; it was simply
+invisible until the second export, which grew a `MARR Y` the first did not
+have. Writing the `MARR` makes the file state the narrowing rather than leave
+a reader to infer it, and closes the round trip on the first pass.
 
 `end_reason` `divorce` is `DIV` directly, and `death` is deliberately not
 written: `lib/gedcom-map.ts` infers it back from the partners' own death dates,
@@ -512,6 +668,83 @@ submitter record it names — both mandatory in 5.5.1, and both checked by the
 strict validators. The submitter is the application rather than a person:
 nothing in this schema records who exported a file, and inventing a name for
 them would be worse than naming the program that wrote it.
+
+## Proving the export is real
+
+`lib/gedcom-round-trip.test.ts` (E7-T2, `YEO-52`) exports a tree, imports the
+file, and exports it again — and requires the two texts to be **identical, byte
+for byte**. `test/gedcom-round-trip.ts` is the harness and the diff.
+
+Everything else in E7 is plumbing. This is the one that turns "we have an
+export feature" into "the family can actually leave", because an export that
+loses a generation is worse than no export at all: nobody discovers it until
+they need it.
+
+### The property is a fixed point, not a comparison with the input
+
+It is deliberately not "the second export equals the file you imported", and
+it could not be. A first export narrows in the four places above, and a period
+(`FROM 1874 TO 1876`) is stored identically to a range and written back as
+`BET 1874 AND 1876` — so a file using periods is not byte-identical to its own
+first export and never will be.
+
+What the fixed point says instead is that the loss happens **once**. Whatever
+the first export fails to say, it fails to say the same way forever, and a
+family who export, re-import and export again get their file back rather than
+a slightly smaller one each time. Anything the file says in a way the parser
+reads differently shows up on the second pass, which is precisely the defect
+class this catches and the reason a test that only checked "the rows survived"
+would not.
+
+### The middle of the trip is the real import
+
+`lib/gedcom-import.ts` opens a transaction, so a test cannot call it without a
+database and `npm test` must never need one. But a round trip through an
+import nobody runs proves nothing.
+
+So `lib/import-rows.ts` is the part that decides what the rows _are_, split out
+onto the pure side of the line — the same split `lib/import-batches.ts` made
+for the same reason. `lib/gedcom-import.ts` is now the transaction and nothing
+else, every value it writes comes from `rowsFromMapping`, and the round trip
+goes through that same function. `lib/gedcom-round-trip.test.ts` asserts the
+call still exists, because a copy inlined back into the import is how the
+tested pipeline and the real one quietly stop being the same pipeline.
+
+### Failures name the record
+
+A bare byte comparison of two multi-kilobyte files is not a usable failure:
+the reader gets two walls of text and has to count `0 @I…@` lines by hand to
+find out whose record went missing. Since the point of this test is that
+somebody will one day run it against a real family's file, the report is part
+of the deliverable.
+
+`diffGedcom` compares the two exports as **records** rather than as characters
+— a GEDCOM file is a flat list of level-0 records with an identifier on each,
+which is a structure a diff can key on. The four things that can go wrong each
+get a sentence naming the xref:
+
+| Kind      | What it means                                      |
+| --------- | -------------------------------------------------- |
+| `missing` | a record in the first export and not in the second |
+| `added`   | a record in the second export and not in the first |
+| `changed` | the same record, with a line that differs          |
+| `moved`   | the same records, in a different order             |
+
+There is a fifth, `unlocated`, for the case where the two texts differ and no
+record does. It should be unreachable, and it exists so that a blind spot in
+the diff reports itself rather than passing as success.
+
+### What it runs against
+
+The seeded family (`db/seed-family.ts`), because it is the graph the data
+model was designed around and the only one in the repository with a remarriage
+chain — the case where a dropped union severs a branch and still leaves a file
+that looks like a family tree. The dirty third-party fixture, because clean
+input is not the case that breaks. The other fixtures, because they are cheap.
+And 500 seeded generated trees, canonicalised through `validateIndividual` and
+`validateUnion` so the domain is every tree this application can actually
+hold — which is what found the `DIV`-without-`MARR` defect, a combination
+neither fixture happened to contain.
 
 ## Nothing is dropped in silence
 
@@ -679,6 +912,28 @@ to the assertion about them read better than a file you have to open.
 | `continuations-crlf.ged` | `\r\n`, `CONC`, `GIVN`/`SURN`, unknown tags        |
 | `accents-utf8.ged`       | Accented names in UTF-8                            |
 | `accents-ansel.ged`      | The same content, byte for byte, in ANSEL          |
+| `dirty-third-party.ged`  | Everything a real export gets wrong at once        |
+
+`dirty-third-party.ged` is **synthetic**, and that is worth saying plainly: it
+is written to look like the output of a mid-2000s Windows genealogy program
+rather than taken from one. A real family's file is not ours to commit, and
+the public sample files are either trivially clean or a torture test whose
+subject is the parser rather than the round trip.
+
+What makes it a fair subject is that every piece of dirt in it is dirt this
+pipeline has actually met, and `lib/gedcom-round-trip.test.ts` asserts each
+one by the issue it provokes — so the fixture cannot quietly stop being dirty.
+It carries a byte order mark, a `CHAR ANSI` declaration that contradicts it, a
+`GEDC VERS 5.5`, line endings that change from CRLF to LF halfway through, a
+`31 FEB`, a date reading `UNKNOWN`, a range whose bounds are the wrong way
+round, `1 NAME //`, two `NAME` records on one person, a `SEX ?`, a `PEDI
+sealing`, a `CHIL` repeated, a `CHIL` naming a record that does not exist, a
+`CHIL` naming one of the family's own partners, a `FAM` with no partner at
+all, a `FAMC` pointing at a missing family, a `DIV` with no `MARR`, vendor
+tags (`_UID`, `_STAT`, `RFN`, `OBJE`, `CHAN`), a `NOTE` folded over `CONC` and
+`CONT`, places padded with repeated internal spaces, an empty `PLAC`, a
+`FROM x TO y` period, and two people who are identical in every field the
+export sorts on.
 
 The last two are a matched pair, and that is what makes the binary one
 reviewable: the test asserts the two parse to **identical** individuals, so

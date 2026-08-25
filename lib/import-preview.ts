@@ -180,7 +180,10 @@ export type ImportPreview = {
    * `found` minus `counts`, computed here rather than by the reader. These
    * are the records `validateIndividual` or `validateUnion` refused — a death
    * before a birth, a name of six hundred characters — and every one of them
-   * has a `value` warning naming it. Shown as a number of its own anyway,
+   * has a `skipped` warning naming it. Not the same number as that group's
+   * count, and deliberately: a record refused for two reasons raises two
+   * issues, and the group also holds the *links* that went with it, which are
+   * not records. Shown as a number of its own anyway,
    * because "148 of 152 people" is the fact somebody decides on, and finding
    * it by subtracting two numbers on the same screen is not the same as being
    * told.
@@ -350,9 +353,10 @@ export function summariseImport(
  * headings only have to say what the group *is* so a reader can decide
  * whether to open it.
  */
-const WARNING_LABELS: Readonly<Record<ImportWarningKind, string>> = {
+export const WARNING_LABELS: Readonly<Record<ImportWarningKind, string>> = {
   encoding: "Character set",
   line: "Lines that are not GEDCOM",
+  skipped: "Records that could not be imported",
   date: "Dates that could not be read",
   unnamed: "People with no name in the file",
   pointer: "Links to records that are not in the file",
@@ -370,6 +374,15 @@ const WARNING_LABELS: Readonly<Record<ImportWarningKind, string>> = {
  * in it: a file read as the wrong character set has every accented name in it
  * wrong, and no other warning on the screen matters until that is settled.
  *
+ * `skipped` sits third, above every group that is about a field, because it
+ * is the only one that is about a *person*. E6-T5 (`YEO-50`) split it out of
+ * `value` for exactly that reason: "148 of 152 people" is not the same news as
+ * "three marriage places had nowhere to go", and a reader deciding whether
+ * this is the right file needs the first before the second. It sits
+ * *below* `encoding` and `line` only because those two are about whether the
+ * file was read at all, and until that is settled the count of skips is not
+ * yet worth reading.
+ *
  * `narrowed` is last because it is the one group that means *nothing to fix*
  * — `lib/gedcom-report.ts` is explicit that it is "never fatal, by
  * construction", the field is populated, and the value is true and slightly
@@ -377,9 +390,10 @@ const WARNING_LABELS: Readonly<Record<ImportWarningKind, string>> = {
  * report burying its own bad news, which is the failure `gedcom-report.ts`
  * split its two lists to avoid.
  */
-const WARNING_ORDER: readonly ImportWarningKind[] = [
+export const WARNING_ORDER: readonly ImportWarningKind[] = [
   "encoding",
   "line",
+  "skipped",
   "date",
   "unnamed",
   "pointer",
@@ -387,15 +401,27 @@ const WARNING_ORDER: readonly ImportWarningKind[] = [
   "narrowed",
 ];
 
-/** Every non-empty warning group, in {@link WARNING_ORDER}. */
-function summariseWarnings(
+/**
+ * Every non-empty warning group, in {@link WARNING_ORDER}.
+ *
+ * Exported since E6-T5 (`YEO-50`), which needs the same grouping with a much
+ * larger `limit`: a preview is a screen somebody reads before deciding and
+ * five examples are enough to check a count against, where a report is a file
+ * somebody keeps and five would make it useless. The grouping itself is the
+ * same question either way, and two of them would eventually answer it
+ * differently.
+ *
+ * @param limit how many examples each group keeps
+ */
+export function summariseWarnings(
   file: GedcomFile,
   issues: readonly GedcomIssue[],
+  limit: number = EXAMPLES_SHOWN,
 ): ImportWarning[] {
   const byKind = new Map<ImportWarningKind, ImportWarning>();
 
   const unnamed = unnamedIndividuals(file);
-  const warning = unnamedWarning(unnamed);
+  const warning = unnamedWarning(unnamed, limit);
   if (warning) byKind.set("unnamed", warning);
 
   /**
@@ -441,7 +467,7 @@ function summariseWarnings(
     }
 
     group.count += 1;
-    if (group.examples.length < EXAMPLES_SHOWN) {
+    if (group.examples.length < limit) {
       group.examples.push({ line: issue.line, message: issue.message });
     }
   }
@@ -484,6 +510,7 @@ function unnamedIndividuals(file: GedcomFile): GedcomFile["individuals"] {
 /** {@link unnamedIndividuals} as a warning, or nothing when the file names everybody. */
 function unnamedWarning(
   unnamed: GedcomFile["individuals"],
+  limit: number,
 ): ImportWarning | null {
   if (unnamed.length === 0) return null;
 
@@ -491,7 +518,7 @@ function unnamedWarning(
     kind: "unnamed",
     label: WARNING_LABELS.unnamed,
     count: unnamed.length,
-    examples: unnamed.slice(0, EXAMPLES_SHOWN).map((individual) => {
+    examples: unnamed.slice(0, limit).map((individual) => {
       const surname = individual.names[0]?.surname ?? null;
       return {
         line: individual.line,

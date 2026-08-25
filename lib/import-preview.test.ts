@@ -15,6 +15,8 @@ import {
   SAMPLE_SIZE,
   summariseImport,
   UNKNOWN_TAGS_SHOWN,
+  WARNING_LABELS,
+  WARNING_ORDER,
 } from "@/lib/import-preview";
 
 /**
@@ -274,6 +276,20 @@ describe("the order the warnings are read in", () => {
   it("raises no warnings at all for a file with nothing wrong with it", () => {
     const result = preview(file("0 @I1@ INDI", "1 NAME Ann /Reed/"));
     expect(result.warnings).toEqual([]);
+  });
+
+  it("orders every kind there is, so none can go missing in silence", () => {
+    // `summariseWarnings` returns `WARNING_ORDER.map(...)`, so a kind absent
+    // from that array is dropped from the screen with no error anywhere: it
+    // typechecks, every other test still passes, and a whole group of
+    // warnings is simply not rendered. `WARNING_LABELS` is a
+    // `Record<ImportWarningKind, string>` and the compiler does insist on
+    // that one being complete, so comparing the two is what turns the next
+    // widening of `GedcomIssueKind` into a failure somebody sees.
+    expect([...WARNING_ORDER].sort()).toEqual(
+      Object.keys(WARNING_LABELS).sort(),
+    );
+    expect(new Set(WARNING_ORDER).size).toBe(WARNING_ORDER.length);
   });
 });
 

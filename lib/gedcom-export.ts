@@ -95,7 +95,10 @@ import type { UnionFields } from "./union-input";
  *
  * - `union_type` has `partnership`, and GEDCOM's only word for a dated
  *   partnership is `MARR`. A partnership with a start date is written as a
- *   marriage and reads back as one.
+ *   marriage and reads back as one — and so is any union that ended in a
+ *   divorce, whatever its type, because `DIV` is meaningless without the
+ *   `MARR` it dissolves. Both are written on the *first* pass, so the file
+ *   states the narrowing rather than leaving a reader to infer it.
  * - `union_end_reason` has `separation` and `unknown`, and GEDCOM 5.5.1 has
  *   no family event for either. The reason and any `end_date` beside it are
  *   not written. `divorce` is `DIV` directly, and `death` is deliberately not
@@ -540,19 +543,41 @@ function writePartner(
 }
 
 /**
- * `1 MARR`, written when the union says there was a marriage or when it has a
- * start date that has nowhere else to go.
+ * Whether this union is one the file will claim a `DIV` for.
  *
- * The two conditions are the reverse of `unionType` in `lib/gedcom-map.ts`,
+ * Read by both event writers rather than by `writeDivorce` alone, because
+ * `MARR` and `DIV` are not independent: see `writeMarriage`.
+ */
+function divorced(union: ExportUnion): boolean {
+  return union.endReason === "divorce";
+}
+
+/**
+ * `1 MARR`, written when the union says there was a marriage, when it has a
+ * start date that has nowhere else to go, or when a `DIV` is about to claim
+ * there was a marriage to end.
+ *
+ * The three conditions are the reverse of `unionType` in `lib/gedcom-map.ts`,
  * which reads `marriage` from the presence of `MARR` or `DIV` and `unknown`
  * from their absence — so a `marriage` written with no date reads back as
  * `marriage`, and an `unknown` with no dates writes no tag and reads back as
  * `unknown`. Both are lossless.
  *
+ * **The third condition was missing until E7-T2 (`YEO-52`).** The reverse was
+ * documented and not implemented: this side considered only the type and the
+ * start date, so a `partnership` or an `unknown` that ended in a divorce and
+ * had no start date was written as a bare `DIV`. That is a file saying a
+ * couple divorced without ever saying they married — incoherent to any
+ * reader, and read back by our own mapper as a marriage, so the *second*
+ * export grew a `MARR Y` the first did not have and the round trip did not
+ * close. `lib/gedcom-round-trip.test.ts` is the test that found it and
+ * `lib/gedcom-export.test.ts` holds the case.
+ *
  * The narrowing case is a `partnership`, which GEDCOM has no tag for: with a
- * start date it is written as a marriage, because dropping the date to protect
- * a distinction the format cannot carry loses more than it keeps. Without one
- * it writes nothing and reads back as `unknown`.
+ * start date, or with a divorce to record, it is written as a marriage,
+ * because dropping the fact to protect a distinction the format cannot carry
+ * loses more than it keeps. With neither it writes nothing and reads back as
+ * `unknown`.
  *
  * `Y` is 5.5.1's way of asserting that an event happened when nothing is
  * recorded about it, and a bare `1 MARR` with no substructure is what strict
@@ -568,7 +593,7 @@ function writeMarriage(lines: string[], union: ExportUnion): void {
     upperPrecision: union.startDateUpperPrecision,
   });
 
-  if (union.type !== "marriage" && date === null) return;
+  if (union.type !== "marriage" && date === null && !divorced(union)) return;
 
   if (date === null) {
     emit(lines, 1, "MARR", "Y");
@@ -590,7 +615,7 @@ function writeMarriage(lines: string[], union: ExportUnion): void {
  * would then be making on this application's behalf.
  */
 function writeDivorce(lines: string[], union: ExportUnion): void {
-  if (union.endReason !== "divorce") return;
+  if (!divorced(union)) return;
 
   const date = writeGedcomDate({
     date: union.endDate,
