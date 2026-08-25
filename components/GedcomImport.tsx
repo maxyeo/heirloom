@@ -6,10 +6,12 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  formatImportedAt,
   type ImportRefusal,
   type ImportResponse,
   isImportDone,
   isImportPreview,
+  type PriorImport,
 } from "@/lib/import-endpoint";
 import {
   EXAMPLES_SHOWN,
@@ -84,13 +86,31 @@ import {
  *
  * ## What stops a file being imported twice
  *
- * Nothing else does, and it matters more now than it could before: until the
- * write was wired, `docs/architecture.md`'s known limitation — "importing the
- * same file twice imports everybody twice" — was unreachable. Two things
- * stand in the way and both are on this screen. `busy` disables the button
- * while the request is out, and a finished import takes the preview down,
- * which takes the Import button with it. There is no duplicate detection
- * behind them; E6 says so in `docs/epics.md` under *Not in this epic*.
+ * The other way round from how this used to read. `busy` disabling the
+ * button while a request is out, and a finished import taking the preview
+ * (and the Import button with it) down, are still true and still here — but
+ * they are conveniences for the ordinary path, not the guard. A second tab, a
+ * browser's back button landing on a stale preview, or a retried request all
+ * skip past both of them, and none of the three needs anything unusual to
+ * happen; the second is a click away on every page this screen has ever
+ * rendered.
+ *
+ * The guard (`YEO-89`) is server-side and does not live on this screen at
+ * all: a unique index on `gedcom_imports.digest` (`db/schema.ts`), checked by
+ * Postgres itself inside the same transaction that writes the three tables,
+ * so whichever of two racing confirmations commits second is refused and
+ * rolled back whole regardless of what this component did or did not disable.
+ * `app/api/import/route.ts` and `lib/gedcom-import.ts` are where that is
+ * argued in full.
+ *
+ * What this screen owns, since `YEO-89`, is acceptance criterion 4: saying
+ * the policy *at the point of confirm* rather than leaving a reader to
+ * discover it from a `409` or, worse, from a tree that looks doubled weeks
+ * later. `previewed.alreadyImported` carries the answer the preview already
+ * read from the ledger — see the confirm row below — so the sentence a
+ * reader sees before pressing Import is either "this will be refused if you
+ * have done it before" or "you already have, on this date, with these
+ * counts", and never merely a disabled button with no reason attached.
  */
 export function GedcomImport() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -173,6 +193,7 @@ export function GedcomImport() {
         name: chosen.name,
         digest: answer.digest,
         preview: answer.preview,
+        alreadyImported: answer.alreadyImported,
       });
     }
 
@@ -213,6 +234,7 @@ export function GedcomImport() {
         name: chosen.name,
         digest: answer.digest,
         preview: answer.preview,
+        alreadyImported: answer.alreadyImported,
       });
     }
 
@@ -313,17 +335,38 @@ export function GedcomImport() {
 
           <PreviewBody preview={previewed.preview} />
 
+          {/*
+            The point-of-confirm statement acceptance criterion 4 asks for
+            (`YEO-89`): whichever of the two is true, it is said here, not
+            only disabled or only in a docblock. See the module docblock's
+            "What stops a file being imported twice".
+          */}
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-rule pt-3">
-            <button
-              type="button"
-              onClick={confirm}
-              disabled={busy !== null}
-              className="rounded-panel border border-rule bg-wash px-3 py-1 text-note font-medium hover:bg-paper disabled:opacity-60"
-            >
-              {busy === "importing"
-                ? "Importing…"
-                : `Import ${countable(previewed.preview.counts.people, "person", "people")}`}
-            </button>
+            {previewed.alreadyImported ? (
+              <p className="text-caption">
+                This exact file was already imported, on{" "}
+                {formatImportedAt(previewed.alreadyImported.importedAt)} — it
+                added{" "}
+                {countable(
+                  previewed.alreadyImported.counts.people,
+                  "person",
+                  "people",
+                )}
+                . Importing it again would be refused, so there is nothing to
+                press.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={confirm}
+                disabled={busy !== null}
+                className="rounded-panel border border-rule bg-wash px-3 py-1 text-note font-medium hover:bg-paper disabled:opacity-60"
+              >
+                {busy === "importing"
+                  ? "Importing…"
+                  : `Import ${countable(previewed.preview.counts.people, "person", "people")}`}
+              </button>
+            )}
             <button
               type="button"
               onClick={cancel}
@@ -333,7 +376,11 @@ export function GedcomImport() {
               Cancel
             </button>
             <span className="text-note text-ink-muted">
-              Cancelling sends nothing at all.
+              {previewed.alreadyImported
+                ? "Cancelling sends nothing at all."
+                : "This file is recorded once it is imported, and importing " +
+                  "it again after that will be refused. Cancelling sends " +
+                  "nothing at all."}
             </span>
           </div>
         </section>
@@ -343,7 +390,13 @@ export function GedcomImport() {
 }
 
 /** The file that was read, and the answer it produced. */
-type Previewed = { name: string; digest: string; preview: ImportPreview };
+type Previewed = {
+  name: string;
+  digest: string;
+  preview: ImportPreview;
+  /** The earlier import of this exact file, if the ledger already has one. */
+  alreadyImported: PriorImport | null;
+};
 
 /**
  * The file that was imported, and the account of what that did.

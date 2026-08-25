@@ -7,6 +7,7 @@ import {
   type ImportDoneResponse,
   type ImportPreviewResponse,
   type ImportRefusal,
+  type PriorImport,
 } from "@/lib/import-endpoint";
 import {
   gedcomDigest,
@@ -32,7 +33,7 @@ import {
  * refused. Those are two of the ticket's four acceptance criteria, and they
  * are properties of this handler rather than of any value it computes.
  *
- * ## The two mocks, and why there are exactly two
+ * ## The three mocks, and why there are exactly three
  *
  * `@/auth` calls `NextAuth()` at import time and does not load outside the
  * Next.js runtime — the same reason `app/auth-boundary.test.ts` gives for
@@ -44,13 +45,20 @@ import {
  * `DATABASE_URL` by design (docs/testing.md). What it does when it gets
  * there is not this file's question either: `lib/gedcom-import.db.test.ts`
  * drives the real transaction against a real database, including the
- * rollback. What is left here — and is only visible here — is that a
- * confirmed request calls it exactly once with the mapping the same request
- * was read from, that an unconfirmed one never calls it at all, and that a
- * fault inside it becomes a sentence saying the tree is untouched.
+ * rollback and the ledger's own refusal (`YEO-89`). What is left here — and
+ * is only visible here — is that a confirmed request calls it exactly once
+ * with the mapping the same request was read from, that an unconfirmed one
+ * never calls it at all, that a fault inside it becomes a sentence saying
+ * the tree is untouched, and that an `already-imported` outcome becomes a
+ * `409` naming what the earlier import did.
  *
- * There is no third mock because there is no third boundary. Everything else
- * this route reaches is pure, which is the property
+ * `@/lib/import-ledger` is the third, added with `YEO-89` alongside the
+ * second: `findImportByDigest` is the preview branch's own reach into
+ * Postgres, separate from the write, and mocking it is what keeps this file
+ * — like every test in the `unit` project — off a real `DATABASE_URL`.
+ *
+ * There is no fourth mock because there is no fourth boundary. Everything
+ * else this route reaches is pure, which is the property
  * `lib/gedcom.purity.test.ts` asserts from the other side.
  */
 
@@ -61,6 +69,9 @@ vi.mock("@/auth", () => ({ auth: async () => state.session }));
 
 const importGedcom = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/gedcom-import", () => ({ importGedcom }));
+
+const findImportByDigest = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/import-ledger", () => ({ findImportByDigest }));
 
 const { POST } = await import("@/app/api/import/route");
 
@@ -92,14 +103,23 @@ function digestOf(text: string): Promise<string> {
   return gedcomDigest(new TextEncoder().encode(text));
 }
 
+/** A prior import, for the `already-imported` outcome and preview branch. */
+const PRIOR_IMPORT: PriorImport = {
+  importedAt: "2026-03-03T00:00:00.000Z",
+  fileName: "family.ged",
+  counts: { people: 412, unions: 120, children: 300 },
+};
+
 beforeEach(() => {
   state.session = { user: { email: "rose@example.com" } };
   importGedcom.mockReset();
   importGedcom.mockResolvedValue({
-    individuals: 1,
-    unions: 0,
-    unionChildren: 0,
+    status: "imported",
+    importId: "00000000-0000-4000-8000-000000000001",
+    counts: { individuals: 1, unions: 0, unionChildren: 0 },
   });
+  findImportByDigest.mockReset();
+  findImportByDigest.mockResolvedValue(null);
 });
 
 describe("the guard", () => {
@@ -197,6 +217,27 @@ describe("previewing", () => {
       "line",
     );
   });
+
+  it("reports null when this digest has never been imported", async () => {
+    const response = await POST(upload(TREE));
+
+    expect(findImportByDigest).toHaveBeenCalledWith(await digestOf(TREE));
+    const body = (await response.json()) as ImportPreviewResponse;
+    expect(body.alreadyImported).toBeNull();
+  });
+
+  it("reports the earlier import when this digest is already in the ledger (YEO-89)", async () => {
+    // A read, not a refusal: the preview still answers 200 with what the
+    // file contains, and adds what the ledger already knows about it — see
+    // `components/GedcomImport.tsx` for where the reader is told.
+    findImportByDigest.mockResolvedValue(PRIOR_IMPORT);
+
+    const response = await POST(upload(TREE));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as ImportPreviewResponse;
+    expect(body.alreadyImported).toEqual(PRIOR_IMPORT);
+  });
 });
 
 describe("confirming", () => {
@@ -235,9 +276,9 @@ describe("confirming", () => {
     // A report that echoed the prediction could never tell anybody the
     // prediction was wrong, which is the only thing it is there for.
     importGedcom.mockResolvedValue({
-      individuals: 0,
-      unions: 0,
-      unionChildren: 0,
+      status: "imported",
+      importId: "00000000-0000-4000-8000-000000000002",
+      counts: { individuals: 0, unions: 0, unionChildren: 0 },
     });
 
     const response = await POST(
@@ -300,5 +341,45 @@ describe("confirming", () => {
     // A fault rather than a fact about the request, so it leaves a trace.
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
+  });
+
+  it("answers 409 naming the earlier import when the write finds this digest already in the ledger (YEO-89)", async () => {
+    // The refusal `lib/gedcom-import.db.test.ts` proves the unique index
+    // actually produces, seen from this route's side: the write can still
+    // discover a conflict the preview's own read missed — a second tab that
+    // previewed before the first tab's import committed — so this branch has
+    // to be handled here rather than assumed unreachable.
+    importGedcom.mockResolvedValue({
+      status: "already-imported",
+      previous: PRIOR_IMPORT,
+    });
+
+    const response = await POST(
+      upload(TREE, { confirm: await digestOf(TREE) }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as ImportRefusal;
+    // The date and what the earlier import added, not merely "already
+    // imported" — see `alreadyImportedRefusal` in `app/api/import/route.ts`.
+    expect(body.error).toContain("3 March 2026");
+    expect(body.error).toContain("412 people");
+    expect(body.error).toContain("nothing was written");
+  });
+
+  it("writes nothing more when the write refuses as already-imported", async () => {
+    importGedcom.mockResolvedValue({
+      status: "already-imported",
+      previous: PRIOR_IMPORT,
+    });
+
+    const response = await POST(
+      upload(TREE, { confirm: await digestOf(TREE) }),
+    );
+
+    // The refusal is the whole answer — there is no report, because nothing
+    // beyond the ledger's own read happened on this request.
+    const body = (await response.json()) as ImportRefusal | ImportDoneResponse;
+    expect("stage" in body).toBe(false);
   });
 });

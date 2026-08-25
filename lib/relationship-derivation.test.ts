@@ -696,6 +696,7 @@ describe("the schema stores no relationship", () => {
     // Guards the enumeration itself: a `schema` that stopped exporting tables
     // the way this reads them would make every assertion below vacuously true.
     expect(tables.map((t) => t.name).sort()).toEqual([
+      "gedcom_imports",
       "individuals",
       "pages",
       "revisions",
@@ -721,7 +722,13 @@ describe("the schema stores no relationship", () => {
     ]);
   });
 
-  it("has a person pointing at nobody but their own entry", () => {
+  it("has a person pointing at nobody but their own entry and the import that wrote them", () => {
+    // `import_id -> gedcom_imports` (`YEO-89`) is provenance, not a
+    // relationship between people: it says *which file* wrote this row, never
+    // who this person is related to. It is named here rather than left to
+    // break this guard silently, the same way `page_id -> pages` already is —
+    // a third reference that pointed at another `individuals` row, by
+    // contrast, is exactly the edit this file exists to catch.
     const individuals = tables.find((t) => t.name === "individuals");
 
     expect(
@@ -730,7 +737,7 @@ describe("the schema stores no relationship", () => {
         const target = getTableConfig(ref.foreignTable).name;
         return `${ref.columns.map((c) => c.name).join("+")} -> ${target}`;
       }),
-    ).toEqual(["page_id -> pages"]);
+    ).toEqual(["page_id -> pages", "import_id -> gedcom_imports"]);
   });
 });
 

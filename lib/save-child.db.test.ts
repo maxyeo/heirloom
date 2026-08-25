@@ -129,7 +129,14 @@ describe("addChild", () => {
     expect(result.childId).toBe(clara);
 
     const [row] = await childrenOf(unionId);
-    expect(row).toEqual({ unionId, childId: clara, relation: "adopted" });
+    // `importId` is null: this link was typed through the form, not imported
+    // (`YEO-89`) — see `union_children.import_id` in `db/schema.ts`.
+    expect(row).toEqual({
+      unionId,
+      childId: clara,
+      relation: "adopted",
+      importId: null,
+    });
   });
 
   it("creates the child and the link in one go", async () => {

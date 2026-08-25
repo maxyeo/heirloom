@@ -10,6 +10,7 @@ import {
   IMPORT_FILE_FIELD,
   type ImportDoneResponse,
   type ImportPreviewResponse,
+  type PriorImport,
 } from "@/lib/import-endpoint";
 import type { ImportPreview } from "@/lib/import-preview";
 import type { ImportReport } from "@/lib/import-report";
@@ -120,8 +121,19 @@ function previewOf(overrides: Partial<ImportPreview> = {}): ImportPreview {
 function previewAnswer(
   preview: ImportPreview = previewOf(),
   digest = "abc123",
+  alreadyImported: PriorImport | null = null,
 ): ImportPreviewResponse {
-  return { stage: "preview", digest, preview };
+  return { stage: "preview", digest, preview, alreadyImported };
+}
+
+/** A prior import, for the "already imported" state of the confirm step. */
+function priorImportOf(overrides: Partial<PriorImport> = {}): PriorImport {
+  return {
+    importedAt: "2026-03-03T12:00:00.000Z",
+    fileName: "family.ged",
+    counts: { people: 412, unions: 120, children: 300 },
+    ...overrides,
+  };
 }
 
 /** A report with just enough in it to be recognisable on the screen. */
@@ -269,6 +281,51 @@ describe("previewing a file", () => {
     const alert = screen.host.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("That file is too large.");
     expect(screen.button("Import 5 people")).toBeUndefined();
+  });
+});
+
+describe("the policy stated at the point of confirm (YEO-89)", () => {
+  it("says the file will be refused if imported again, beside the Import button", async () => {
+    // Acceptance criterion 4: stated where a reader is about to press
+    // Import, not only in a docblock or discovered from a `409` afterwards.
+    const screen = mount();
+    choose(screen.input);
+    answers.push({ status: 200, body: previewAnswer() });
+
+    await click(screen.button("Preview this file"));
+
+    expect(screen.button("Import 5 people")).toBeDefined();
+    expect(screen.host.textContent).toContain(
+      "importing it again after that will be refused",
+    );
+  });
+
+  it("replaces the Import button with what the earlier import did, when this file was already imported", async () => {
+    const screen = mount();
+    choose(screen.input);
+    answers.push({
+      status: 200,
+      body: previewAnswer(
+        previewOf(),
+        "abc123",
+        priorImportOf({ importedAt: "2026-03-03T12:00:00.000Z" }),
+      ),
+    });
+
+    await click(screen.button("Preview this file"));
+
+    // No Import button — there is nothing this screen can send that would not
+    // be refused, so it does not offer to send it.
+    expect(screen.button("Import 5 people")).toBeUndefined();
+
+    const text = screen.host.textContent ?? "";
+    expect(text).toContain("already imported");
+    expect(text).toContain("3 March 2026");
+    expect(text).toContain("412 people");
+
+    // Cancel still works: there is a file input to clear even though nothing
+    // would be sent by pressing it.
+    expect(screen.button("Cancel")).toBeDefined();
   });
 });
 
