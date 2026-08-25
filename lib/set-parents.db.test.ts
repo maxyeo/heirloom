@@ -9,6 +9,7 @@ import { addChild } from "@/lib/save-child";
 import { createIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import { setParents } from "@/lib/set-parents";
+import { findUnionsBetween } from "@/lib/union-merge";
 
 /**
  * Database tests for the set-parents write path (E3-T6, `YEO-34`). Run with
@@ -98,6 +99,7 @@ function submission(overrides: Partial<SetParentsInput>): SetParentsInput {
     relation: "biological",
     parentAId: null,
     parentBId: null,
+    allowDuplicate: "no",
     ...overrides,
   };
 }
@@ -109,6 +111,12 @@ async function set(input: SetParentsInput) {
     throw new Error(`Expected set, got ${result.status}.`);
   }
   return result;
+}
+
+/** How many unions record exactly these two people. */
+async function unionsBetweenCount(aId: string, bId: string): Promise<number> {
+  const graph = await getFamilyGraph();
+  return findUnionsBetween(graph.unions, aId, bId).length;
 }
 
 /** Every family a person is recorded as a child of. */
@@ -250,6 +258,117 @@ describe("creating the family inline", () => {
     );
 
     expect((await unionRow(result.unionId)).type).toBe("unknown");
+  });
+
+  it("offers the family these two already have rather than making a second", async () => {
+    /**
+     * The bug this ticket exists for (E3-T10, `YEO-82`). Naming two people as
+     * a child's parents when they are already recorded as married used to
+     * write a second `unions` row of type `unknown` beside the marriage,
+     * silently, with the children split between the two.
+     */
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+    const dora = await makePerson("Dora");
+    const marriage = await makeUnion(rose, thomas);
+
+    const result = await setParents(
+      submission({
+        childId: dora,
+        familyMode: "new",
+        unionId: null,
+        parentAId: rose,
+        parentBId: thomas,
+      }),
+    );
+
+    expect(result).toEqual({ status: "union-exists", unionIds: [marriage] });
+    // Nothing written: not the union, and not the link that would have hung
+    // off it.
+    expect(await familiesOf(dora)).toEqual([]);
+    expect(await unionsBetweenCount(rose, thomas)).toBe(1);
+  });
+
+  it("writes the second family when the author says they married twice", async () => {
+    /**
+     * The trap the ticket names out loud: two unions between the same pair is
+     * not automatically an error, so this cannot be a uniqueness rule. The
+     * prompt above takes yes for an answer.
+     */
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+    const dora = await makePerson("Dora");
+    await makeUnion(rose, thomas);
+
+    const result = await set(
+      submission({
+        childId: dora,
+        familyMode: "new",
+        unionId: null,
+        parentAId: rose,
+        parentBId: thomas,
+        allowDuplicate: "yes",
+      }),
+    );
+
+    expect(result.createdUnion).toBe(true);
+    expect(await unionsBetweenCount(rose, thomas)).toBe(2);
+    expect(await familiesOf(dora)).toEqual([result.unionId]);
+  });
+
+  it("does not ask when only one parent is named", async () => {
+    /**
+     * Two rows that each record Rose and an unrecorded partner are not two
+     * records of one couple — they may be two children by two men nobody can
+     * name. Steering the author onto the first would assert something nobody
+     * said, so the question is only asked when both parents are named.
+     */
+    const rose = await makePerson("Rose");
+    const dora = await makePerson("Dora");
+    const edith = await makePerson("Edith");
+    await makeUnion(rose, null);
+
+    const result = await set(
+      submission({
+        childId: dora,
+        familyMode: "new",
+        unionId: null,
+        parentAId: rose,
+      }),
+    );
+
+    expect(result.createdUnion).toBe(true);
+    expect(
+      await set(
+        submission({
+          childId: edith,
+          familyMode: "new",
+          unionId: null,
+          parentAId: rose,
+        }),
+      ),
+    ).toMatchObject({ createdUnion: true });
+  });
+
+  it("finds the existing family whichever slots the two people are in", async () => {
+    // The partner columns carry no meaning of their own, so a check that only
+    // compared them in order would miss half the duplicates.
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+    const dora = await makePerson("Dora");
+    const marriage = await makeUnion(thomas, rose);
+
+    expect(
+      await setParents(
+        submission({
+          childId: dora,
+          familyMode: "new",
+          unionId: null,
+          parentAId: rose,
+          parentBId: thomas,
+        }),
+      ),
+    ).toEqual({ status: "union-exists", unionIds: [marriage] });
   });
 
   it("supports one known parent and one unknown, with no placeholder person", async () => {

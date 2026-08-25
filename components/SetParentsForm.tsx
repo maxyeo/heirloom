@@ -23,6 +23,11 @@ import {
 } from "@/lib/parents-form-state";
 import type { ParentFamilyMode } from "@/lib/parents-input";
 import type { PartnerCandidate } from "@/lib/partner-search";
+import {
+  describeUnionFacts,
+  findUnionsBetween,
+  unionFacts,
+} from "@/lib/union-merge";
 
 /**
  * Connecting somebody who was added on their own (E3-T6, `YEO-34`).
@@ -214,6 +219,61 @@ export function SetParentsForm({
   const [parentB, setParentB] = useState<PartnerCandidate | null>(null);
 
   /**
+   * Which *pair* the author has said "yes, a second family" about (E3-T10,
+   * `YEO-82`).
+   *
+   * The pair rather than a bare flag, so that consent cannot survive a change
+   * of mind about who the parents were: picking a different second parent asks
+   * the question again, because it is a different question. Derived from the
+   * two pickers rather than cleared by an effect, which is one fewer way for
+   * the two to disagree.
+   */
+  const [duplicateAllowedFor, setDuplicateAllowedFor] = useState<string | null>(
+    null,
+  );
+  const parentPairKey =
+    parentA && parentB ? `${parentA.id}|${parentB.id}` : null;
+  const allowDuplicate =
+    parentPairKey !== null && duplicateAllowedFor === parentPairKey;
+
+  /**
+   * Families these two people already have, found in the graph the canvas is
+   * already holding — so the question is asked while the author is still
+   * looking at the pickers rather than after a round trip.
+   *
+   * Asked only when *both* parents are named, which is the same line
+   * `lib/set-parents.ts` draws and for the same reason: two rows each
+   * recording one known parent and one unrecorded partner are not two records
+   * of one couple, and steering the author onto the first of them would assert
+   * something nobody said.
+   *
+   * Not the enforcement. This graph may be minutes old, and a family recorded
+   * since it loaded would walk straight through — which is why the same check
+   * runs inside the transaction and reports `existingUnionIds` below.
+   */
+  const existingFamilies = useMemo(
+    () =>
+      parentA === null || parentB === null
+        ? []
+        : findUnionsBetween(graph.unions, parentA.id, parentB.id),
+    [graph.unions, parentA, parentB],
+  );
+
+  /**
+   * The server found families the browser's graph did not. Kept separate from
+   * the list above because there is nothing to describe — those rows are not
+   * in this graph at all — so all the prompt can honestly do is say they
+   * exist.
+   */
+  const unseenDuplicates = state.existingUnionIds.filter(
+    (unionId) => !existingFamilies.some((union) => union.id === unionId),
+  );
+
+  const duplicateCount = existingFamilies.length + unseenDuplicates.length;
+  const askingAboutDuplicate =
+    familyMode === "new" && duplicateCount > 0 && !allowDuplicate;
+
+  /**
    * The link exists, so this form has nothing left to show. Watching the
    * returned state rather than calling back from a submit handler, because the
    * action's answer is the only thing that knows whether the write landed — a
@@ -266,6 +326,17 @@ export function SetParentsForm({
         */}
         <input type="hidden" name="parentAId" value={parentA?.id ?? ""} />
         <input type="hidden" name="parentBId" value={parentB?.id ?? ""} />
+        {/*
+          The answer to "they already have a family — did you mean that one?".
+          Posted in both modes and read only in `new`, like the pickers above,
+          and always `no` until the author has actually said otherwise about
+          the pair currently on screen.
+        */}
+        <input
+          type="hidden"
+          name="allowDuplicate"
+          value={allowDuplicate ? "yes" : "no"}
+        />
 
         <section>
           <h3>The family</h3>
@@ -346,6 +417,27 @@ export function SetParentsForm({
                 onClear={() => setParentB(null)}
                 error={state.errors.parentBId}
               />
+
+              {duplicateCount === 0 ? null : (
+                <DuplicateFamilies
+                  parentNames={[parentA?.name ?? "", parentB?.name ?? ""]}
+                  families={existingFamilies.map((union) => ({
+                    unionId: union.id,
+                    description: describeUnionFacts(unionFacts(union)),
+                    selectable: available.some(
+                      (option) => option.unionId === union.id,
+                    ),
+                  }))}
+                  unseenCount={unseenDuplicates.length}
+                  acknowledged={allowDuplicate}
+                  onUseFamily={(chosenUnionId) => {
+                    setFamilyMode("existing");
+                    setUnionId(chosenUnionId);
+                  }}
+                  onRecordSecond={() => setDuplicateAllowedFor(parentPairKey)}
+                  onReconsider={() => setDuplicateAllowedFor(null)}
+                />
+              )}
 
               {available.length === 0 ? null : (
                 <button
@@ -441,7 +533,15 @@ export function SetParentsForm({
         <div className="mt-4 flex items-center gap-3">
           <button
             type="submit"
-            disabled={pending}
+            /*
+              Disabled while the duplicate question is on screen and
+              unanswered. Not a refusal: both answers are right there, and one
+              of them ("they were married more than once") re-enables this and
+              writes the second family. What it prevents is the author pressing
+              past a question they have not read — see `lib/set-parents.ts`,
+              which refuses the same submission server-side.
+            */
+            disabled={pending || askingAboutDuplicate}
             className="rounded-panel border border-rule px-4 py-1.5 font-medium transition enabled:hover:bg-paper disabled:cursor-not-allowed disabled:text-ink-muted disabled:opacity-60"
           >
             {/*
@@ -506,6 +606,146 @@ function ParentPicker({
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * "These two already have a family — did you mean that one?" (E3-T10,
+ * `YEO-82`).
+ *
+ * ## Why this is a question and not a rule
+ *
+ * Because two families between the same two people is not automatically an
+ * error. A couple who divorced and remarried each other is ordinary genealogy,
+ * which is exactly why `lib/save-union.ts` has never checked for duplicates —
+ * a uniqueness rule on the two partner columns would make a real case
+ * unrecordable. So both answers are offered as buttons, neither is preselected,
+ * and choosing "they were married more than once" writes the second family
+ * without further argument.
+ *
+ * ## Why it interrupts rather than warns
+ *
+ * A warning beside an enabled button is a warning nobody reads. The submit is
+ * held until one of these two is pressed — which costs an author who *meant*
+ * the second family exactly one click, and saves the far commoner author from
+ * a duplicate they will not notice until the panel shows the same marriage
+ * twice.
+ *
+ * `role="status"` rather than `alert`: this appears as the author fills in the
+ * second picker, which is a change to what is on screen rather than an error
+ * to interrupt them with.
+ */
+function DuplicateFamilies({
+  parentNames,
+  families,
+  unseenCount,
+  acknowledged,
+  onUseFamily,
+  onRecordSecond,
+  onReconsider,
+}: {
+  parentNames: [string, string];
+  /** The families in the browser's graph, described well enough to tell apart. */
+  families: {
+    unionId: string;
+    description: string;
+    /**
+     * Whether choosing it would actually be accepted. A family this person is
+     * already a child of, or one standing below them, is left out of
+     * `parentOptions` for the reason that module gives — offering it here and
+     * having the server refuse it would teach the author nothing except that
+     * the form is unreliable.
+     */
+    selectable: boolean;
+  }[];
+  /** Families the server found that this browser's graph does not hold. */
+  unseenCount: number;
+  acknowledged: boolean;
+  onUseFamily: (unionId: string) => void;
+  onRecordSecond: () => void;
+  onReconsider: () => void;
+}) {
+  const couple = parentNames.filter(Boolean).join(" and ");
+  const total = families.length + unseenCount;
+
+  if (acknowledged) {
+    return (
+      <div
+        role="status"
+        className="mt-3 rounded-panel border border-rule-soft bg-wash px-3 py-2"
+      >
+        <p className="text-note">
+          Recording a second family for {couple}. Their existing{" "}
+          {total === 1 ? "one" : `${total}`} stays exactly as it is.
+        </p>
+        <button
+          type="button"
+          onClick={onReconsider}
+          className={`mt-1 ${LINK_CLASS}`}
+        >
+          Use a family they already have instead
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="status"
+      className="mt-3 rounded-panel border border-rule bg-wash px-3 py-2"
+    >
+      <p className="text-caption">
+        {couple} already{" "}
+        {total === 1
+          ? "have a family recorded"
+          : `have ${total} families recorded`}
+        .
+      </p>
+
+      <ul className="mt-1 space-y-1">
+        {families.map((family) => (
+          <li key={family.unionId}>
+            <span className="text-note text-ink-muted">
+              {family.description}
+            </span>
+            {family.selectable ? (
+              <button
+                type="button"
+                onClick={() => onUseFamily(family.unionId)}
+                className={`ml-2 ${LINK_CLASS}`}
+              >
+                Use this family
+              </button>
+            ) : (
+              /*
+                Named but not offered. Saying nothing would make the count
+                above wrong; offering it would be offering a refusal, since
+                this is a family the person is already a child of or one
+                standing below them.
+              */
+              <span className="ml-2 text-note text-ink-muted">
+                (not one this person can be recorded in)
+              </span>
+            )}
+          </li>
+        ))}
+        {unseenCount > 0 ? (
+          <li className="text-note text-ink-muted">
+            {unseenCount === 1
+              ? "One was recorded since this page loaded. Reload the tree to choose it."
+              : `${unseenCount} were recorded since this page loaded. Reload the tree to choose one.`}
+          </li>
+        ) : null}
+      </ul>
+
+      <button
+        type="button"
+        onClick={onRecordSecond}
+        className={`mt-2 ${LINK_CLASS}`}
+      >
+        They were married more than once — record a second family
+      </button>
     </div>
   );
 }

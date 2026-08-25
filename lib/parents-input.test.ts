@@ -36,6 +36,7 @@ function submission(overrides: Partial<SetParentsInput> = {}): SetParentsInput {
     relation: "biological",
     parentAId: null,
     parentBId: null,
+    allowDuplicate: "no",
     ...overrides,
   };
 }
@@ -68,6 +69,7 @@ describe("attaching a child to a family already on the tree", () => {
       relation: "biological",
       parentAId: null,
       parentBId: null,
+      allowDuplicate: false,
     });
   });
 
@@ -174,6 +176,50 @@ describe("creating the family from the parents", () => {
   });
 });
 
+describe("answering the duplicate prompt", () => {
+  const inline = (overrides: Partial<SetParentsInput> = {}) =>
+    submission({
+      familyMode: "new",
+      unionId: null,
+      parentAId: MOTHER,
+      parentBId: FATHER,
+      ...overrides,
+    });
+
+  it("says no when the author has not been asked yet", () => {
+    // A form posts every field it holds, so "nothing was said" has to be the
+    // same answer as "they said no" — and it has to be the safe one.
+    expect(valueOf(inline({ allowDuplicate: null })).value.allowDuplicate).toBe(
+      false,
+    );
+  });
+
+  it("takes yes for an answer, because two marriages to one person is a record", () => {
+    expect(
+      valueOf(inline({ allowDuplicate: "yes" })).value.allowDuplicate,
+    ).toBe(true);
+  });
+
+  it("refuses an answer it does not recognise rather than reading it as consent", () => {
+    const checked = validateSetParents(inline({ allowDuplicate: "maybe" }));
+
+    expect(checked.ok).toBe(false);
+    if (checked.ok) return;
+    expect(checked.issues.map((issue) => issue.field)).toContain(
+      "allowDuplicate",
+    );
+  });
+
+  it("is never read when a family was chosen from the tree", () => {
+    // Choosing a family that already exists cannot duplicate anything, so the
+    // answer is cleared here rather than left for the writer to remember to
+    // ignore — the same rule this file applies to `unionId` and the parents.
+    expect(
+      valueOf(submission({ allowDuplicate: "yes" })).value.allowDuplicate,
+    ).toBe(false);
+  });
+});
+
 describe("moving a child from one family to another", () => {
   it("carries the family they are being taken out of", () => {
     const checked = valueOf(submission({ fromUnionId: OTHER_UNION }));
@@ -272,6 +318,7 @@ describe("the submission as a whole", () => {
       relation: "adopted",
       parentAId: MOTHER,
       parentBId: null,
+      allowDuplicate: false,
     });
   });
 });

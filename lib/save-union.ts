@@ -50,6 +50,15 @@ import {
  * form disabling its own submit while the action is in flight, which is the
  * protection `NewEntryForm` already relies on for an equally non-idempotent
  * create.
+ *
+ * That is still true here, and E3-T10 (`YEO-82`) did not change it. What that
+ * ticket added is a *prompt* one door along: `lib/set-parents.ts` creates a
+ * union from the child's end, where the author is naming two parents rather
+ * than recording a marriage, and has no way to see that those two already have
+ * a family. It therefore names the existing one and asks. This function is the
+ * other door — the author is on somebody's panel, adding a spouse, looking at
+ * the marriages already listed there — so the question would be answering
+ * itself. `lib/union-merge.ts` cleans up the duplicates either door leaves.
  */
 
 /**

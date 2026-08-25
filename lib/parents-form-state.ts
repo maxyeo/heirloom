@@ -54,6 +54,16 @@ export type ParentsFormState = {
   error: string | null;
   /** Per-field messages. Empty when all is well. */
   errors: ParentsFieldErrors;
+  /**
+   * Families the two named parents already have, when that is why nothing was
+   * written (E3-T10, `YEO-82`).
+   *
+   * A list rather than a flag, and separate from `error`, because this is a
+   * *question* rather than a failure: the form has two answers to offer — use
+   * one of these families, or say they were married more than once — and both
+   * need the ids to be useful. Empty in every other state.
+   */
+  existingUnionIds: string[];
 };
 
 /**
@@ -68,11 +78,17 @@ export const emptyParentsFormState: ParentsFormState = Object.freeze({
   savedUnionId: null,
   error: null,
   errors: {},
+  existingUnionIds: [],
 });
 
 /** The state for a submission that was written. */
 export function parentsSavedState(unionId: string): ParentsFormState {
-  return { savedUnionId: unionId, error: null, errors: {} };
+  return {
+    savedUnionId: unionId,
+    error: null,
+    errors: {},
+    existingUnionIds: [],
+  };
 }
 
 /**
@@ -90,12 +106,38 @@ export function parentsInvalidState(
     savedUnionId: null,
     error: null,
     errors: parentsFieldErrorsFrom(issues),
+    existingUnionIds: [],
+  };
+}
+
+/**
+ * The state for a submission held back because these two people already have
+ * a family (E3-T10, `YEO-82`).
+ *
+ * Carries no `error`. Nothing is wrong — the author has been asked a question
+ * they could not have been asked earlier, since only the database knows what
+ * was recorded a moment ago, and the form renders it as a choice rather than
+ * as a problem with a field.
+ */
+export function parentsDuplicateState(
+  unionIds: readonly string[],
+): ParentsFormState {
+  return {
+    savedUnionId: null,
+    error: null,
+    errors: {},
+    existingUnionIds: [...unionIds],
   };
 }
 
 /** The state for a failure that belongs to no single field. */
 export function parentsFailedState(message: string): ParentsFormState {
-  return { savedUnionId: null, error: message, errors: {} };
+  return {
+    savedUnionId: null,
+    error: message,
+    errors: {},
+    existingUnionIds: [],
+  };
 }
 
 /**

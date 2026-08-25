@@ -57,6 +57,16 @@ import { isRowId } from "./row-id";
  */
 export const PARENT_FAMILY_MODES = ["existing", "new"] as const;
 
+/**
+ * How the author answered "these two already have a family — did you mean
+ * that one?" (E3-T10, `YEO-82`).
+ *
+ * A vocabulary rather than a checkbox's presence, matching every other
+ * non-text field here: a form posts what it holds, so "the author said no"
+ * and "the field never existed" have to be the same answer, and `no` is it.
+ */
+export const DUPLICATE_ANSWERS = ["no", "yes"] as const;
+
 export type ParentFamilyMode = (typeof PARENT_FAMILY_MODES)[number];
 
 /**
@@ -90,6 +100,21 @@ export type SetParentsFields = {
    */
   parentAId: string | null;
   parentBId: string | null;
+  /**
+   * Whether the author has already been told that these two people have a
+   * family recorded, and asked for a second one anyway (E3-T10, `YEO-82`).
+   *
+   * The escape hatch that keeps the duplicate check a *prompt* rather than a
+   * refusal. Two unions between the same pair is not automatically an error —
+   * a couple who divorced and remarried each other is ordinary genealogy, and
+   * `lib/save-union.ts` declines to check for duplicates for exactly that
+   * reason. So `lib/set-parents.ts` refuses the first submission, names the
+   * family it found, and takes yes for an answer on the second.
+   *
+   * Read in `new` mode only, and false everywhere else: choosing a family that
+   * already exists cannot duplicate anything.
+   */
+  allowDuplicate: boolean;
 };
 
 /** The name of a field a problem can be attached to. */
@@ -126,6 +151,7 @@ export type SetParentsInput = {
   relation: unknown;
   parentAId: unknown;
   parentBId: unknown;
+  allowDuplicate: unknown;
 };
 
 /**
@@ -261,6 +287,24 @@ export function validateSetParents(input: SetParentsInput): ParentsValidation {
     });
   }
 
+  /**
+   * A yes/no answer read as a vocabulary rather than as a truthiness test.
+   * `readEnum` gives the same three answers every other field gets — the
+   * value, the fallback when nothing was said, and `undefined` for something
+   * that could only come from a hand-made POST — so an unrecognised value is
+   * refused rather than quietly counting as consent to write a second family.
+   */
+  const duplicateAnswer =
+    mode === "new"
+      ? readEnum(input.allowDuplicate, DUPLICATE_ANSWERS, "no")
+      : ("no" as const);
+  if (duplicateAnswer === undefined) {
+    issues.push({
+      field: "allowDuplicate",
+      message: "Say whether to record a second family for these two people.",
+    });
+  }
+
   const relation = readEnum(input.relation, CHILD_RELATIONS, "biological");
   if (relation === undefined) {
     issues.push({
@@ -296,6 +340,9 @@ export function validateSetParents(input: SetParentsInput): ParentsValidation {
   if (relation === undefined) {
     throw new Error("unreachable: an unknown relation is an issue");
   }
+  if (duplicateAnswer === undefined) {
+    throw new Error("unreachable: an unreadable duplicate answer is an issue");
+  }
 
   return {
     ok: true,
@@ -307,6 +354,7 @@ export function validateSetParents(input: SetParentsInput): ParentsValidation {
       relation,
       parentAId,
       parentBId,
+      allowDuplicate: duplicateAnswer === "yes",
     },
   };
 }
@@ -361,5 +409,6 @@ export function setParentsInputFromFormData(form: FormData): SetParentsInput {
     relation: form.get("relation"),
     parentAId: form.get("parentAId"),
     parentBId: form.get("parentBId"),
+    allowDuplicate: form.get("allowDuplicate"),
   };
 }

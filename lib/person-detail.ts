@@ -128,7 +128,7 @@ export function derivePersonDetail(
   const summary = (id: string | null): PersonSummary | null => {
     if (!id) return null;
     const found = byId.get(id);
-    return found ? toSummary(found) : null;
+    return found ? personSummary(found) : null;
   };
 
   // Indexed once rather than filtered per union: still linear over a graph
@@ -185,7 +185,7 @@ export function derivePersonDetail(
       })
       .sort((a, b) => compareByBirth(a.child, b.child))
       .map(({ child, link }) => ({
-        person: toSummary(child),
+        person: personSummary(child),
         relation: link.relation,
         unionId: union.id,
         otherParent,
@@ -240,7 +240,17 @@ export function derivePersonDetail(
   };
 }
 
-function toSummary(person: GraphPerson): PersonSummary {
+/**
+ * One person, reduced to what another person's panel needs of them.
+ *
+ * Exported because three modules want the identical three lines —
+ * `lib/removal-preview.ts` names the people a delete touches, and
+ * `lib/union-merge.ts` names the couple a merge is about. Two private copies
+ * of it was already one too many: `PersonSummary` is declared here, so the
+ * function that builds one belongs beside it rather than being re-derived
+ * wherever a summary is needed.
+ */
+export function personSummary(person: GraphPerson): PersonSummary {
   return {
     id: person.id,
     name: formatPersonName(person.givenName, person.surname),
