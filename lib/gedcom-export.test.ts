@@ -58,6 +58,8 @@ function person(overrides: Partial<ExportIndividual> = {}): ExportIndividual {
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
     ...overrides,
   };
 }

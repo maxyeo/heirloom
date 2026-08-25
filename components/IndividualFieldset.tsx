@@ -4,6 +4,7 @@ import { useEffect, useId, useRef } from "react";
 
 import { DateField } from "@/components/DateField";
 import { FormSelect } from "@/components/FormSelect";
+import { PortraitField } from "@/components/PortraitField";
 import {
   MAX_NAME_LENGTH,
   MAX_NOTES_LENGTH,
@@ -135,6 +136,11 @@ export const emptyIndividualFormValues: IndividualFormValues = Object.freeze({
   deathDate: "",
   deathPlace: "",
   notes: "",
+  // No photograph, said the way a form says it. `validateIndividual` collapses
+  // both back to null, which is what makes a person added without a portrait
+  // a row holding two nulls rather than two empty strings.
+  portraitKey: "",
+  portraitThumbKey: "",
 });
 
 /**
@@ -181,6 +187,8 @@ export function individualFormValuesFrom(
     deathDate: formatQualifiedDate(deathOf(fields)) ?? "",
     deathPlace: fields.deathPlace ?? "",
     notes: fields.notes ?? "",
+    portraitKey: fields.portraitKey ?? "",
+    portraitThumbKey: fields.portraitThumbKey ?? "",
   };
 }
 
@@ -268,8 +276,33 @@ export function IndividualFieldset({
     if (autoFocusFirstField) firstField.current?.focus();
   }, [autoFocusFirstField]);
 
+  /**
+   * The two portrait fields' messages, folded into one slot.
+   *
+   * Exactly the reasoning `dateError` above gives: neither key is typed, so
+   * only a hand-made POST can get one refused — and a message with no field
+   * on screen to hang under is a message nobody ever sees.
+   */
+  const portraitError = fieldErrors.portraitKey ?? fieldErrors.portraitThumbKey;
+
   return (
     <div className="space-y-4">
+      {/*
+        The photograph first (E5-T4, `YEO-44`). A face is what an author has
+        in their hand when they sit down to record somebody, and it is the one
+        field here that is a task rather than a typing box — putting it below
+        the notes would bury an upload under nine text inputs.
+      */}
+      <PortraitField
+        portraitKey={values.portraitKey}
+        portraitThumbKey={values.portraitThumbKey}
+        onChange={onChange}
+        personName={values.givenName}
+        namePrefix={namePrefix}
+        error={portraitError}
+        disabled={disabled}
+      />
+
       <div>
         <Label htmlFor={fieldId("givenName")} required>
           First name

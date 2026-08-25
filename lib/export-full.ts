@@ -11,6 +11,7 @@ import {
   type OpenedImage,
 } from "@/lib/export-archive";
 import { exportTreeAsGedcom } from "@/lib/export-tree";
+import { isPortraitKey } from "@/lib/portrait";
 import * as storage from "@/lib/storage";
 import { imagePath } from "@/lib/storage-key";
 import { zipChunks } from "@/lib/zip-stream";
@@ -337,12 +338,44 @@ export async function readFullExport(
 }
 
 /**
- * Every image the wiki refers to, from the bodies just read.
+ * The two columns on `individuals` that hold a storage key (E5-T4, `YEO-44`).
  *
- * Current entries *and* every revision of them, because a photograph taken
- * out of an entry last year is still in the revision that had it and
- * revisions are append-only — see `lib/entry-images.ts`, which explains why
- * the store is asked nothing and the bodies are asked instead.
+ * Snake case, because these are the raw rows as `readTables` selected them
+ * rather than Drizzle's camel-cased view of them.
+ */
+const PORTRAIT_COLUMNS = ["portrait_key", "portrait_thumb_key"] as const;
+
+/**
+ * Every image the wiki refers to, from the rows just read.
+ *
+ * Two kinds of reference, and they are found in two different ways because
+ * they are two different things:
+ *
+ * - **Entry bodies.** Current entries *and* every revision of them, because a
+ *   photograph taken out of an entry last year is still in the revision that
+ *   had it and revisions are append-only — see `lib/entry-images.ts`, which
+ *   explains why the store is asked nothing and the bodies are asked instead.
+ *   A reference here is an `<img src>` inside authored HTML, so it has to be
+ *   parsed back out.
+ * - **Portraits.** A column rather than a body, so there is nothing to parse:
+ *   `individuals.portrait_key` and its thumbnail *are* keys. Both are
+ *   collected, not just the original — a backup that restored the portraits
+ *   and left every thumbnail behind would come back with a tree that fetches
+ *   several hundred full-resolution photographs to draw itself, which is the
+ *   failure E5-T4 exists to avoid, reintroduced by the recovery.
+ *
+ * Adding the second kind here rather than teaching `scanEntryImages` about it
+ * is deliberate: that function answers "which images does this HTML use", and
+ * a portrait is not in any HTML. What the two share is the *question* — which
+ * keys are still referenced — and that question is this function's, which is
+ * also why E5-T5's orphan sweep should ask it here rather than re-derive half
+ * of it. A sweep that knew only about bodies would delete every portrait in
+ * the wiki as unreferenced.
+ *
+ * A key that is not a well-formed image key is skipped rather than exported.
+ * These columns are written through `validateIndividual`, so a bad one means
+ * something reached the row another way — and an export must not refuse to
+ * run over one dubious cell, for the reason `lib/entry-images.ts` gives.
  *
  * Sorted by key so that two exports of an unchanged wiki list them in the
  * same order, for the same reason `lib/export-tree.ts` orders its `select`s:
@@ -355,6 +388,16 @@ function referencedImages(
   const keys = new Set<string>();
 
   for (const table of tables) {
+    if (table.table === "individuals") {
+      for (const row of table.rows) {
+        for (const column of PORTRAIT_COLUMNS) {
+          const key = row[column];
+          if (typeof key === "string" && isPortraitKey(key)) keys.add(key);
+        }
+      }
+      continue;
+    }
+
     if (table.table !== "pages" && table.table !== "revisions") continue;
     for (const row of table.rows) {
       const body = row.body_html;

@@ -26,6 +26,7 @@ import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { EditPerson } from "@/components/EditPersonForm";
 import { PersonEntry } from "@/components/PersonEntry";
 import { PersonPanel } from "@/components/PersonPanel";
+import { PersonPortrait } from "@/components/PersonPortrait";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
@@ -39,7 +40,7 @@ import type { SetParentsFormAction } from "@/lib/parents-form-state";
 import { derivePersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
 import type { ReorderUnionsFormAction } from "@/lib/union-order-state";
-import { layoutFamilyGraph } from "@/lib/tree-layout";
+import { PERSON_WIDTH, layoutFamilyGraph } from "@/lib/tree-layout";
 import { treeOnboarding } from "@/lib/tree-onboarding";
 import {
   linkedPersonId,
@@ -54,18 +55,47 @@ function PersonNode({
 }: NodeProps<Node<Record<string, unknown>>>) {
   const name = String(data.name ?? "");
   const lifespan = String(data.lifespan ?? "");
+  /**
+   * The thumbnail's path, or null (E5-T4, `YEO-44`).
+   *
+   * Read defensively because `data` is `Record<string, unknown>` — React
+   * Flow's node data is untyped by construction, so this is the boundary
+   * where it becomes a value rather than a cast.
+   *
+   * `lib/tree-layout.ts` decided *which* image this is, and it is the small
+   * one: the canvas draws every person at once, and pulling the originals
+   * here is the failure this ticket exists to prevent.
+   */
+  const portraitSrc =
+    typeof data.portraitSrc === "string" ? data.portraitSrc : null;
 
   return (
     <div
-      className={`w-44 rounded-panel border bg-paper px-3 py-2 shadow-sm ${
+      /**
+       * The width is `PERSON_WIDTH` from `lib/tree-layout.ts`, written as a
+       * style rather than a `w-*` class for the reason `PersonPortrait` gives
+       * about its own box: dagre reserved this many pixels, and a second
+       * spelling of the number in a different notation is a spelling that can
+       * drift into cards that overlap.
+       */
+      style={{ width: PERSON_WIDTH }}
+      className={`flex items-center gap-2 rounded-panel border bg-paper px-3 py-2 shadow-sm ${
         selected ? "border-link ring-2 ring-link" : "border-rule"
       }`}
     >
       <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <div className="truncate font-medium text-ink">{name}</div>
-      {lifespan ? (
-        <div className="text-note text-ink-muted">{lifespan}</div>
-      ) : null}
+      <PersonPortrait src={portraitSrc} name={name} size="node" />
+      {/*
+        `min-w-0` is what makes `truncate` work inside a flex row: without it
+        this column's minimum width is its content, so a long name would push
+        the card wider than the box dagre reserved instead of being cut off.
+      */}
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium text-ink">{name}</div>
+        {lifespan ? (
+          <div className="text-note text-ink-muted">{lifespan}</div>
+        ) : null}
+      </div>
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   );

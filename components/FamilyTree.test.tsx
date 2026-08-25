@@ -151,6 +151,8 @@ function person(
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
     pageId: null,
     ...overrides,
   } satisfies FamilyGraph["people"][number];
@@ -282,6 +284,41 @@ describe("opening the panel", () => {
     click(nodeWrapper(host, "u1"));
 
     expect(panelLabel(host)).toBeNull();
+  });
+});
+
+/**
+ * What a node draws for a person's face (E5-T4, `YEO-44`). Everything about
+ * *which* key a node loads is decided by `lib/tree-layout.ts` and
+ * `lib/portrait.ts`, and asserted with no DOM in `lib/tree-layout.test.ts`'s
+ * "layout stability" block. What is left here is only what a real mount can
+ * show: that a photograph on a person becomes an `<img>` inside their node,
+ * and that a person with none gets the placeholder rather than a broken
+ * image.
+ */
+describe("portraits on the canvas", () => {
+  const KEY = "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg";
+
+  it("renders an img under /api/images/ for a person with a portrait", () => {
+    const withPortrait = graph();
+    withPortrait.people = withPortrait.people.map((p) =>
+      p.id === "rose" ? { ...p, portraitKey: KEY, portraitThumbKey: null } : p,
+    );
+    const host = render(withPortrait);
+
+    const img = nodeWrapper(host, "rose").querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("src")).toContain("/api/images/");
+  });
+
+  it("renders the placeholder for a person with no portrait", () => {
+    const host = render(graph());
+
+    const node = nodeWrapper(host, "rose");
+    expect(node.querySelector("img")).toBeNull();
+    expect(
+      node.querySelector('[data-testid="portrait-placeholder"]'),
+    ).not.toBeNull();
   });
 });
 

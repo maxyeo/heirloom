@@ -61,6 +61,7 @@ import {
   readEnum,
   readText,
 } from "./field-input";
+import { readPortraitKey } from "./portrait";
 
 export {
   DATE_PRECISIONS,
@@ -133,6 +134,35 @@ export type IndividualFields = {
   deathDateUpperPrecision: DatePrecision;
   deathPlace: string | null;
   notes: string | null;
+  /**
+   * The person's portrait, as a storage key (E5-T4, `YEO-44`).
+   *
+   * A **key**, and this is the one field here that is not something anybody
+   * types. The photograph is uploaded by `POST /api/images` before this form
+   * is submitted, and what reaches the form is the key that endpoint minted —
+   * carried in a hidden input, the same way a date's derived precision is.
+   * So the value arriving here has already been through the endpoint's
+   * allowlist, its metadata scrub and its own key mint.
+   *
+   * That is not a reason to trust it. A server action is an open POST, so the
+   * key is checked against the same rules `lib/storage-key.ts` applies on the
+   * way in — inside the `images/` namespace, and legal as a path — before it
+   * can become a column that something later renders as a URL. See
+   * `readPortraitKey`.
+   */
+  portraitKey: string | null;
+  /**
+   * The downscaled copy of {@link IndividualFields.portraitKey} the tree
+   * canvas loads, as a storage key.
+   *
+   * Normalised away when there is no portrait beside it, exactly as a date
+   * qualifier with no date is: a thumbnail of nothing is a second way of
+   * saying "no portrait", and one that would leave a file referenced by a
+   * column nothing renders. The reverse — a portrait with no thumbnail — is a
+   * legal state and is left alone, because the browser that made the upload
+   * may not have been able to produce one.
+   */
+  portraitThumbKey: string | null;
 };
 
 /** The name of a field a problem can be attached to. */
@@ -438,6 +468,28 @@ export function validateIndividual(
   }
 
   /**
+   * The two portrait keys (E5-T4, `YEO-44`).
+   *
+   * The message is written for somebody who did not do this on purpose,
+   * because nobody can: the field is hidden and its value comes from the
+   * upload endpoint. Reaching it means the upload half went wrong or the
+   * request was assembled by hand, and neither is worth a sentence about
+   * storage namespaces.
+   */
+  const portraitKey = readPortraitKey(input.portraitKey);
+  if (portraitKey === undefined) {
+    add("portraitKey", "That photograph could not be attached. Try again.");
+  }
+
+  const portraitThumbKey = readPortraitKey(input.portraitThumbKey);
+  if (portraitThumbKey === undefined) {
+    add(
+      "portraitThumbKey",
+      "That photograph could not be attached. Try again.",
+    );
+  }
+
+  /**
    * The cross-field rule, checked only once both dates are known to be
    * readable. Running it on a date that failed above would report a second
    * problem caused entirely by the first, and send the author looking at the
@@ -522,6 +574,16 @@ export function validateIndividual(
           : "day",
       deathPlace: deathPlace ?? null,
       notes: notes ?? null,
+      portraitKey: portraitKey ?? null,
+      /**
+       * A thumbnail with no portrait beside it is normalised away, exactly as
+       * a qualifier with no date is above and for the same reason: the
+       * portrait column being null is already the whole of "this person has
+       * no photograph", and a second column disagreeing with it would leave a
+       * file referenced by nothing anything renders — which is also a file
+       * E5-T5's sweep would then be wrong to collect and wrong to keep.
+       */
+      portraitThumbKey: portraitKey ? (portraitThumbKey ?? null) : null,
     },
   };
 }
@@ -583,5 +645,7 @@ export function individualInputFromFormData(form: FormData): IndividualInput {
     deathDateUpperPrecision: form.get("deathDateUpperPrecision"),
     deathPlace: form.get("deathPlace"),
     notes: form.get("notes"),
+    portraitKey: form.get("portraitKey"),
+    portraitThumbKey: form.get("portraitThumbKey"),
   };
 }

@@ -294,3 +294,78 @@ describe("updateIndividual", () => {
     expect(result).toEqual({ status: "not-found" });
   });
 });
+
+/**
+ * The two portrait columns (E5-T4, `YEO-44`). `lib/individual-input.test.ts`
+ * already checks the normalising rules with no database in sight; what is
+ * left here is the same thing every other field in this file gets — proof
+ * that the pair actually reaches the real columns, that clearing it writes
+ * real nulls, and that the no-op check notices a portrait moving on its own.
+ */
+describe("the portrait", () => {
+  const KEY = "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg";
+  const THUMB = "images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp";
+
+  it("round-trips a portrait pair through createIndividual and updateIndividual", async () => {
+    const id = await create({
+      givenName: name("portrait-create"),
+      portraitKey: KEY,
+      portraitThumbKey: THUMB,
+    });
+
+    expect(await readPerson(id)).toMatchObject({
+      portraitKey: KEY,
+      portraitThumbKey: THUMB,
+    });
+
+    const OTHER_KEY = "images/ef/2e5b6c2f-1234-4a56-89ab-cdef01234568.jpg";
+    const OTHER_THUMB = "images/7b/3f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b82.webp";
+    const result = await updateIndividual(id, {
+      givenName: name("portrait-create"),
+      portraitKey: OTHER_KEY,
+      portraitThumbKey: OTHER_THUMB,
+    });
+
+    expect(result).toEqual({ status: "updated", id });
+    expect(await readPerson(id)).toMatchObject({
+      portraitKey: OTHER_KEY,
+      portraitThumbKey: OTHER_THUMB,
+    });
+  });
+
+  it("clearing the portrait writes real nulls, not empty strings", async () => {
+    const id = await create({
+      givenName: name("portrait-clear"),
+      portraitKey: KEY,
+      portraitThumbKey: THUMB,
+    });
+
+    const result = await updateIndividual(id, {
+      givenName: name("portrait-clear"),
+      portraitKey: "",
+      portraitThumbKey: "",
+    });
+
+    expect(result).toEqual({ status: "updated", id });
+    expect(await readPerson(id)).toMatchObject({
+      portraitKey: null,
+      portraitThumbKey: null,
+    });
+  });
+
+  it("reports unchanged when only the portrait would not move", async () => {
+    const id = await create({
+      givenName: name("portrait-noop"),
+      portraitKey: KEY,
+      portraitThumbKey: THUMB,
+    });
+
+    const result = await updateIndividual(id, {
+      givenName: name("portrait-noop"),
+      portraitKey: KEY,
+      portraitThumbKey: THUMB,
+    });
+
+    expect(result).toEqual({ status: "unchanged", id });
+  });
+});

@@ -42,6 +42,8 @@ function graph(): FamilyGraph {
         deathDateUpperPrecision: "day",
         deathPlace: null,
         notes: null,
+        portraitKey: null,
+        portraitThumbKey: null,
         pageId: null,
       },
     ],

@@ -408,6 +408,8 @@ const FIELD_NAMES = Object.keys({
   deathDate: true,
   deathPlace: true,
   notes: true,
+  portraitKey: true,
+  portraitThumbKey: true,
 } satisfies Record<IndividualFormField, true>) as IndividualFormField[];
 
 /**

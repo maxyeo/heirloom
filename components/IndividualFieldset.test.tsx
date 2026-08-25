@@ -357,6 +357,8 @@ describe("prefilling from a record", () => {
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
   };
 
   it("turns every unknown into the blank an input can hold", () => {
@@ -384,6 +386,8 @@ describe("prefilling from a record", () => {
       deathDateUpperPrecision: "day",
       deathPlace: "Dublin",
       notes: "From the 1911 census.",
+      portraitKey: null,
+      portraitThumbKey: null,
     };
 
     expect(individualFormValuesFrom(recorded)).toEqual({
@@ -397,6 +401,10 @@ describe("prefilling from a record", () => {
       deathDate: "2 November 1953",
       deathPlace: "Dublin",
       notes: "From the 1911 census.",
+      // A record's null becomes a form's empty string, like every other
+      // absent value here (E5-T4, `YEO-44`).
+      portraitKey: "",
+      portraitThumbKey: "",
     });
   });
 

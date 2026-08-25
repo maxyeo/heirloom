@@ -496,6 +496,60 @@ export const individuals = pgTable(
       .default("day"),
     deathPlace: text("death_place"),
     notes: text("notes"),
+    /**
+     * The person's portrait, as a **storage key** (E5-T4, `YEO-44`).
+     *
+     * A key and never a URL, and that is the one thing about this column
+     * worth being emphatic about. `lib/storage.ts` hands out signed URLs that
+     * stop working fifteen minutes after they are minted (`YEO-86`), so a URL
+     * stored here would render for one afternoon and be a broken image for
+     * the rest of this row's life. The key is the durable handle; the URL is
+     * minted per request by `GET /api/images/…`. That is the same contract
+     * `docs/architecture.md#the-storage-seam` sets for entry bodies, and the
+     * upload endpoint already refuses to hand a caller anything else — it
+     * names this column while doing so.
+     *
+     * Null is the ordinary case rather than an edge one: most people in a
+     * family tree have no photograph, and every row that existed before this
+     * column did has none either. So nothing downstream may treat null as
+     * missing data to be chased — the canvas draws a placeholder and says
+     * nothing about it.
+     *
+     * No foreign key, because there is no table of images to point at. What
+     * makes a key valid is `assertSafeStorageKey` plus the image-namespace
+     * check (`lib/storage-key.ts`), applied by `validateIndividual` before
+     * this column ever sees a value.
+     */
+    portraitKey: text("portrait_key"),
+    /**
+     * A downscaled copy of {@link individuals.portraitKey}, for the canvas.
+     *
+     * A **second column rather than a size parameter on the first**, and the
+     * reason is that this application has no image processor. There is no
+     * `sharp`, and adding one would put a native binary in the deploy for the
+     * sake of one feature. More to the point, resizing on read would make
+     * this application a transformation proxy for its own images, which is
+     * exactly what `GET /api/images/…` deliberately is not: it redirects, and
+     * the bytes never touch this code. So the downscale happens once, in the
+     * browser, at the moment somebody chooses the photograph, and both
+     * results are stored.
+     *
+     * The tree loads every person at once — a few hundred nodes on one canvas
+     * — so what a node renders has to be the small one. Serving the original
+     * there would be a few hundred multi-megapixel fetches to paint a strip
+     * forty pixels wide.
+     *
+     * Separately nullable from `portraitKey` rather than derived from it,
+     * because the two can genuinely disagree: a row written by a browser that
+     * could not produce a thumbnail has a portrait and no thumbnail. Readers
+     * must handle that, and the canvas does — it falls back to the full
+     * image, which is slow and correct, rather than to no image, which would
+     * be wrong. It is never the other way round: a thumbnail with no portrait
+     * is not a state anything writes, and `validateIndividual` normalises one
+     * away rather than refusing it — silently, because no author can cause it
+     * and there is no field on screen to hang a message under.
+     */
+    portraitThumbKey: text("portrait_thumb_key"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -27,6 +27,8 @@ function person(
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
     pageId: null,
     ...overrides,
   } satisfies FamilyGraph["people"][number];

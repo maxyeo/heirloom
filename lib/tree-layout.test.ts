@@ -8,6 +8,7 @@ import {
   PERSON_WIDTH,
   layoutFamilyGraph,
 } from "@/lib/tree-layout";
+import { PORTRAIT_NODE_SIZE, portraitSrc } from "@/lib/portrait";
 // `import type` matters here. lib/family-graph.ts imports @/db, which pulls in
 // postgres.js; taking only the type erases the import entirely and keeps this
 // file runnable with no database, which is what lets it run in CI.
@@ -125,6 +126,8 @@ function person(
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
     pageId: null,
     ...overrides,
   } satisfies FamilyGraph["people"][number];
@@ -395,5 +398,104 @@ describe("layoutFamilyGraph", () => {
       nodes: [],
       edges: [],
     });
+  });
+});
+
+/**
+ * The acceptance criterion this ticket is written against, stated as an
+ * assertion (E5-T4, `YEO-44`).
+ *
+ * "Layout must stay stable whether or not a portrait exists" is the kind of
+ * property that is obviously true when it is written and quietly false a year
+ * later, because the natural way to break it is an improvement: measuring a
+ * card and passing dagre its real height, or giving a person with no
+ * photograph a narrower box so the tree looks tidier. Both would work, would
+ * review well, and would mean that uploading one great-grandmother's portrait
+ * moved every one of her descendants sideways.
+ *
+ * So the test is a comparison rather than a set of expected numbers: lay the
+ * same family out twice, once with portraits and once without, and require
+ * that every node lands in exactly the same place. It cannot pass by
+ * coincidence, and it does not have to be updated when the constants change.
+ */
+describe("layout stability with and without portraits", () => {
+  const KEY = "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg";
+  const THUMB = "images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp";
+
+  /** The sample family, with a photograph on whoever `ids` names. */
+  function withPortraits(ids: readonly string[]): FamilyGraph {
+    const graph = sampleGraph();
+    return {
+      ...graph,
+      people: graph.people.map((p) =>
+        ids.includes(p.id)
+          ? { ...p, portraitKey: KEY, portraitThumbKey: THUMB }
+          : p,
+      ),
+    };
+  }
+
+  function positions(graph: FamilyGraph): Record<string, unknown> {
+    return Object.fromEntries(
+      layoutFamilyGraph(graph).nodes.map((node) => [node.id, node.position]),
+    );
+  }
+
+  it("puts every node in the same place whether or not anyone has one", () => {
+    const bare = positions(sampleGraph());
+
+    // One person, several people, and everybody — because a layout that
+    // depended on the portrait *count* rather than on any single portrait
+    // would survive a one-person check.
+    expect(positions(withPortraits(["rose"]))).toEqual(bare);
+    expect(positions(withPortraits(["rose", "thomas"]))).toEqual(bare);
+    expect(
+      positions(withPortraits(sampleGraph().people.map((p) => p.id))),
+    ).toEqual(bare);
+  });
+
+  it("reserves the portrait's width on every person, not just the ones who have one", () => {
+    // The other half of the same property, and the one that says *why* the
+    // positions above agree: the box is a fixed slot. If this ever became
+    // conditional, the assertion above would start failing rather than this
+    // one — which is why both are here.
+    expect(PERSON_WIDTH).toBe(PORTRAIT_NODE_SIZE + 8 + 176);
+    expect(PERSON_HEIGHT).toBeGreaterThanOrEqual(PORTRAIT_NODE_SIZE);
+  });
+
+  it("hands the node the thumbnail, resolved as a path", () => {
+    const { nodes } = layoutFamilyGraph(withPortraits(["rose"]));
+    const rose = nodes.find((node) => node.id === "rose");
+
+    // The thumbnail, never the original: a few hundred of these load at once.
+    expect(rose?.data.portraitSrc).toBe(portraitSrc(THUMB));
+    // And a path of this application's own rather than a storage URL, which
+    // would be a credential with a fifteen-minute timer on it.
+    expect(rose?.data.portraitSrc).toMatch(/^\/api\/images\//);
+  });
+
+  it("falls back to the original when no thumbnail was made", () => {
+    const graph = sampleGraph();
+    const only = {
+      ...graph,
+      people: graph.people.map((p) =>
+        p.id === "rose"
+          ? { ...p, portraitKey: KEY, portraitThumbKey: null }
+          : p,
+      ),
+    };
+
+    const rose = layoutFamilyGraph(only).nodes.find((n) => n.id === "rose");
+    expect(rose?.data.portraitSrc).toBe(portraitSrc(KEY));
+  });
+
+  it("gives a person with no portrait a null rather than a placeholder path", () => {
+    // The component decides what "no photograph" looks like. The layout only
+    // says that there is none — inventing a path to a placeholder image here
+    // would be a request per person for a picture that is markup.
+    const rose = layoutFamilyGraph(sampleGraph()).nodes.find(
+      (n) => n.id === "rose",
+    );
+    expect(rose?.data.portraitSrc).toBeNull();
   });
 });

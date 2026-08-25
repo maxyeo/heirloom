@@ -102,6 +102,64 @@ What it costs is that an image URL is no longer a durable thing anybody can
 write down. The expiry itself, and the contract that follows from it, are in
 [The storage seam](#the-storage-seam).
 
+#### Portraits, and why there are two columns
+
+`individuals` carries `portrait_key` and `portrait_thumb_key` (`E5-T4`), both
+nullable and both holding a **key** rather than a URL — the contract [the
+storage seam](#the-storage-seam) sets, and the reason is sharpest here: a row
+outlives an afternoon and a signed URL does not.
+
+The second column is the interesting one, because the obvious design is one.
+The tree loads the whole family at once and lays it out in the browser, so a
+few hundred people with photographs is a few hundred images on one canvas,
+each drawn into a box forty-eight pixels wide. Serving the originals there
+downloads several hundred megapixels to paint a contact sheet. Serving only a
+small copy fixes the canvas and means the archive threw the photograph away.
+Neither is acceptable, so both are stored — the same "widen rather than
+collapse" answer the [date range columns](#ranges-and-the-columns-that-hold-them)
+reached, for the same reason: one column would have made two different things
+indistinguishable afterwards.
+
+**The downscale happens in the browser, once, on the way in.** Three other
+places it could have gone, and each fails on something this architecture has
+already decided:
+
+- **In `GET /api/images/…` on the way out.** That route redirects and never
+  touches the bytes, deliberately — "proxying the bytes would make this
+  application a CDN for its own images". Resizing is proxying with arithmetic
+  in it.
+- **In a server-side image processor.** `sharp` is a platform-specific native
+  binary in a deployment whose portability claim is that it is a plain Node
+  server.
+- **In `next/image`'s optimiser.** It would have to fetch the image back out
+  of this application, which requires a session it does not have, and then
+  follow the redirect to the storage host — which would have to be named in
+  `next.config.ts`. That is the vendor written into the build configuration,
+  the same mistake as [pinning the sanitiser's `img[src]` to a blob
+  host](#the-contract-this-sets-for-e5-t2-and-after), arriving from a
+  direction `lib/storage.call-sites.test.ts` does not watch.
+
+What is left is the browser that already has the file open. It costs one
+`<canvas>` draw per photograph rather than one per page view, needs no new
+dependency, and needs no new endpoint: both images go through the same
+`POST /api/images`. It has a useful side effect the 4 MB cap needs anyway —
+a canvas re-encode is what gets a 12 MB phone photograph under the limit.
+
+The two columns can disagree in one direction only. A portrait with no
+thumbnail is legal, and the canvas falls back to the full image: slow for that
+one person and correct. A thumbnail with no portrait is not a state anything
+writes, and `validateIndividual` normalises it away — a thumbnail of nothing
+is a second way of saying "no portrait", and one that would leave a file
+referenced by a column nothing renders.
+
+**Layout does not depend on which photographs exist.** `PERSON_WIDTH` reserves
+the portrait's box for everybody, dagre is told the same constants for every
+person, and `components/PersonPortrait.tsx` renders one fixed-size element
+whose child is either a photograph or a placeholder. The alternative — sizing
+a card to its contents — would re-rank the tree the moment somebody uploaded a
+picture, sliding a great-grandmother's descendants sideways because her face
+arrived.
+
 #### What the upload endpoint takes out of a photograph
 
 The boundary above protects the picture. It does not protect what is written
@@ -640,6 +698,19 @@ Findings one, two and three are the only ones that lose data, and all three
 lose it _with a report line_, never silently. Nothing in this list was worked
 around in the mapping.
 
+**And one the other way round.** Since `E5-T4` the schema has a column the
+format's mapping deliberately drops in both directions: the portrait.
+GEDCOM's `OBJE`/`FILE` names a path on a disk, which is the one thing a
+storage key is not — writing `/api/images/ab/….jpg` into an exported `.ged`
+would produce a line meaningless in every other program and resolvable only
+by a signed-in browser talking to this application. In the other direction, a
+`FILE` line from somebody else's program names bytes this application does
+not have and cannot fetch. So a GEDCOM export carries the family and not the
+photographs, which is the honest shape for a text interchange format; the
+photographs travel in the [full export](export.md), which is an archive and
+can carry bytes. The round trip is unaffected — neither half writes or reads
+the column, so the two texts still match byte for byte.
+
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations
@@ -972,6 +1043,14 @@ HTML would never be edited away. So:
 - **E5-T5's cleanup has something to match on.** "Referenced by no revision"
   is a query over keys. Against expiring URLs it would not be a well-formed
   question.
+- **A key is durable enough to be a column.** `E5-T4` put one on
+  `individuals` — the first persisted key outside an entry body — and it
+  obeys this rule rather than an exception to it: the row holds the key, and
+  `GET /api/images/…` mints the URL per request. A URL in that column would
+  have been a credential with a timer on it, in a row nobody edits again
+  after they have added the photograph. It also widens the question the
+  previous bullet asks: "referenced" now means referenced by a body **or** by
+  a portrait column.
 
 `E5-T2` shipped both halves of that, because either alone is incoherent.
 `POST /api/images` stores an upload under a key it mints itself and answers
@@ -1012,15 +1091,39 @@ grants write and delete on the store, and never appears in the repository.
   browser talking to the storage vendor directly — which would put its SDK in
   a client bundle and need a fourth function on the seam, both of which this
   repository fails the build over. A recent phone routinely produces larger
-  photographs than that, so the editor's image button (`E5-T3`) downscales in
-  a canvas before it posts — `lib/image-insert.ts` decides when and to what,
-  `components/image-upload.ts` does it. Two things survive as limitations
+  photographs than that, so the fix is to downscale in a canvas before
+  posting. `lib/image-insert.ts` decides when and to what,
+  `components/image-upload.ts` does it, and **both** callers use it: the
+  editor's image button (`E5-T3`), which it was written for, and the portrait
+  picker (`E5-T4`), which asks it for the same thing and then adds the one
+  extra it needs — a thumbnail, in `lib/portrait-image.ts`. Two things survive as limitations
   rather than as bugs. **An animated GIF is never resized**, because a canvas
   keeps one frame, so an oversized one is refused with a sentence rather than
   silently turned into a still. And **a resize re-encodes as JPEG**, losing
   transparency to a white background — the only format every browser's
   `canvas.toBlob` is required to produce, and a trade only ever taken on a
-  file that would otherwise not upload at all.
+  file that would otherwise not upload at all. (A portrait _thumbnail_ asks
+  for WebP instead, and falls back to PNG, because it is generated rather
+  than substituted for what the author chose.)
+- **A portrait costs a redirect per person on the canvas.** Every image on the
+  tree is a request to `GET /api/images/…`, which checks the session, asks the
+  store whether the object exists, signs a URL and answers 302 — so a screen
+  of thirty portraits is thirty of those before a single byte of image moves.
+  Three things keep it fine rather than fix it: the thumbnails are a few
+  kilobytes, the node `<img>` is lazy so only portraits actually on screen are
+  fetched, and most people in a family tree have no photograph at all. The
+  fix, if a family ever outgrows that, is a batch resolve — one request that
+  signs many keys — and it is deliberately not built here, because it would be
+  a second image-resolution path with its own auth, cache and validation rules
+  bought for a cost nobody has paid yet.
+- **A replaced or abandoned portrait's bytes stay in the store.** Choosing a
+  new photograph rewrites the two columns and nothing deletes the old objects;
+  neither does filling in the picker and then closing the form without saving.
+  `lib/save-individual.ts` deliberately does not call `storage.delete` — that
+  would couple the write path to the store and make its database test need a
+  storage token. `E5-T5` is the sweep, and it must read references from **two**
+  sources now: entry bodies (`lib/entry-images.ts`) and the portrait columns.
+  A sweep that knew only about bodies would delete every portrait in the wiki.
 - **Orientation is respected, never repaired.** PNG, WebP and GIF keep
   whatever orientation tag they arrived with and nothing re-synthesises one,
   because nothing that produces those formats produces a rotated image.

@@ -13,6 +13,7 @@ import {
   unionStart,
 } from "./format-date";
 import { formatPersonName } from "./person-format";
+import { portraitSrc } from "./portrait";
 
 /**
  * Everything the detail panel (E2-T1) shows about one person, derived from the
@@ -111,6 +112,24 @@ export type PersonDetail = {
   birth: LifeEvent | null;
   death: LifeEvent | null;
   notes: string | null;
+  /**
+   * The person's portrait as an `<img src>`, or null when they have none
+   * (E5-T4, `YEO-44`).
+   *
+   * **The original, not the thumbnail**, which is the one place this
+   * deliberately disagrees with the tree node beside it. A node draws the
+   * portrait forty pixels wide and there are hundreds of them; the panel
+   * draws one, several times that size, for somebody who has just asked to
+   * look at this person. Handing it the canvas's thumbnail would show them a
+   * 160-pixel image blown up — which is the whole reason a thumbnail is a
+   * separate column rather than the only one stored.
+   *
+   * A resolved path rather than the key, for the same reason `portraitSrc`
+   * exists at all: the panel renders values and does no reasoning, and
+   * turning a storage key into an address is reasoning. The path is durable;
+   * the signed URL behind it is minted per request and expires.
+   */
+  portraitSrc: string | null;
   pageId: string | null;
   spouses: SpouseLink[];
   children: ChildLink[];
@@ -218,6 +237,7 @@ export function derivePersonDetail(
     birth: toLifeEvent(formatQualifiedDate(birthOf(person)), person.birthPlace),
     death: toLifeEvent(formatQualifiedDate(deathOf(person)), person.deathPlace),
     notes: person.notes,
+    portraitSrc: portraitSrc(person.portraitKey),
     pageId: person.pageId,
     spouses,
     children,

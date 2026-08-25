@@ -150,6 +150,12 @@ function person(
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    // No photographs. The seed is a family history and this repository has no
+    // family's photographs to put in it — so every seeded person exercises
+    // the placeholder, which is the state the overwhelming majority of real
+    // rows are in too (E5-T4, `YEO-44`).
+    portraitKey: null,
+    portraitThumbKey: null,
     pageId: null,
     ...overrides,
   };

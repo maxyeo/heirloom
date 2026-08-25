@@ -595,6 +595,8 @@ function person(
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
     ...overrides,
   };
 }

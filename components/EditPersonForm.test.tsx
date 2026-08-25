@@ -71,6 +71,8 @@ const rose: GraphPerson = {
   deathDateUpperPrecision: "day",
   deathPlace: "Dublin",
   notes: "From the 1911 census.",
+  portraitKey: null,
+  portraitThumbKey: null,
   pageId: null,
 };
 
@@ -92,6 +94,8 @@ const sparse: GraphPerson = {
   deathDateUpperPrecision: "day",
   deathPlace: null,
   notes: null,
+  portraitKey: null,
+  portraitThumbKey: null,
 };
 
 /** Rose, but her birth is recorded as a range rather than a single point. */
@@ -299,14 +303,28 @@ describe("the Tab trap", () => {
    * a no-op, and `preventDefault()` had already told the browser not to do
    * what native Tab would have. The reader was stranded on the heading with
    * no way to reach a single field.
+   *
+   * The control it lands on changed in E5-T4 (`YEO-44`) — the photograph
+   * picker is now the first thing in the fieldset — and the bug this guards
+   * is unchanged by that. What is asserted is the property rather than the
+   * field: focus leaves the heading, reaches something a person can actually
+   * use, and it is **not** any of the hidden inputs. Naming a particular
+   * field here would make the guard fail every time the form is reordered,
+   * which teaches the next reader to update the expectation rather than to
+   * ask whether the trap came back.
    */
   it("skips the hidden id field and lands on the first real control", () => {
     const host = mount(rose);
     open(host);
 
     const event = tab();
+    const landed = document.activeElement as HTMLInputElement | null;
 
-    expect(document.activeElement).toBe(control(host, "givenName"));
+    expect(landed).not.toBeNull();
+    expect(landed).not.toBe(host.querySelector('input[name="id"]'));
+    expect(landed?.type).not.toBe("hidden");
+    // The first control an author can see, which is the portrait picker.
+    expect(landed?.type).toBe("file");
     expect(event.defaultPrevented).toBe(true);
   });
 });
@@ -726,6 +744,7 @@ describe("Escape, and the panel behind it", () => {
     birth: { date: "about 12 April 1890", place: "Cork" },
     death: { date: "2 November 1953", place: "Dublin" },
     notes: null,
+    portraitSrc: null,
     pageId: null,
     spouses: [],
     children: [],
