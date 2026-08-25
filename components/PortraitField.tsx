@@ -42,16 +42,20 @@ import {
  *
  * ## Why the three browser calls are here
  *
- * `createImageBitmap`, `getContext("2d")` and `toBlob` are the whole of the
- * DOM in this feature, and they are in this one function on purpose. Every
- * *decision* around them — the box to draw into, whether the original needs
- * re-encoding at all, whether a thumbnail is worth making — is in
- * `lib/image-scale.ts` and `lib/portrait-image.ts`, which are pure and have
- * tests
- * beside them. jsdom has no canvas, so anything wrapped around those three
- * calls would be code with no test; what is left here has no branches worth
- * one. That is the same split `lib/parse-date.ts` and `DateField` already
- * make.
+ * `createImageBitmap`, `getContext("2d")` and `toBlob` are the only DOM this
+ * file reaches for, and they are confined to `storeThumbnail` below. Every
+ * *decision* around them — whether a thumbnail is worth making at all, and
+ * what box to draw it into — is in `lib/portrait-image.ts`, which is pure and
+ * has tests beside it. jsdom has no canvas, so anything wrapped around those
+ * three calls would be code with no test; what is left here has no branches
+ * worth one. That is the same split `lib/parse-date.ts` and `DateField`
+ * already make.
+ *
+ * Shrinking the *original* is not among those decisions and deliberately no
+ * longer happens here: `components/image-upload.ts` owns it for both callers
+ * (E5-T3 and this one), so how a too-large photograph gets under the cap is
+ * answered once. See `lib/portrait-image.ts` for what this ticket asks for on
+ * top of that, and why it is different.
  */
 
 /** The pair of keys a chosen photograph produces. */
