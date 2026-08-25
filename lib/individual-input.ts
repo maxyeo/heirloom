@@ -55,6 +55,7 @@ import {
   type DatePrecision,
   type DateQualifier,
   isImpossibleOrder,
+  isInvertedRange,
   MAX_NOTES_LENGTH,
   readDate,
   readEnum,
@@ -115,11 +116,21 @@ export type IndividualFields = {
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
   birthDatePrecision: DatePrecision;
+  /**
+   * The upper bound of a range (`YEO-88`) — `BET 1890 AND 1900` stores
+   * `1890` here as `birthDate` and `1900` here. `null` when the birth date is
+   * a single point, which is every record that predates this ticket.
+   */
+  birthDateUpper: string | null;
+  birthDateUpperPrecision: DatePrecision;
   birthPlace: string | null;
   /** ISO `YYYY-MM-DD`, or null when unknown. An anchor, as `birthDate` is. */
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
   deathDatePrecision: DatePrecision;
+  /** The upper bound of a range, as `birthDateUpper` is. */
+  deathDateUpper: string | null;
+  deathDateUpperPrecision: DatePrecision;
   deathPlace: string | null;
   notes: string | null;
 };
@@ -275,6 +286,56 @@ export function validateIndividual(
     );
   }
 
+  const birthDateUpper = readDate(input.birthDateUpper);
+  if (birthDateUpper === undefined) {
+    add(
+      "birthDateUpper",
+      "That birth date's upper bound could not be read. Try a year like 1900, or a full date like 4 July 1900.",
+    );
+  }
+
+  const birthDateUpperPrecision = readEnum(
+    input.birthDateUpperPrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (birthDateUpperPrecision === undefined) {
+    add(
+      "birthDateUpper",
+      "That is not one of the options for how much of a date is known.",
+    );
+  }
+
+  // A range's qualifier is always `exact` — `exact` is what already means
+  // "the value is as given, widened by its precision", and extending that
+  // reading to a second bound is what a stored range *is* (`YEO-88`, see
+  // `db/schema.ts`). Any other qualifier beside a non-null upper bound is a
+  // state this schema has no honest reading for.
+  if (
+    birthDateUpper &&
+    birthDateQualifier !== undefined &&
+    birthDateQualifier !== "exact"
+  ) {
+    add(
+      "birthDateUpper",
+      `A range's date cannot also be qualified "${birthDateQualifier}" — a range already says how uncertain the date is.`,
+    );
+  }
+
+  // A range written backwards, `BET 1900 AND 1890`. Reported against the
+  // upper bound: it is the value most likely to be the typo, since the lower
+  // bound is the one that reads first.
+  if (
+    birthDate &&
+    birthDateUpper &&
+    isInvertedRange(birthDate, birthDateUpper)
+  ) {
+    add(
+      "birthDateUpper",
+      "The upper bound of the birth date is before the lower bound. Check whether one of them has the wrong year.",
+    );
+  }
+
   const birthPlace = readText(input.birthPlace);
   if (birthPlace === undefined) {
     add("birthPlace", "The birth place could not be read as text.");
@@ -311,6 +372,48 @@ export function validateIndividual(
     add(
       "deathDatePrecision",
       "That is not one of the options for how much of a date is known.",
+    );
+  }
+
+  const deathDateUpper = readDate(input.deathDateUpper);
+  if (deathDateUpper === undefined) {
+    add(
+      "deathDateUpper",
+      "That death date's upper bound could not be read. Try a year like 1953, or a full date like 2 November 1953.",
+    );
+  }
+
+  const deathDateUpperPrecision = readEnum(
+    input.deathDateUpperPrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (deathDateUpperPrecision === undefined) {
+    add(
+      "deathDateUpper",
+      "That is not one of the options for how much of a date is known.",
+    );
+  }
+
+  if (
+    deathDateUpper &&
+    deathDateQualifier !== undefined &&
+    deathDateQualifier !== "exact"
+  ) {
+    add(
+      "deathDateUpper",
+      `A range's date cannot also be qualified "${deathDateQualifier}" — a range already says how uncertain the date is.`,
+    );
+  }
+
+  if (
+    deathDate &&
+    deathDateUpper &&
+    isInvertedRange(deathDate, deathDateUpper)
+  ) {
+    add(
+      "deathDateUpper",
+      "The upper bound of the death date is before the lower bound. Check whether one of them has the wrong year.",
     );
   }
 
@@ -352,11 +455,15 @@ export function validateIndividual(
         date: birthDate,
         qualifier: birthDateQualifier,
         precision: birthDatePrecision,
+        upper: birthDateUpper ?? null,
+        upperPrecision: birthDateUpperPrecision ?? "day",
       },
       {
         date: deathDate,
         qualifier: deathDateQualifier,
         precision: deathDatePrecision,
+        upper: deathDateUpper ?? null,
+        upperPrecision: deathDateUpperPrecision ?? "day",
       },
     )
   ) {
@@ -393,10 +500,26 @@ export function validateIndividual(
       birthDateQualifier: birthDate ? (birthDateQualifier ?? "exact") : "exact",
       /** Normalised away with no date beside it, for the reason above. */
       birthDatePrecision: birthDate ? (birthDatePrecision ?? "day") : "day",
+      /**
+       * An upper bound with no lower bound is normalised away the same way a
+       * qualifier with no date is, above (`YEO-88`): `null` in `birthDate` is
+       * already "this date is unknown", and a range needs a lower bound to
+       * range *from*.
+       */
+      birthDateUpper: birthDate ? (birthDateUpper ?? null) : null,
+      birthDateUpperPrecision:
+        birthDate && birthDateUpper
+          ? (birthDateUpperPrecision ?? "day")
+          : "day",
       birthPlace: birthPlace ?? null,
       deathDate: deathDate ?? null,
       deathDateQualifier: deathDate ? (deathDateQualifier ?? "exact") : "exact",
       deathDatePrecision: deathDate ? (deathDatePrecision ?? "day") : "day",
+      deathDateUpper: deathDate ? (deathDateUpper ?? null) : null,
+      deathDateUpperPrecision:
+        deathDate && deathDateUpper
+          ? (deathDateUpperPrecision ?? "day")
+          : "day",
       deathPlace: deathPlace ?? null,
       notes: notes ?? null,
     },
@@ -450,10 +573,14 @@ export function individualInputFromFormData(form: FormData): IndividualInput {
     birthDate: form.get("birthDate"),
     birthDateQualifier: form.get("birthDateQualifier"),
     birthDatePrecision: form.get("birthDatePrecision"),
+    birthDateUpper: form.get("birthDateUpper"),
+    birthDateUpperPrecision: form.get("birthDateUpperPrecision"),
     birthPlace: form.get("birthPlace"),
     deathDate: form.get("deathDate"),
     deathDateQualifier: form.get("deathDateQualifier"),
     deathDatePrecision: form.get("deathDatePrecision"),
+    deathDateUpper: form.get("deathDateUpper"),
+    deathDateUpperPrecision: form.get("deathDateUpperPrecision"),
     deathPlace: form.get("deathPlace"),
     notes: form.get("notes"),
   };

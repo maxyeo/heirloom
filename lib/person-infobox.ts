@@ -353,8 +353,16 @@ function derivedStepchildren(
  * fault rather than as a fact.
  */
 function describeUnion(union: GraphUnion): string | null {
-  const start = formatQualifiedYear(union.startDate, union.startDateQualifier);
-  const end = formatQualifiedYear(union.endDate, union.endDateQualifier);
+  const start = formatQualifiedYear({
+    date: union.startDate,
+    qualifier: union.startDateQualifier,
+    upper: union.startDateUpper,
+  });
+  const end = formatQualifiedYear({
+    date: union.endDate,
+    qualifier: union.endDateQualifier,
+    upper: union.endDateUpper,
+  });
 
   const started = start === null ? null : `${UNION_PREFIX[union.type]}${start}`;
   const ended =

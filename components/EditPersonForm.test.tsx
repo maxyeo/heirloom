@@ -61,10 +61,14 @@ const rose: GraphPerson = {
   birthDate: "1890-04-12",
   birthDateQualifier: "about",
   birthDatePrecision: "day",
+  birthDateUpper: null,
+  birthDateUpperPrecision: "day",
   birthPlace: "Cork",
   deathDate: "1953-11-02",
   deathDateQualifier: "exact",
   deathDatePrecision: "day",
+  deathDateUpper: null,
+  deathDateUpperPrecision: "day",
   deathPlace: "Dublin",
   notes: "From the 1911 census.",
   pageId: null,
@@ -78,12 +82,26 @@ const sparse: GraphPerson = {
   birthDate: null,
   birthDateQualifier: "exact",
   birthDatePrecision: "day",
+  birthDateUpper: null,
+  birthDateUpperPrecision: "day",
   birthPlace: null,
   deathDate: null,
   deathDateQualifier: "exact",
   deathDatePrecision: "day",
+  deathDateUpper: null,
+  deathDateUpperPrecision: "day",
   deathPlace: null,
   notes: null,
+};
+
+/** Rose, but her birth is recorded as a range rather than a single point. */
+const roseWithRangedBirth: GraphPerson = {
+  ...rose,
+  birthDate: "1890-01-01",
+  birthDateQualifier: "exact",
+  birthDatePrecision: "year",
+  birthDateUpper: "1900-01-01",
+  birthDateUpperPrecision: "year",
 };
 
 /**
@@ -327,6 +345,13 @@ describe("prefilling", () => {
     expect(id?.value).toBe(rose.id);
     expect(id?.type).toBe("hidden");
   });
+
+  it("shows a stored range as 'between x and y' (YEO-88)", () => {
+    const host = mount(roseWithRangedBirth);
+    open(host);
+
+    expect(dateBox(host, "Born").value).toBe("between 1890 and 1900");
+  });
 });
 
 describe("saving", () => {
@@ -348,6 +373,31 @@ describe("saving", () => {
     expect(record.givenName).toBe("Rose");
     expect(record.birthDate).toBe("1890-04-12");
     expect(record.birthDateQualifier).toBe("about");
+  });
+
+  it("submits a range's upper bound intact, untouched — the YEO-88 round trip", async () => {
+    // The guard for the highest-consequence risk in this ticket: `DateField`
+    // posts a range as five hidden inputs, and if any were missed the upper
+    // bound would leak away here, on an ordinary save, with nothing
+    // reporting it. A person stored with a range prefills as
+    // "between 1890 and 1900" and has to submit back with the upper bound
+    // exactly as it arrived — this asserts the whole loop, not just the
+    // prefill or just the post.
+    const action = stubAction(() => savedFormState(roseWithRangedBirth.id));
+    const host = mount(roseWithRangedBirth, action);
+    open(host);
+
+    expect(dateBox(host, "Born").value).toBe("between 1890 and 1900");
+
+    await submit(host);
+
+    expect(action.submissions).toHaveLength(1);
+    const record = asRecord(action.submissions[0]);
+    expect(record.birthDate).toBe("1890-01-01");
+    expect(record.birthDateQualifier).toBe("exact");
+    expect(record.birthDatePrecision).toBe("year");
+    expect(record.birthDateUpper).toBe("1900-01-01");
+    expect(record.birthDateUpperPrecision).toBe("year");
   });
 
   it("closes and returns focus to the button once the write lands", async () => {

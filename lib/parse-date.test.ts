@@ -36,6 +36,8 @@ describe("the shapes the ticket names", () => {
       date: "1890-01-01",
       qualifier: "exact",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -44,6 +46,8 @@ describe("the shapes the ticket names", () => {
       date: "1890-01-01",
       qualifier: "about",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     };
 
     expect(parsed("abt 1890")).toEqual(about);
@@ -66,6 +70,8 @@ describe("the shapes the ticket names", () => {
       date: "1920-01-01",
       qualifier: "before",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(parsed("bef 1920")).toEqual(parsed("before 1920"));
     expect(parsed("<1920")).toEqual(parsed("before 1920"));
@@ -75,6 +81,8 @@ describe("the shapes the ticket names", () => {
       date: "1885-01-01",
       qualifier: "after",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(parsed("aft. 1885")).toEqual(parsed("after 1885"));
     expect(parsed(">1885")).toEqual(parsed("after 1885"));
@@ -85,6 +93,8 @@ describe("the shapes the ticket names", () => {
       date: "1890-03-12",
       qualifier: "exact",
       precision: "day",
+      upper: null,
+      upperPrecision: "day",
     };
 
     expect(parsed("12 March 1890")).toEqual(day);
@@ -98,6 +108,8 @@ describe("the shapes a real source produces", () => {
       date: "1890-03-01",
       qualifier: "exact",
       precision: "month",
+      upper: null,
+      upperPrecision: "day",
     };
 
     expect(parsed("March 1890")).toEqual(march);
@@ -110,6 +122,8 @@ describe("the shapes a real source produces", () => {
       date: "1890-03-12",
       qualifier: "exact",
       precision: "day",
+      upper: null,
+      upperPrecision: "day",
     };
 
     expect(parsed("12 Mar 1890")).toEqual(day);
@@ -130,11 +144,15 @@ describe("the shapes a real source produces", () => {
       date: "1890-03-12",
       qualifier: "before",
       precision: "day",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(parsed("abt March 1890")).toEqual({
       date: "1890-03-01",
       qualifier: "about",
       precision: "month",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -146,6 +164,8 @@ describe("the shapes a real source produces", () => {
       date: "1890-05-01",
       qualifier: "exact",
       precision: "month",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(parsed("1 May 1890").qualifier).toBe("exact");
   });
@@ -155,6 +175,8 @@ describe("the shapes a real source produces", () => {
       date: "1890-03-02",
       qualifier: "exact",
       precision: "day",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 });
@@ -215,6 +237,82 @@ describe("what it refuses, and what it says", () => {
     expect(parsed("29 February 1892").date).toBe("1892-02-29");
     expect(parseDateInput("29 February 1893").ok).toBe(false);
   });
+
+  it("reads a range, now that the schema has somewhere to put the upper bound (YEO-88)", () => {
+    // The decision this replaces: this module used to refuse every range
+    // outright, on the grounds that there was nowhere for a dropped upper
+    // bound to go — `DateField.tsx` has one inline echo, not a report. The
+    // schema now has a second column per date, so the box that used to be a
+    // dead end for a ranged date is the box that reads it.
+    const yearYear = parsed("between 1890 and 1900");
+    expect(yearYear).toEqual({
+      date: "1890-01-01",
+      qualifier: "exact",
+      precision: "year",
+      upper: "1900-01-01",
+      upperPrecision: "year",
+    });
+    expect(parsed("1890 to 1900")).toEqual(yearYear);
+    expect(parsed("BETWEEN 1890 AND 1900")).toEqual(yearYear);
+  });
+
+  it("keeps each endpoint at its own precision — the proof the range doubled precision, not just dates", () => {
+    expect(parsed("between March 1890 and 1900")).toEqual({
+      date: "1890-03-01",
+      qualifier: "exact",
+      precision: "month",
+      upper: "1900-01-01",
+      upperPrecision: "year",
+    });
+
+    expect(parsed("between 12 March 1912 and 4 July 1918")).toEqual({
+      date: "1912-03-12",
+      qualifier: "exact",
+      precision: "day",
+      upper: "1918-07-04",
+      upperPrecision: "day",
+    });
+  });
+
+  it("teaches the two accepted words rather than guessing at a hyphen or an en dash", () => {
+    // The hyphen already means "ISO field separator" here (`ISO_YEAR_MONTH`,
+    // `ISO_FULL`), and the en dash is `formatLifespan`'s birth/death joiner —
+    // accepting either as a second meaning for "range" is the `12/03/1890`
+    // failure this module already refuses, one character later.
+    expect(refused("1890-1900")).toContain('"between" or "to"');
+    expect(refused("1890–1900")).toContain('"between" or "to"');
+  });
+
+  it("refuses a malformed range rather than half-reading it", () => {
+    expect(parseDateInput("between 1890").ok).toBe(false);
+    expect(parseDateInput("between and 1900").ok).toBe(false);
+    expect(parseDateInput("1890 to").ok).toBe(false);
+    // Each endpoint is real text a person is looking at, so each is read —
+    // and a problem with either one is reported, rather than the whole range
+    // failing with one generic message.
+    expect(refused("between garbage and 1900")).toContain("could not be read");
+    expect(refused("between 1890 and garbage")).toContain("could not be read");
+  });
+
+  it("refuses a qualifier in front of a range, with a dedicated message", () => {
+    // A range already says how uncertain a date is — `about between 1890 and
+    // 1900` names a state `validateIndividual`/`validateUnion` never accept
+    // (a stored range's qualifier is always `exact`), so this module says so
+    // rather than silently dropping the qualifier or the range.
+    expect(refused("about between 1890 and 1900")).toContain(
+      "already says how uncertain",
+    );
+  });
+
+  it("still refuses GEDCOM's own spellings — that grammar belongs to lib/gedcom.ts, not this module", () => {
+    for (const input of [
+      "BET 1890 AND 1900",
+      "FROM 1912 TO 1918",
+      "INT 1890 (x)",
+    ]) {
+      expect(parseDateInput(input).ok, input).toBe(false);
+    }
+  });
 });
 
 describe("the round trip through the formatter", () => {
@@ -223,43 +321,154 @@ describe("the round trip through the formatter", () => {
    *
    * `individualFormValuesFrom` prefills a free-text date box by formatting the
    * stored columns, and this parser has to read that sentence back as the same
-   * three values — otherwise opening a person and saving them again would
+   * five values — otherwise opening a person and saving them again would
    * quietly change their dates. Asserting it here rather than in the component
    * is what keeps it a property of the two pure modules.
+   *
+   * Legal values only: `formatQualifiedDate` also renders a row with a
+   * non-`exact` qualifier beside a non-null `upper` (`about between 1890 and
+   * 1900`), because a hand-made `INSERT` can produce one and this function
+   * would rather render it honestly than hide a word. This parser refuses
+   * that same string on the way back in — the division of labour is that
+   * `validateIndividual`/`validateUnion` are the gate that keeps such a row
+   * from ever being written, not this round trip.
    */
   const cases: ParsedDate[] = [
-    { date: "1890-01-01", qualifier: "exact", precision: "year" },
-    { date: "1890-01-01", qualifier: "about", precision: "year" },
-    { date: "1920-01-01", qualifier: "before", precision: "year" },
-    { date: "1885-01-01", qualifier: "after", precision: "year" },
-    { date: "1890-03-01", qualifier: "exact", precision: "month" },
-    { date: "1890-03-01", qualifier: "about", precision: "month" },
-    { date: "1890-03-12", qualifier: "exact", precision: "day" },
-    { date: "1890-03-12", qualifier: "before", precision: "day" },
-    { date: "1953-11-02", qualifier: "after", precision: "day" },
+    {
+      date: "1890-01-01",
+      qualifier: "exact",
+      precision: "year",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1890-01-01",
+      qualifier: "about",
+      precision: "year",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1920-01-01",
+      qualifier: "before",
+      precision: "year",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1885-01-01",
+      qualifier: "after",
+      precision: "year",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1890-03-01",
+      qualifier: "exact",
+      precision: "month",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1890-03-01",
+      qualifier: "about",
+      precision: "month",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1890-03-12",
+      qualifier: "exact",
+      precision: "day",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1890-03-12",
+      qualifier: "before",
+      precision: "day",
+      upper: null,
+      upperPrecision: "day",
+    },
+    {
+      date: "1953-11-02",
+      qualifier: "after",
+      precision: "day",
+      upper: null,
+      upperPrecision: "day",
+    },
+    // Four range cases (`YEO-88`): year/year, month/year (mixed precision —
+    // the case that proves precision doubled), day/day, and a same-year range
+    // whose `formatQualifiedYear` collapse has no bearing on this full-date
+    // round trip.
+    {
+      date: "1890-01-01",
+      qualifier: "exact",
+      precision: "year",
+      upper: "1900-01-01",
+      upperPrecision: "year",
+    },
+    {
+      date: "1890-03-01",
+      qualifier: "exact",
+      precision: "month",
+      upper: "1900-01-01",
+      upperPrecision: "year",
+    },
+    {
+      date: "1912-03-12",
+      qualifier: "exact",
+      precision: "day",
+      upper: "1918-07-04",
+      upperPrecision: "day",
+    },
+    {
+      date: "1890-03-01",
+      qualifier: "exact",
+      precision: "month",
+      upper: "1890-06-01",
+      upperPrecision: "month",
+    },
   ];
 
   for (const value of cases) {
-    it(`survives ${value.qualifier}/${value.precision} ${value.date}`, () => {
-      const shown = formatQualifiedDate(
-        value.date,
-        value.qualifier,
-        value.precision,
-      );
+    const label = value.upper
+      ? `${value.qualifier}/${value.precision} ${value.date} to ${value.upperPrecision} ${value.upper}`
+      : `${value.qualifier}/${value.precision} ${value.date}`;
+    it(`survives ${label}`, () => {
+      const shown = formatQualifiedDate(value);
       expect(shown).not.toBeNull();
       expect(parsed(shown ?? "")).toEqual(value);
     });
   }
 
   it("shows a year-only date as a year, not as 1 January", () => {
-    expect(formatQualifiedDate("1890-01-01", "about", "year")).toBe(
-      "about 1890",
-    );
-    expect(formatQualifiedDate("1890-03-01", "exact", "month")).toBe(
-      "March 1890",
-    );
-    expect(formatQualifiedDate("1890-01-01", "exact", "day")).toBe(
-      "1 January 1890",
-    );
+    expect(
+      formatQualifiedDate({
+        date: "1890-01-01",
+        qualifier: "about",
+        precision: "year",
+        upper: null,
+        upperPrecision: "day",
+      }),
+    ).toBe("about 1890");
+    expect(
+      formatQualifiedDate({
+        date: "1890-03-01",
+        qualifier: "exact",
+        precision: "month",
+        upper: null,
+        upperPrecision: "day",
+      }),
+    ).toBe("March 1890");
+    expect(
+      formatQualifiedDate({
+        date: "1890-01-01",
+        qualifier: "exact",
+        precision: "day",
+        upper: null,
+        upperPrecision: "day",
+      }),
+    ).toBe("1 January 1890");
   });
 });

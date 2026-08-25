@@ -1,6 +1,6 @@
 import type { ChildRelation } from "./child-input";
 import type { FamilyGraph, GraphChildLink, GraphUnion } from "./family-graph";
-import { formatQualifiedDate } from "./format-date";
+import { formatQualifiedDate, unionEnd, unionStart } from "./format-date";
 import { personSummary, type PersonSummary } from "./person-detail";
 
 /**
@@ -336,16 +336,8 @@ export function unionFacts(union: GraphUnion): UnionFacts {
   return {
     unionId: union.id,
     type: union.type,
-    start: formatQualifiedDate(
-      union.startDate,
-      union.startDateQualifier,
-      union.startDatePrecision,
-    ),
-    end: formatQualifiedDate(
-      union.endDate,
-      union.endDateQualifier,
-      union.endDatePrecision,
-    ),
+    start: formatQualifiedDate(unionStart(union)),
+    end: formatQualifiedDate(unionEnd(union)),
     endReason: union.endReason,
   };
 }

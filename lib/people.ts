@@ -11,7 +11,7 @@ import { searchPeople, type PersonMatch } from "@/lib/people-search";
  *
  * ## The narrow select
  *
- * Exactly the seven columns `lib/people-search.ts`'s `PersonSearchRow` names
+ * Exactly the nine columns `lib/people-search.ts`'s `PersonSearchRow` names
  * — never `select()`. `lib/pages.ts`'s `getPageBySlug` and `listPages` make
  * the same argument for themselves: widening the query and widening the type
  * are then the same edit, and a column nobody asked for cannot drift into
@@ -73,8 +73,10 @@ export async function searchPeopleByName(
       surname: schema.individuals.surname,
       birthDate: schema.individuals.birthDate,
       birthDateQualifier: schema.individuals.birthDateQualifier,
+      birthDateUpper: schema.individuals.birthDateUpper,
       deathDate: schema.individuals.deathDate,
       deathDateQualifier: schema.individuals.deathDateQualifier,
+      deathDateUpper: schema.individuals.deathDateUpper,
     })
     .from(schema.individuals)
     .orderBy(

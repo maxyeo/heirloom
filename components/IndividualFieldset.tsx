@@ -13,7 +13,7 @@ import {
   type IndividualFields,
   type Sex,
 } from "@/lib/individual-input";
-import { formatQualifiedDate } from "@/lib/format-date";
+import { birthOf, deathOf, formatQualifiedDate } from "@/lib/format-date";
 
 /**
  * One person's details as a set of form controls (E3-T2, `YEO-30`).
@@ -87,19 +87,32 @@ export type IndividualFormValues = Record<IndividualFormField, string>;
 /**
  * The fields a person form actually holds a value for.
  *
- * `IndividualFields` minus the four columns nobody types: a date's qualifier
+ * `IndividualFields` minus the eight columns nobody types: a date's qualifier
  * and its precision are read out of the date the author wrote (E4-T2,
- * `YEO-39`), so holding them here as well would be a second copy free to
- * disagree with the text on screen. `DateField` derives them on every render
- * and posts them as hidden inputs, which is what keeps this form's state and
- * what it submits from drifting apart.
+ * `YEO-39`), and — since `YEO-88` — so are a range's upper bound and its own
+ * precision, out of the same one text box (`between 1890 and 1900`). Holding
+ * any of the eight here as well would be a second copy free to disagree with
+ * the text on screen. `DateField` derives them on every render and posts them
+ * as hidden inputs, which is what keeps this form's state and what it submits
+ * from drifting apart.
+ *
+ * This `Exclude` list is also the compile-time half of the `YEO-88` guard
+ * against the upper bound leaking away: a new derived column that is left out
+ * of it is a value `emptyIndividualFormValues` and `individualFormValuesFrom`
+ * below are still required to have, so the compiler — not a reviewer — is
+ * what notices a column added to `IndividualFields` without a matching
+ * exclusion here.
  */
 export type IndividualFormField = Exclude<
   IndividualField,
   | "birthDateQualifier"
   | "birthDatePrecision"
+  | "birthDateUpper"
+  | "birthDateUpperPrecision"
   | "deathDateQualifier"
   | "deathDatePrecision"
+  | "deathDateUpper"
+  | "deathDateUpperPrecision"
 >;
 
 /**
@@ -163,19 +176,9 @@ export function individualFormValuesFrom(
     givenName: fields.givenName,
     surname: fields.surname ?? "",
     sex: fields.sex,
-    birthDate:
-      formatQualifiedDate(
-        fields.birthDate,
-        fields.birthDateQualifier,
-        fields.birthDatePrecision,
-      ) ?? "",
+    birthDate: formatQualifiedDate(birthOf(fields)) ?? "",
     birthPlace: fields.birthPlace ?? "",
-    deathDate:
-      formatQualifiedDate(
-        fields.deathDate,
-        fields.deathDateQualifier,
-        fields.deathDatePrecision,
-      ) ?? "",
+    deathDate: formatQualifiedDate(deathOf(fields)) ?? "",
     deathPlace: fields.deathPlace ?? "",
     notes: fields.notes ?? "",
   };
@@ -245,8 +248,9 @@ export function IndividualFieldset({
   /**
    * Every message a date can come back with, in one place.
    *
-   * The qualifier and the precision are derived by `DateField`, so only a
-   * hand-made POST can get them refused — but "only" is not "never", and a
+   * The qualifier, the precision, and — since `YEO-88` — the upper bound and
+   * its own precision are all derived by `DateField`, so only a hand-made
+   * POST can get any of them refused — but "only" is not "never", and a
    * message with no field on screen to hang under is a message nobody ever
    * sees. Folding them into the date's own slot keeps the promise that nothing
    * is silently dropped.
@@ -254,7 +258,9 @@ export function IndividualFieldset({
   const dateError = (field: "birthDate" | "deathDate") =>
     fieldErrors[field] ??
     fieldErrors[`${field}Qualifier`] ??
-    fieldErrors[`${field}Precision`];
+    fieldErrors[`${field}Precision`] ??
+    fieldErrors[`${field}Upper`] ??
+    fieldErrors[`${field}UpperPrecision`];
 
   const firstField = useRef<HTMLInputElement>(null);
 

@@ -1,6 +1,6 @@
 import type { FamilyGraph, GraphChildLink, GraphUnion } from "./family-graph";
 import { personSummary, type PersonSummary } from "./person-detail";
-import { formatQualifiedDate } from "./format-date";
+import { formatQualifiedDate, unionEnd, unionStart } from "./format-date";
 
 /**
  * What disappears when something is removed from the tree (E3-T8, `YEO-36`).
@@ -252,16 +252,8 @@ export function previewPersonRemoval(
     .map((union) => ({
       unionId: union.id,
       type: union.type,
-      start: formatQualifiedDate(
-        union.startDate,
-        union.startDateQualifier,
-        union.startDatePrecision,
-      ),
-      end: formatQualifiedDate(
-        union.endDate,
-        union.endDateQualifier,
-        union.endDatePrecision,
-      ),
+      start: formatQualifiedDate(unionStart(union)),
+      end: formatQualifiedDate(unionEnd(union)),
       partner: index.summarise(otherPartnerId(union, personId)),
       children: index
         .childrenOf(union.id)
@@ -348,16 +340,8 @@ export function previewPartnerDetachment(
     kind: "partner",
     unionId,
     type: union.type,
-    start: formatQualifiedDate(
-      union.startDate,
-      union.startDateQualifier,
-      union.startDatePrecision,
-    ),
-    end: formatQualifiedDate(
-      union.endDate,
-      union.endDateQualifier,
-      union.endDatePrecision,
-    ),
+    start: formatQualifiedDate(unionStart(union)),
+    end: formatQualifiedDate(unionEnd(union)),
     person: personSummary(person),
     partner: index.summarise(otherPartnerId(union, personId)),
     children,
