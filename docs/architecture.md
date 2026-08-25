@@ -113,8 +113,8 @@ Three consequences worth stating, because each is load-bearing:
 
 ### Secrets
 
-`DATABASE_URL`, `AUTH_SECRET`, and `AUTH_GOOGLE_SECRET` live in Vercel's
-environment and never in the repository. `AUTH_SECRET` deserves particular
+`DATABASE_URL`, `AUTH_SECRET`, `AUTH_GOOGLE_SECRET`, and `STORAGE_TOKEN` live
+in Vercel's environment and never in the repository. `AUTH_SECRET` deserves particular
 care: it signs session cookies, so anyone holding it can forge a session as
 any allowed user and bypass Google entirely.
 
@@ -364,7 +364,7 @@ Node host with any Postgres:
   off when `VERCEL` is set, since Vercel's builder emits its own output format
   and the standalone tracing step fails there)
 - Environment variables are named generically (`DATABASE_URL`, not
-  `SUPABASE_URL`)
+  `SUPABASE_URL`; `STORAGE_TOKEN`, not `BLOB_READ_WRITE_TOKEN`)
 - `prepare: false` is set unconditionally — required by Supabase's transaction
   pooler, harmless everywhere else
 - The Supabase keep-alive cron belongs in GitHub Actions rather than Vercel
@@ -372,6 +372,56 @@ Node host with any Postgres:
 - Migrations run through `npm run db:migrate:deploy`, an ordinary script with
   no host in it; only the line in `vercel.json` that calls it is Vercel-shaped,
   and another host would call the same script from its own build step
+
+### The storage seam
+
+That first bullet is the one that needs enforcing rather than asserting, and
+`lib/storage.ts` (E5-T1) is the enforcement. It exports three functions —
+`put`, `get`, `delete` — and it is the only file in the repository that
+imports a storage vendor's SDK.
+
+Both halves of that are checked. `lib/storage.test.ts` asserts the export list
+is exactly those three names, and `lib/storage.call-sites.test.ts` scans the
+source tree and fails if any other file names a `@vercel/*` package — the same
+tripwire shape `lib/sanitize-html.call-sites.test.ts` uses, and for the same
+reason. The claim above is not hard to keep true; it is hard to _notice_
+becoming false, because `import { put } from "@vercel/blob"` in a route
+handler works perfectly, reviews fine, and only costs anything on the day
+somebody tries to leave.
+
+The three functions are the intersection, not a subset chosen for now. Every
+object store has `put`/`get`/`delete`; the moment a fourth appears — `list`,
+`copy`, a presigned-URL helper — the set of hosts that can implement this
+narrows to the ones that agree with Vercel, which is the seam leaking rather
+than widening.
+
+Four decisions inside the module are worth naming, because each is a default
+that would have been wrong:
+
+- **The credential is `STORAGE_TOKEN`**, read and passed explicitly. The SDK
+  would happily pick up `BLOB_READ_WRITE_TOKEN` from the environment on its
+  own, and leaning on that would put a vendor's variable name straight back
+  into the deploy configuration this convention exists to keep generic. Same
+  reasoning as `DATABASE_URL` over `SUPABASE_URL`.
+- **The key you write is the key you read.** `addRandomSuffix` is pinned off;
+  with it on, the stored path is something only the `put` response ever knew,
+  and `get(key)` finds nothing.
+- **`put` replaces.** Vercel's SDK defaults to refusing a write onto an
+  existing path. S3, GCS, R2 and a filesystem do not. A seam whose semantics
+  are one host's opinion is not a seam.
+- **`get` returns a URL, not bytes.** Every host can produce one, and the
+  alternative makes the application a proxy for its own static assets.
+
+That last one carries a trade worth stating plainly: blobs are stored with
+`access: "public"`, so an image URL is reachable by anyone holding it,
+outside the `ALLOWED_EMAILS` boundary that guards everything else. The URL is
+unguessable — a random store id plus the key — but a leaked one is a readable
+image. It is a trade rather than a hole precisely because of the seam: moving
+to short-lived signed URLs changes `put` and `get` in this one file and no
+call site.
+
+The credential itself belongs with `AUTH_SECRET` in the section above: it
+grants write and delete on the store, and never appears in the repository.
 
 ## Known limitations
 
