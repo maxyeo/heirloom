@@ -603,6 +603,44 @@ layer, no data-fetching library. One `fetch` in one component does not need
 one, and adding the abstraction here is how the next four reads get written on
 the client instead of the server.
 
+## What gates a merge
+
+`.github/workflows/ci.yml` runs on every push and every pull request, in two
+jobs that run concurrently. Everything in this table is a gate: red blocks the
+merge.
+
+| Job        | Runs                                                     | Environment                       |
+| ---------- | -------------------------------------------------------- | --------------------------------- |
+| `check`    | `format:check`, `typecheck`, `lint`, `npm test`, `build` | Deliberately empty                |
+| `database` | `db:migrate:test`, `npm run test:db`                     | A throwaway `postgres:17` service |
+
+**Nothing else gates a merge.** The two scheduled workflows — `keep-alive.yml`
+and `backup.yml` — report by opening an issue rather than by failing a check on
+somebody's branch, because neither says anything about the commit being merged.
+There is no end-to-end suite and no deploy-preview gate, and `async` Server
+Components are not unit-testable at all, so that ground is uncovered rather than
+covered somewhere else. See docs/testing.md.
+
+The two jobs are separate for a reason worth not undoing. `check` has no
+`DATABASE_URL` and no `AUTH_*`, and that is exactly what makes its `npm run
+build` step prove a build needs no live database — `db/index.ts` connects
+lazily behind a Proxy so that it does not. Attaching a Postgres service to that
+job would put a reachable database in the build's environment and quietly
+retire the guarantee, since the build would go on passing either way. So the
+database tests get a job, and a database, of their own.
+
+Both halves of the test suite gating a merge is recent. `npm run test:db` ran
+in no pipeline for a long time, and the cost was not the coverage gap — it was
+that an unrun suite began shaping the code written against it, with two tickets
+extracting modules specifically so their logic would land in the suite that
+_was_ run. A suite that gates nothing still reads as "checked". The full
+account is in docs/testing.md rather than repeated here.
+
+Enforcement past the workflow file is GitHub's, not this repository's: both
+jobs have to be listed as **required status checks** for `main` under Settings
+-> Branches before a red run actually blocks the button. The workflow is what
+makes the signal exist; branch protection is what makes it a gate.
+
 ## Deployment and migrations
 
 `vercel.json` disables git deployments for every branch except `main`, so a
