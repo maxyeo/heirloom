@@ -4,13 +4,18 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { db, schema } from "@/db";
 import { parseGedcomText } from "@/lib/gedcom";
 import { type GedcomMapping, mapGedcom } from "@/lib/gedcom-map";
-import { INDIVIDUAL_COLUMNS, importGedcom } from "@/lib/gedcom-import";
+import {
+  type ImportProvenance,
+  INDIVIDUAL_COLUMNS,
+  importGedcom,
+} from "@/lib/gedcom-import";
 import { MAX_ROWS_PER_STATEMENT, batchesOf } from "@/lib/import-batches";
 
 /**
- * Database tests for the transactional import (E6-T4, `YEO-49`). Run with
- * `npm run test:db`; the `.db.test.ts` suffix is what keeps them out of
- * `npm test` and CI's bare environment. See docs/testing.md.
+ * Database tests for the transactional import (E6-T4, `YEO-49`) and its
+ * ledger-backed refusal of a repeat (`YEO-89`). Run with `npm run test:db`;
+ * the `.db.test.ts` suffix is what keeps them out of `npm test` and CI's bare
+ * environment. See docs/testing.md.
  *
  * What is deliberately **not** here:
  *
@@ -24,8 +29,10 @@ import { MAX_ROWS_PER_STATEMENT, batchesOf } from "@/lib/import-batches";
  *   place to maintain one fact about the driver.
  *
  * What is left is the part that is only true of a real database: that rows in
- * three tables with foreign keys between them land together, and that a
- * failure in the last of them takes the first with it.
+ * three tables with foreign keys between them land together, that a failure
+ * in the last of them takes the first with it, and that the unique index on
+ * `gedcom_imports.digest` is what a second write of the same digest actually
+ * meets — not a check this module could get wrong by skipping it.
  */
 
 const PREFIX = "gedcom-import-fixture";
@@ -60,12 +67,35 @@ function fixtureMapping(people = MAX_ROWS_PER_STATEMENT + 1): GedcomMapping {
   return mapGedcom(parseGedcomText(fixtureText(people)));
 }
 
+/**
+ * Provenance for one call, keyed on a digest the caller picks.
+ *
+ * A real `importGedcom` caller gets `digest` from `gedcomDigest` and the rest
+ * from the request — this hands both in directly, since what a digest test
+ * needs is control over which digest a call carries and not a real SHA-256 of
+ * fixture bytes nobody reads back.
+ */
+function provenanceFor(digest: string): ImportProvenance {
+  return {
+    digest,
+    fileName: "family.ged",
+    byteCount: 1024,
+    importedBy: "rose@example.com",
+  };
+}
+
 async function removeFixture() {
   // `unions` and `union_children` both cascade from `individuals`, so the
-  // people are the only thing teardown has to name.
+  // people are the only thing teardown has to name there. `gedcom_imports`
+  // does not cascade from anything — `individuals.import_id` is `set null`,
+  // not the reverse — so a ledger row a test wrote has to be named on its
+  // own, or it survives the fixture that made it.
   await db
     .delete(schema.individuals)
     .where(like(schema.individuals.givenName, `${PREFIX}%`));
+  await db
+    .delete(schema.gedcomImports)
+    .where(like(schema.gedcomImports.digest, `${PREFIX}%`));
 }
 
 async function countFixturePeople(): Promise<number> {
@@ -85,6 +115,14 @@ async function unionExists(id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+async function countLedgerRows(digest: string): Promise<number> {
+  const rows = await db
+    .select({ id: schema.gedcomImports.id })
+    .from(schema.gedcomImports)
+    .where(eq(schema.gedcomImports.digest, digest));
+  return rows.length;
+}
+
 beforeEach(removeFixture);
 afterAll(removeFixture);
 
@@ -95,7 +133,10 @@ describe("importGedcom", () => {
      * worth anything if the individuals span at least two statements — that is
      * what makes "the first batch was unwound" a different claim from "the one
      * statement never ran". Asserted here so that a change to the cap fails
-     * loudly instead of hollowing the file out.
+     * loudly instead of hollowing the file out. `INDIVIDUAL_COLUMNS` reads
+     * `import_id` (`YEO-89`) off the live schema, so this stays a check
+     * against the batch size actually in force rather than the one that used
+     * to be.
      */
     const mapping = fixtureMapping();
     expect(
@@ -103,12 +144,16 @@ describe("importGedcom", () => {
     ).toBeGreaterThan(1);
   });
 
-  it("writes every row across all three tables", async () => {
+  it("writes every row across all three tables, tagged with the ledger id", async () => {
     const mapping = fixtureMapping();
+    const digest = `${PREFIX}-primary`;
 
-    const counts = await importGedcom(mapping);
+    const outcome = await importGedcom(mapping, provenanceFor(digest));
 
-    expect(counts).toEqual({
+    if (outcome.status !== "imported") {
+      throw new Error(`expected "imported", got ${outcome.status}`);
+    }
+    expect(outcome.counts).toEqual({
       individuals: MAX_ROWS_PER_STATEMENT + 1,
       unions: 1,
       unionChildren: 1,
@@ -118,6 +163,7 @@ describe("importGedcom", () => {
     // reading if the database agrees with them.
     expect(await countFixturePeople()).toBe(MAX_ROWS_PER_STATEMENT + 1);
     expect(await unionExists(mapping.unions[0].id)).toBe(true);
+    expect(await countLedgerRows(digest)).toBe(1);
 
     const links = await db
       .select({ childId: schema.unionChildren.childId })
@@ -135,11 +181,78 @@ describe("importGedcom", () => {
       .select({
         partnerAId: schema.unions.partnerAId,
         partnerBId: schema.unions.partnerBId,
+        importId: schema.unions.importId,
       })
       .from(schema.unions)
       .where(eq(schema.unions.id, mapping.unions[0].id));
     expect(union.partnerAId).not.toBeNull();
     expect(union.partnerBId).not.toBeNull();
+
+    // Every table's rows carry the same ledger id (`YEO-89`) — provenance
+    // that stopped at one or two of the three tables would make "what did
+    // this import add" a query with a join in it.
+    expect(union.importId).toBe(outcome.importId);
+
+    const individualImportIds = await db
+      .select({ importId: schema.individuals.importId })
+      .from(schema.individuals)
+      .where(like(schema.individuals.givenName, `${PREFIX}%`));
+    expect(
+      individualImportIds.every((row) => row.importId === outcome.importId),
+    ).toBe(true);
+
+    const [linkRow] = await db
+      .select({ importId: schema.unionChildren.importId })
+      .from(schema.unionChildren)
+      .where(eq(schema.unionChildren.unionId, mapping.unions[0].id));
+    expect(linkRow.importId).toBe(outcome.importId);
+  });
+
+  it("refuses a second import of the same digest, and writes nothing the second time", async () => {
+    const digest = `${PREFIX}-duplicate`;
+    const first = await importGedcom(fixtureMapping(), provenanceFor(digest));
+    if (first.status !== "imported") {
+      throw new Error(
+        `expected the first import to succeed, got ${first.status}`,
+      );
+    }
+
+    const second = await importGedcom(fixtureMapping(), provenanceFor(digest));
+
+    expect(second.status).toBe("already-imported");
+    if (second.status !== "already-imported") return;
+    expect(second.previous.counts).toEqual({
+      people: MAX_ROWS_PER_STATEMENT + 1,
+      unions: 1,
+      children: 1,
+    });
+
+    // Refused, not merged and not appended to: exactly the rows the first
+    // call wrote, once — never a second copy, and never zero because the
+    // refusal somehow took the first import's rows with it.
+    expect(await countFixturePeople()).toBe(MAX_ROWS_PER_STATEMENT + 1);
+    expect(await countLedgerRows(digest)).toBe(1);
+  });
+
+  it("still imports a different digest of what is otherwise the same file", async () => {
+    // The guard is keyed on the *bytes*, not on the shape of the mapping — two
+    // calls that would write identical rows are not "the same import" unless
+    // they carry the same digest. A caller passing a fresh digest is the
+    // ordinary shape of importing a second, unrelated family's file.
+    const first = await importGedcom(
+      fixtureMapping(),
+      provenanceFor(`${PREFIX}-first`),
+    );
+    const second = await importGedcom(
+      fixtureMapping(),
+      provenanceFor(`${PREFIX}-second`),
+    );
+
+    expect(first.status).toBe("imported");
+    expect(second.status).toBe("imported");
+    // Two complete copies now exist, which is expected: two distinct digests
+    // are two distinct files as far as this function is concerned.
+    expect(await countFixturePeople()).toBe(2 * (MAX_ROWS_PER_STATEMENT + 1));
   });
 
   it("leaves nothing behind when a later statement fails", async () => {
@@ -156,15 +269,19 @@ describe("importGedcom", () => {
      * first statement would prove almost nothing; this one is raised by
      * Postgres after 1,001 individuals have been written across two statements
      * and a union across a third, so "nothing remains" is the whole import
-     * unwinding rather than a write that never started.
+     * unwinding rather than a write that never started. That now includes the
+     * ledger row too: it is inserted first, inside the same transaction, so a
+     * failure three statements later takes it with everything else.
      */
     const broken = fixtureMapping();
     broken.unionChildren[0].childId = crypto.randomUUID();
+    const digest = `${PREFIX}-rollback`;
 
-    await expect(importGedcom(broken)).rejects.toThrow();
+    await expect(importGedcom(broken, provenanceFor(digest))).rejects.toThrow();
 
     expect(await countFixturePeople()).toBe(0);
     expect(await unionExists(broken.unions[0].id)).toBe(false);
+    expect(await countLedgerRows(digest)).toBe(0);
   });
 
   it("writes nothing, and does not fail, for a file with nothing in it", async () => {
@@ -174,13 +291,15 @@ describe("importGedcom", () => {
      * `batchesOf` disarms, pinned in the one place it would actually fire. A
      * GEDCOM file with people but no families reaches it for real.
      */
-    const counts = await importGedcom({
-      individuals: [],
-      unions: [],
-      unionChildren: [],
-      issues: [],
-    });
+    const outcome = await importGedcom(
+      { individuals: [], unions: [], unionChildren: [], issues: [] },
+      provenanceFor(`${PREFIX}-empty`),
+    );
 
-    expect(counts).toEqual({ individuals: 0, unions: 0, unionChildren: 0 });
+    expect(outcome).toEqual({
+      status: "imported",
+      importId: expect.any(String),
+      counts: { individuals: 0, unions: 0, unionChildren: 0 },
+    });
   });
 });

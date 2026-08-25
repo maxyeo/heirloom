@@ -27,15 +27,16 @@ inside it are already compressed, and storing the members plainly means every
 tool that has ever read a ZIP can read this one.
 
 ```
-RESTORE.md            how to read and restore this archive
-family-tree.ged       the tree, byte for byte the same file the GEDCOM download gives
-data/pages.jsonl      every wiki entry, one JSON object per line
-data/revisions.jsonl  every past version of every entry
+RESTORE.md                 how to read and restore this archive
+family-tree.ged            the tree, byte for byte the same file the GEDCOM download gives
+data/pages.jsonl           every wiki entry, one JSON object per line
+data/revisions.jsonl       every past version of every entry
+data/gedcom_imports.jsonl  every GEDCOM file ever imported, and what it wrote
 data/individuals.jsonl
 data/unions.jsonl
 data/union_children.jsonl
-images/…              the photographs, each under the key the entries refer to it by
-manifest.json         what this archive contains, and what it could not fetch
+images/…                   the photographs, each under the key the entries refer to it by
+manifest.json              what this archive contains, and what it could not fetch
 ```
 
 **The rule for the row data is the whole of it: every line is one row, and
@@ -142,11 +143,14 @@ the file and none of this. In outline:
 1. Create the database and apply the first `schema.migrationsApplied`
    migrations from `drizzle/`, in filename order.
 2. Load the tables in the order `RESTORE.md` lists — `pages`, `revisions`,
-   `individuals`, `unions`, `union_children`. It is a foreign-key
-   topological sort, so a restore in that order never has to defer a
-   constraint. `revisions` are written oldest-first for the same reason:
+   `gedcom_imports`, `individuals`, `unions`, `union_children`. It is a
+   foreign-key topological sort, so a restore in that order never has to defer
+   a constraint. `revisions` are written oldest-first for the same reason:
    `restored_from_id` points at another revision, and a revision can only ever
-   have been restored from one that already existed.
+   have been restored from one that already existed. `gedcom_imports`
+   (`YEO-89`) sits ahead of the three tables it provides provenance for —
+   `individuals`, `unions` and `union_children` each carry an `import_id`
+   that references it, nullable, and null for every row nothing imported.
 3. Upload each file under `images/` back to the image store **under exactly
    its path in the archive** — that path is the key the entry bodies refer to,
    so nothing in any body needs editing.

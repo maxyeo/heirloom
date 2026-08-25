@@ -1,5 +1,5 @@
 import type { ImportReport } from "./import-report";
-import type { ImportPreview } from "./import-preview";
+import type { ImportCounts, ImportPreview } from "./import-preview";
 
 /**
  * The contract between the import screen and the import endpoint (E6-T3,
@@ -61,6 +61,57 @@ export const IMPORT_FILE_FIELD = "file";
  */
 export const IMPORT_CONFIRM_FIELD = "confirm";
 
+/**
+ * What is known about an earlier import of this exact file (`YEO-89`).
+ *
+ * Free of `@/db` on purpose, the same way `ImportPreview` is: this travels
+ * over the wire to a client component, and `lib/import-ledger.ts` — which
+ * does reach the database to find one of these — shapes its row into this
+ * type rather than the other way round.
+ *
+ * Deliberately **not** the ledger row. `id` stays server-side because
+ * nothing on the client needs to name a specific import, and the three
+ * counts are already screen's vocabulary — {@link ImportCounts} — rather
+ * than the tables'; there is no reason to make a reader learn a second one
+ * to be told what a prior import added.
+ */
+export type PriorImport = {
+  /** When the earlier import ran, ISO 8601. */
+  importedAt: string;
+  /** The name of the file that import was given, or null if none was recorded. */
+  fileName: string | null;
+  /** What that import wrote. */
+  counts: ImportCounts;
+};
+
+/**
+ * A {@link PriorImport}'s timestamp, in words: `3 March 2026`.
+ *
+ * Here rather than at either end because both ends say it. The route writes
+ * the sentence a `409` carries, and the screen writes the statement that
+ * replaces the Import button — two different sentences about the same moment,
+ * and a reader who hits the refusal after missing the statement must not be
+ * told two different dates. This module is already the one place both ends
+ * agree about the wire; the rendering of a value on that wire belongs with
+ * it, for the same reason `lib/search-endpoint.ts` gives about a shape that
+ * "typechecks on both sides and is wrong in the middle".
+ *
+ * `en-GB` and UTC are both pinned, matching `formatQualifiedDate` in
+ * `lib/format-date.ts` and for its reason: `Intl` otherwise defaults to the
+ * *environment's* locale and zone, and the two ends here are a server and a
+ * browser that share neither. A date is deliberately all this renders — the
+ * clock time an import ran at answers no question a reader is asking, and
+ * showing one would invite them to compare it against their own.
+ *
+ * @param importedAt {@link PriorImport.importedAt}, ISO 8601
+ */
+export function formatImportedAt(importedAt: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "long",
+    timeZone: "UTC",
+  }).format(new Date(importedAt));
+}
+
 /** The answer to an upload with no {@link IMPORT_CONFIRM_FIELD}: nothing was written. */
 export type ImportPreviewResponse = {
   stage: "preview";
@@ -75,6 +126,19 @@ export type ImportPreviewResponse = {
    */
   digest: string;
   preview: ImportPreview;
+  /**
+   * The earlier import of this exact file, if the digest above is already in
+   * the ledger — or `null` when it is not.
+   *
+   * Advisory, not the guard. What actually stops a second import landing is
+   * the unique index on `gedcom_imports.digest` (`db/schema.ts`), which holds
+   * even against a second tab, a retried request, or a back button that a
+   * value computed for a preview screen never sees. What this field buys is
+   * only that the reader can be told *before* pressing Import rather than
+   * finding out from a `409` after — `components/GedcomImport.tsx` is where
+   * that sentence is said.
+   */
+  alreadyImported: PriorImport | null;
 };
 
 /**

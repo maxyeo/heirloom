@@ -1,12 +1,15 @@
-import { getTableColumns } from "drizzle-orm";
+import { eq, getTableColumns } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import type { GedcomMapping } from "@/lib/gedcom-map";
+import type { PriorImport } from "@/lib/import-endpoint";
 import { batchesOf } from "@/lib/import-batches";
+import { priorImportFrom } from "@/lib/import-ledger";
 import { rowsFromMapping } from "@/lib/import-rows";
 
 /**
- * Mapped rows in, three tables written or nothing written (E6-T4, `YEO-49`).
+ * Mapped rows in, three tables written or nothing written (E6-T4, `YEO-49`;
+ * refused rather than duplicated on a repeat, `YEO-89`).
  *
  * ## All or nothing — but of the *write*
  *
@@ -29,10 +32,12 @@ import { rowsFromMapping } from "@/lib/import-rows";
  * GEDCOM files are dirty — a rule that refuses every real file is not a
  * safety property.
  *
- * So there is nothing here that decides anything. `mapGedcom` already ran the
- * three validators and already dropped what they refused; by the time a
- * `GedcomMapping` arrives, every remaining row is one this application has
- * agreed to store. This module's only job is to get them there together.
+ * So there is nothing here that decides what to *include*. `mapGedcom`
+ * already ran the three validators and already dropped what they refused; by
+ * the time a `GedcomMapping` arrives, every remaining row is one this
+ * application has agreed to store. What this module decides — since `YEO-89`
+ * — is only whether to write that mapping at all, and it decides that once,
+ * against the ledger below, before a single row of it lands.
  *
  * ## Why a `GedcomMapping` and not a file
  *
@@ -49,36 +54,80 @@ import { rowsFromMapping } from "@/lib/import-rows";
  * still is (E6-T3, `YEO-48`) rather than re-derived here from a mapping that
  * no longer remembers.
  *
- * ## Faults propagate, and that is the design
+ * ## The ledger, and why the unique index is the guard
  *
- * There is no `try` here and no result union with a `failed` member. Every
- * refusal this flow has was made before the transaction opened, so everything
- * that can go wrong inside it is a genuine fault — a dropped connection, a
- * statement timeout, a constraint added after this was written. Throwing is
- * what rolls the transaction back, and it is also the honest answer: the
- * caller gets an exception whose existence means, by construction, that
- * nothing was written. Catching it here to return a count of zero would turn
- * a guarantee into a value somebody has to remember to check.
+ * `mapGedcom` mints a fresh id for every record on every parse, so nothing
+ * about a `GedcomMapping` says whether the bytes it came from have been
+ * written before — a second import of one file used to be a second complete
+ * copy of the tree. `gedcomImports` (`db/schema.ts`) is the fix: one row per
+ * digest, written inside the same transaction as the three tables, before
+ * any of them.
+ *
+ * The insert into `gedcomImports` is written with `onConflictDoNothing`, and
+ * it is the **only** place in this function that appears. Everywhere else —
+ * `individuals`, `unions`, `union_children` — a duplicate key is unreachable
+ * by construction (`mapGedcom` mints a fresh id per record and de-duplicates
+ * repeated `CHIL` pointers within a family), so a conflict there would be a
+ * genuine fault and is left to throw. The ledger is different on purpose: a
+ * conflict on `digest` is not a fault, it is the ordinary shape of a second
+ * upload of a file already recorded, and what happens to it is a decision —
+ * refuse — rather than a crash. That does not weaken the claim the rest of
+ * this module rests on, that the written counts equal the array lengths
+ * because nothing was silently skipped: the ledger's row count is never used
+ * as the answer to "how many landed", and `onConflictDoNothing` never once
+ * touches a table this module actually counts.
+ *
+ * `.unique()` on `gedcomImports.digest` is what actually stops a second
+ * import, not a `select` beforehand. A check-then-insert has a race in the
+ * middle — two requests can both see no prior row — and a second browser
+ * tab, a retried request, or a back button landing on a stale preview is
+ * exactly the caller shape that finds it. The unique index has no such gap:
+ * whichever transaction's insert loses is told so by Postgres, inside the
+ * same transaction that would otherwise have gone on to write the three
+ * tables, and the loser's entire write — ledger row included — rolls back
+ * with it. See `db/schema.ts`'s `gedcomImports` docblock for why refusing
+ * beat merging or replacing the prior import.
+ *
+ * ## Faults propagate; a refusal is not one
+ *
+ * Until `YEO-89` there was no `try` here and no result union, because every
+ * refusal this flow had was made before the transaction opened, and
+ * everything that could go wrong inside it was a genuine fault. That is no
+ * longer quite true: a digest collision is discovered *inside* the
+ * transaction, against a row another request may have committed only
+ * moments before, so it is the one decision that has to be made from within
+ * the write. It is still not a fault, and it is not reported as one — see
+ * {@link ImportOutcome} and the hazard below for how it is threaded out
+ * without ever returning normally from a transaction that has already
+ * written something.
+ *
+ * Every other exception this function can raise remains exactly what it was:
+ * a dropped connection, a statement timeout, a constraint added after this
+ * was written. Throwing is what rolls the transaction back, and it is also
+ * the honest answer — the caller gets an exception whose existence means, by
+ * construction, that nothing was written.
  *
  * The route that calls this owns the sentence a reader sees, the same way it
  * already owns every other refusal in the import flow.
  *
- * ## The hazard, for whoever edits this next
+ * ## The hazard, now in use rather than merely named
  *
  * **postgres.js commits a transaction callback that returns normally.**
  * `db.transaction` is its `begin`, which issues `commit` when the callback
- * resolves and `rollback` only when it *throws*. So a future edit that adds a
- * refusal here — some check that can only be made against live rows — must
- * `throw`, not `return`. Returning `{ status: "refused" }` after a write
- * reports a refusal and commits it anyway.
+ * resolves and `rollback` only when it *throws*. So the refusal below
+ * `throw`s rather than `return`s a `{ status: "already-imported" }` value —
+ * returning it after the ledger's own insert had already run inside the same
+ * transaction would report a refusal and commit the ledger row anyway,
+ * leaving a `gedcom_imports` row with no `individuals` behind it.
  *
  * That is not hypothetical: it is the bug `lib/reorder-unions.ts` shipped and
  * then fixed, and `lib/reorder-unions.db.test.ts` pins the semantics against a
  * real database under "the transaction semantics reorderUnions relies on".
  * The idiom for doing it correctly is `refuse` in `lib/set-parents.ts` — a
  * private error carrying the typed result, thrown inside and unwrapped
- * outside. It is deliberately absent here rather than unused, because there is
- * nothing yet to refuse.
+ * outside — and this module now uses exactly it, rather than merely naming it
+ * as something absent. `YEO-89` is the ticket that gave this module its first
+ * thing to refuse.
  */
 
 /**
@@ -92,7 +141,10 @@ import { rowsFromMapping } from "@/lib/import-rows";
  *
  * Exported so `lib/gedcom-import.db.test.ts` can size its fixture from the
  * same numbers this uses, rather than hard-coding a row count that quietly
- * stops spanning more than one batch when the schema widens.
+ * stops spanning more than one batch when the schema widens. `import_id`
+ * (`YEO-89`) widened every one of these tables by one column; these constants
+ * are read from `getTableColumns` rather than written as literals, so they
+ * picked it up without an edit here.
  */
 export const INDIVIDUAL_COLUMNS = Object.keys(
   getTableColumns(schema.individuals),
@@ -110,7 +162,52 @@ export type ImportedCounts = {
 };
 
 /**
- * Write a mapped GEDCOM file into the three tables, all of it or none of it.
+ * What identifies *this* file, for the ledger (`YEO-89`).
+ *
+ * Everything here is either recomputed by the caller from bytes it already
+ * has (`digest`, `byteCount`) or read off the request that is confirming the
+ * import (`fileName`, `importedBy`) — nothing is decided in this module.
+ * `app/api/import/route.ts` is the one caller and assembles this from the
+ * multipart form and the session `requireSessionOr401` already checked.
+ */
+export type ImportProvenance = {
+  /** Lowercase-hex SHA-256 of the file's bytes. See `gedcomDigest`. */
+  digest: string;
+  /** The uploaded filename, or null — see `gedcomImports.fileName`. */
+  fileName: string | null;
+  byteCount: number;
+  /** The signed-in email running the import, or null. */
+  importedBy: string | null;
+};
+
+/**
+ * How an import ends: written, or refused because this exact file already
+ * was (`YEO-89`).
+ *
+ * Two variants rather than a boolean and a nullable field, because the two
+ * carry disjoint information — `counts` describes rows this call wrote and
+ * would be meaningless zeros on a refusal, `previous` describes a different
+ * call's rows entirely and would be meaningless on success. A caller that
+ * reads `counts` off a refused outcome, or `previous` off a written one, is a
+ * bug the type system can catch instead of a reader having to remember which
+ * fields are live in which case.
+ */
+export type ImportOutcome =
+  | {
+      status: "imported";
+      /** The ledger row this write created — see `gedcomImports.id`. */
+      importId: string;
+      counts: ImportedCounts;
+    }
+  | {
+      status: "already-imported";
+      /** What the earlier import of this file wrote, and when. */
+      previous: PriorImport;
+    };
+
+/**
+ * Write a mapped GEDCOM file into the three tables, all of it or none of it —
+ * refusing outright if this exact file has already been imported (`YEO-89`).
  *
  * The three inserts run in table order — individuals, then unions, then the
  * child links — and that is required even though every foreign key was
@@ -121,23 +218,27 @@ export type ImportedCounts = {
  * bulk insert possible; they do not make a union insertable before its
  * partners exist.
  *
- * The counts come from the arrays rather than from `returning`. Nothing here
- * uses `onConflictDoNothing`, so a statement that did not throw inserted every
- * row it was given — which means the length is already the answer, and
- * `returning` would be a round trip's worth of data fetched to re-derive a
- * number this function had in hand before it opened the connection. The
- * absence of `onConflictDoNothing` is itself load-bearing: it is what makes
- * "the statement returned" mean "every row landed", and `mapGedcom` earns it
- * by making a duplicate key unreachable (it mints a fresh id per record and
- * de-duplicates repeated `CHIL` pointers within a family itself).
+ * The written counts come from the arrays rather than from `returning`.
+ * Nothing that inserts `individuals`, `unions` or `union_children` uses
+ * `onConflictDoNothing` — see the module docblock for why the one place it
+ * does appear, the ledger, does not weaken this — so a statement that did not
+ * throw inserted every row it was given, which means the length is already
+ * the answer, and `returning` would be a round trip's worth of data fetched
+ * to re-derive a number this function had in hand before it opened the
+ * connection. `mapGedcom` earns the absence of a duplicate key by minting a
+ * fresh id per record and de-duplicating repeated `CHIL` pointers within a
+ * family itself.
  *
  * @param mapping rows to write, with every id minted and every key resolved
- * @returns how many rows reached each table
+ * @param provenance what to record about this file if it is written
+ * @returns the ledger id and per-table counts, or the prior import this file
+ *   already has
  * @throws whatever the driver raises, having rolled the whole import back
  */
 export async function importGedcom(
   mapping: GedcomMapping,
-): Promise<ImportedCounts> {
+  provenance: ImportProvenance,
+): Promise<ImportOutcome> {
   /**
    * The rows themselves come from `lib/import-rows.ts`, and deliberately not
    * from three `map` calls here. E7-T2 (`YEO-52`) round-trips an export
@@ -146,26 +247,149 @@ export async function importGedcom(
    * that module's docblock; `lib/gedcom-round-trip.test.ts` asserts this call
    * still exists, because a copy of it inlined here is how the tested
    * pipeline and the real one quietly stop being the same pipeline.
+   *
+   * `import_id` is not among them. It is threaded onto each row below,
+   * between this call and the batching, because the id it carries does not
+   * exist until the ledger insert a few lines down has run — `rowsFromMapping`
+   * has no transaction to ask for one, and threading it through that pure
+   * function would only give it a database-shaped parameter for no reason.
    */
   const { individuals, unions, unionChildren } = rowsFromMapping(mapping);
 
-  await db.transaction(async (tx) => {
-    for (const batch of batchesOf(individuals, INDIVIDUAL_COLUMNS)) {
-      await tx.insert(schema.individuals).values(batch);
-    }
+  return db
+    .transaction(async (tx): Promise<ImportOutcome> => {
+      /**
+       * The ledger row, written first and the only insert in this function
+       * that may legitimately conflict. See the module docblock for why
+       * `onConflictDoNothing` belongs here and nowhere else in this write.
+       */
+      const [ledger] = await tx
+        .insert(schema.gedcomImports)
+        .values({
+          digest: provenance.digest,
+          fileName: provenance.fileName,
+          byteCount: provenance.byteCount,
+          importedBy: provenance.importedBy,
+          individualCount: individuals.length,
+          unionCount: unions.length,
+          unionChildCount: unionChildren.length,
+        })
+        .onConflictDoNothing({ target: schema.gedcomImports.digest })
+        .returning({ id: schema.gedcomImports.id });
 
-    for (const batch of batchesOf(unions, UNION_COLUMNS)) {
-      await tx.insert(schema.unions).values(batch);
-    }
+      if (ledger === undefined) {
+        /**
+         * The conflict itself doesn't say what the prior import was — only
+         * that one exists — so it has to be read back. `priorImportFrom` is
+         * the same shaping `lib/import-ledger.ts` uses for the preview-stage
+         * lookup, so a reader is told the same facts about a prior import
+         * whichever path found it.
+         */
+        const [existing] = await tx
+          .select({
+            fileName: schema.gedcomImports.fileName,
+            importedAt: schema.gedcomImports.importedAt,
+            individualCount: schema.gedcomImports.individualCount,
+            unionCount: schema.gedcomImports.unionCount,
+            unionChildCount: schema.gedcomImports.unionChildCount,
+          })
+          .from(schema.gedcomImports)
+          .where(eq(schema.gedcomImports.digest, provenance.digest));
 
-    for (const batch of batchesOf(unionChildren, UNION_CHILD_COLUMNS)) {
-      await tx.insert(schema.unionChildren).values(batch);
-    }
-  });
+        if (existing === undefined) {
+          /**
+           * Unreachable under `read committed`, which is what this connection
+           * runs at and what the reasoning rests on. `on conflict do nothing`
+           * skips a row only once a conflicting row is *committed* — against
+           * a concurrent inserter that later aborts, the insert proceeds
+           * instead of skipping — and every statement in a `read committed`
+           * transaction takes a fresh snapshot, so the select above sees
+           * whatever the conflict saw.
+           *
+           * Named rather than assumed because it is the isolation level doing
+           * the work: under `repeatable read` this select would run against
+           * the snapshot the transaction opened with and could genuinely miss
+           * a row committed since, and Postgres would raise a serialization
+           * failure on the insert instead. Either way the answer here is the
+           * same and is the safe one — throwing rolls the whole import back,
+           * and the route says nothing was written, which is true.
+           */
+          throw new Error(
+            "gedcom_imports conflicted but no row was found to read back",
+          );
+        }
 
-  return {
-    individuals: individuals.length,
-    unions: unions.length,
-    unionChildren: unionChildren.length,
-  };
+        refuse({
+          status: "already-imported",
+          previous: priorImportFrom(existing),
+        });
+      }
+
+      const importId = ledger.id;
+
+      for (const batch of batchesOf(
+        individuals.map((row) => ({ ...row, importId })),
+        INDIVIDUAL_COLUMNS,
+      )) {
+        await tx.insert(schema.individuals).values(batch);
+      }
+
+      for (const batch of batchesOf(
+        unions.map((row) => ({ ...row, importId })),
+        UNION_COLUMNS,
+      )) {
+        await tx.insert(schema.unions).values(batch);
+      }
+
+      for (const batch of batchesOf(
+        unionChildren.map((row) => ({ ...row, importId })),
+        UNION_CHILD_COLUMNS,
+      )) {
+        await tx.insert(schema.unionChildren).values(batch);
+      }
+
+      return {
+        status: "imported",
+        importId,
+        counts: {
+          individuals: individuals.length,
+          unions: unions.length,
+          unionChildren: unionChildren.length,
+        },
+      };
+    })
+    .catch((error: unknown) => {
+      if (error instanceof Refusal) return error.result;
+      throw error;
+    });
+}
+
+/**
+ * Refuse, and take everything this transaction has already written with it.
+ *
+ * The one refusal this module has is discovered *after* the ledger insert has
+ * run, so a plain `return` would report the refusal to the caller while
+ * `db.transaction` — seeing a callback that returned rather than threw —
+ * commits that insert anyway. See "The hazard, now in use" above.
+ *
+ * Returns `never`, so the compiler treats a call as an exit and the code
+ * after it narrows as though the refusal had returned.
+ *
+ * @param result what {@link importGedcom} should resolve to
+ */
+function refuse(result: ImportOutcome): never {
+  throw new Refusal(result);
+}
+
+/**
+ * The carrier. Only ever thrown by `refuse` and only ever caught by
+ * `importGedcom`, which unwraps it into an ordinary result; a real fault —
+ * the database unreachable, a constraint violated — is not an instance of
+ * this and goes on propagating untouched.
+ */
+class Refusal extends Error {
+  constructor(readonly result: ImportOutcome) {
+    super(`gedcom-import refused: ${result.status}`);
+    this.name = "Refusal";
+  }
 }

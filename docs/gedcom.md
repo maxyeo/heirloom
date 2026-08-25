@@ -26,8 +26,15 @@ through them:
 | `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
 | `lib/import-rows.ts`     | that          | those rows, flattened for `insert`      |
-| `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
+| `lib/gedcom-import.ts`   | those rows    | three tables written, or refused        |
 | `lib/import-report.ts`   | all of it     | an account of what the import did       |
+
+`lib/gedcom-import.ts`'s "or refused" is `YEO-89`: alongside the three tables
+it writes a row into `gedcom_imports`, keyed on the file's digest, and a
+second write of a digest already there is refused rather than duplicated —
+see [Importing the same file twice](#importing-the-same-file-twice) below.
+`lib/import-ledger.ts` is the read side of that same table, used by the
+preview stage to say so before a reader gets that far.
 
 And three on the way back out:
 
@@ -408,16 +415,48 @@ import, never a partial import.
 
 **postgres.js commits a transaction callback that returns normally.** It
 issues `rollback` only when the callback _throws_. Any refusal added inside
-the transaction later must `throw`, not `return` — returning a refusal after a
-write reports it and commits it anyway.
+the transaction must `throw`, not `return` — returning a refusal after a write
+reports it and commits it anyway.
 
 That is not hypothetical; it is the bug `lib/reorder-unions.ts` shipped and
 then fixed, and `lib/reorder-unions.db.test.ts` pins the semantics against a
 real database. `refuse` in `lib/set-parents.ts` is the idiom for doing it
-correctly. Both are deliberately absent from `lib/gedcom-import.ts` today,
-because it has nothing to refuse: every decision was made before the
-transaction opened, so anything that goes wrong inside it is a genuine fault
-and is left to propagate.
+correctly, and `lib/gedcom-import.ts` now uses exactly it: `YEO-89` gave this
+module its first thing to refuse — a digest already in the ledger — discovered
+_inside_ the transaction, after the ledger's own insert has already run. Every
+other exception this function raises is still a genuine fault left to
+propagate, exactly as before; only the one new case is caught, unwrapped, and
+returned as an ordinary result.
+
+## Importing the same file twice
+
+Refused, not merged and not used to replace what is there (`YEO-89`). The
+reasoning belongs to the schema as much as to this module — see [Import
+provenance](architecture.md#import-provenance-and-why-a-second-import-of-the-same-file-is-refused)
+in the architecture document for why refuse beat both alternatives — but two
+things are worth saying from this side of the pipeline specifically:
+
+- **The guard is `gedcom_imports.digest`'s unique index, checked by Postgres
+  inside the same transaction `importGedcom` already opens — not a `select`
+  this module runs first.** A check-then-insert has a race in the middle that
+  a second tab, a retried request, or a stale preview all find; the unique
+  index has none, because whichever transaction's insert loses is refused by
+  the database itself and rolled back whole, ledger row included.
+- **The ledger insert is the one place `onConflictDoNothing` appears in this
+  module**, and it is worth being precise about why that does not undermine
+  "the write is all or nothing": `individuals`, `unions` and `union_children`
+  never use it, so a statement that did not throw against any of them
+  inserted every row it was given — the property the written counts rest on.
+  A conflict on the ledger is different in kind from a conflict on those three:
+  `mapGedcom` makes a duplicate key on them unreachable by construction, so a
+  conflict there would be a genuine fault, where a conflict on `digest` is the
+  ordinary shape of a second upload of a file already recorded.
+
+`app/api/import/route.ts` answers `409` for the refusal, naming the date and
+what the earlier import added, and `components/GedcomImport.tsx` reads the
+same ledger on the preview request so the reader is told before they press
+Import, not only after. See [Previewing an import](#previewing-an-import)
+below for where that read sits relative to "nothing on this path can write".
 
 ## The seam between reading and writing
 
@@ -801,6 +840,16 @@ reaches none of this code either — cancel is the second request never being
 sent, not a request that gets ignored — but a preview that **could** write
 would make the guarantee worth nothing the first time somebody added a
 convenience to it.
+
+The rule is about `lib/import-preview.ts`'s own closure, not about
+`app/api/import/route.ts` itself — and since `YEO-89` the route does one thing
+outside that closure: it calls `lib/import-ledger.ts`'s `findImportByDigest`
+on the preview branch, to say whether this digest has been imported before
+(see [Importing the same file twice](#importing-the-same-file-twice)). That
+is a `select`, not a write, so "cancelling leaves the database untouched"
+still holds; the property it would break — a preview incapable of writing — is
+a claim about the pure modules, and this read lives in the route precisely
+because it is not one of them.
 
 ### Why the file is uploaded twice
 

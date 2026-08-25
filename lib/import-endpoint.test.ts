@@ -54,6 +54,7 @@ describe("narrowing an answer", () => {
     stage: "preview",
     digest: "abc",
     preview: {} as ImportPreview,
+    alreadyImported: null,
   } as const;
 
   const done = {

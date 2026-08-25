@@ -311,6 +311,98 @@ export const revisions = pgTable(
   (t) => [index("revisions_page_id_created_at_idx").on(t.pageId, t.createdAt)],
 );
 
+/**
+ * The provenance ledger for GEDCOM imports (`YEO-89`).
+ *
+ * ## What this exists to stop
+ *
+ * `lib/gedcom-map.ts` mints a fresh id for every record on every parse, so
+ * nothing about the rows a write produces says whether the bytes behind them
+ * have gone in before. Before this table, uploading the same file twice was
+ * silent: the second run wrote a second complete copy of every person, union
+ * and child link, and nothing in the database or in a query against it could
+ * tell the two runs apart — a doubled tree looked exactly like data. One row
+ * here per file, keyed on its digest, is what turns that into a refusal.
+ *
+ * ## The unique index on `digest` is the guard, not a pre-check
+ *
+ * A `select` for a matching digest followed by an `insert` has a race in the
+ * middle: two requests can both see no prior row and both proceed, and a
+ * second browser tab, a retried request, or a back button landing on a
+ * stale preview is exactly the shape of caller that finds that gap. The
+ * unique constraint has none — whichever transaction's insert commits second
+ * is refused by the index itself, inside the same transaction
+ * `lib/gedcom-import.ts` already opens to write the three tables, so the
+ * loser's entire write rolls back with it. `lib/gedcom-import.db.test.ts`
+ * proves that against a real database rather than leaving it as a claim
+ * about how Postgres behaves.
+ *
+ * `digest` is the lowercase-hex SHA-256 `gedcomDigest` in
+ * `lib/import-preview.ts` already computes to pin a confirming request to
+ * the file it previewed. This reuses that value rather than hashing the
+ * bytes a second time — there is exactly one digest of a file anywhere in
+ * this application.
+ *
+ * ## Global, not scoped per tree
+ *
+ * There is one tenant and no row-level security (see "No RLS" in
+ * docs/architecture.md's known limitations), so there is no narrower scope
+ * to key the digest by: the same file is refused a second time regardless of
+ * who uploads it or when.
+ *
+ * ## Why refuse rather than merge or replace the prior import
+ *
+ * Both alternatives need something this table deliberately does not
+ * attempt: a stable per-record identity to reconcile against. Most real
+ * GEDCOM files carry none — no `_UID`, no `REFN` — and inventing one from a
+ * name and a pair of dates is a guess that can silently weld two different
+ * cousins into one person; a stable identity to match on is the honest fix,
+ * and it is future work, not this table. Replacing is worse than doing
+ * nothing at all: rows an import writes are exactly the rows somebody goes
+ * on to edit by hand — that is the whole point of importing into a wiki
+ * rather than merely displaying a file — so "replace" would mean deleting
+ * somebody's edits to make room for bytes the tree already has. Refusing is
+ * the only one of the three that needs no identity model and destroys
+ * nothing it did not write itself.
+ *
+ * What is still true after this table exists, because it does not touch it:
+ * a *different* file describing the same people still duplicates them. There
+ * is still no identity to match a record in one file against a record in
+ * another, only a file against its own past self.
+ */
+export const gedcomImports = pgTable("gedcom_imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Lowercase-hex SHA-256 of the file's bytes. See the table docblock. */
+  digest: text("digest").notNull().unique(),
+  /**
+   * The uploaded filename, when there was one to read.
+   *
+   * Nullable because `FormData.get()` only promises a `Blob`, and only a
+   * `File` — what a browser's `<input type="file">` actually sends — carries
+   * a `name`. Nothing this application writes produces a `Blob` that is not
+   * a `File`, but the type is the honest one to store against.
+   */
+  fileName: text("file_name"),
+  byteCount: integer("byte_count").notNull(),
+  /** How many `individuals` rows this import wrote. */
+  individualCount: integer("individual_count").notNull(),
+  /** How many `unions` rows this import wrote. */
+  unionCount: integer("union_count").notNull(),
+  /** How many `union_children` rows this import wrote. */
+  unionChildCount: integer("union_child_count").notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  /**
+   * The signed-in email that ran the import, the way `pages.updated_by` and
+   * `revisions.created_by` record who wrote an edit. Nullable for the same
+   * reason those are: a session without an email is unreachable through
+   * `requireSession` (`lib/session.ts`), but nothing here forces the column
+   * to agree with that as a matter of type.
+   */
+  importedBy: text("imported_by"),
+});
+
 /** A person. Optionally linked to their wiki entry. */
 export const individuals = pgTable(
   "individuals",
@@ -350,6 +442,30 @@ export const individuals = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /**
+     * Which GEDCOM import wrote this row, if one did (`YEO-89`).
+     *
+     * Null is the ordinary case, not an edge one: every row typed into the
+     * app by hand is null, and so is every row that existed before this
+     * column did — a migration that widens what a row can say without
+     * changing what any existing row means, the same rule the qualifier and
+     * precision columns above follow.
+     *
+     * `onDelete: "set null"` rather than `cascade`: deleting a ledger row
+     * must never take the people it recorded with it. What it means is
+     * narrower and safer — "forget that this particular file was imported",
+     * which also re-opens that file's digest for a future import — and
+     * `gedcomImports`' own docblock is where that trade is argued in full.
+     *
+     * No index. This column is read by an operator asking "what did that
+     * import add", by hand, after the fact — never by a request this
+     * application serves. A sequential scan over one family's rows costs
+     * nothing at the sizes this schema targets, and an index kept for a
+     * query nobody runs twice is only ever a write it has to pay for.
+     */
+    importId: uuid("import_id").references(() => gedcomImports.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [index("individuals_surname_idx").on(t.surname, t.givenName)],
 );
@@ -397,6 +513,10 @@ export const unions = pgTable("unions", {
    */
   sequence: integer("sequence").notNull().default(0),
   notes: text("notes"),
+  /** Which import wrote this row, if one did. See `individuals.importId`. */
+  importId: uuid("import_id").references(() => gedcomImports.id, {
+    onDelete: "set null",
+  }),
 });
 
 /** Children belong to a union, which is what makes half-siblings fall out for free. */
@@ -410,6 +530,17 @@ export const unionChildren = pgTable(
       .notNull()
       .references(() => individuals.id, { onDelete: "cascade" }),
     relation: childRelation("relation").notNull().default("biological"),
+    /**
+     * Which import wrote this row, if one did. See `individuals.importId` —
+     * and this table gets the same column as the other two deliberately: a
+     * child link added by hand to an imported union is ordinary, and
+     * provenance that stopped at the two parent tables would make "what did
+     * that import add" a query with a join in it and an exception to
+     * remember.
+     */
+    importId: uuid("import_id").references(() => gedcomImports.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => [
     primaryKey({ columns: [t.unionId, t.childId] }),
@@ -426,9 +557,19 @@ export const revisionsRelations = relations(revisions, ({ one }) => ({
   page: one(pages, { fields: [revisions.pageId], references: [pages.id] }),
 }));
 
+export const gedcomImportsRelations = relations(gedcomImports, ({ many }) => ({
+  individuals: many(individuals),
+  unions: many(unions),
+  unionChildren: many(unionChildren),
+}));
+
 export const individualsRelations = relations(individuals, ({ one, many }) => ({
   page: one(pages, { fields: [individuals.pageId], references: [pages.id] }),
   childOf: many(unionChildren),
+  import: one(gedcomImports, {
+    fields: [individuals.importId],
+    references: [gedcomImports.id],
+  }),
 }));
 
 export const unionsRelations = relations(unions, ({ one, many }) => ({
@@ -443,6 +584,10 @@ export const unionsRelations = relations(unions, ({ one, many }) => ({
     references: [individuals.id],
   }),
   children: many(unionChildren),
+  import: one(gedcomImports, {
+    fields: [unions.importId],
+    references: [gedcomImports.id],
+  }),
 }));
 
 export const unionChildrenRelations = relations(unionChildren, ({ one }) => ({
@@ -453,5 +598,9 @@ export const unionChildrenRelations = relations(unionChildren, ({ one }) => ({
   child: one(individuals, {
     fields: [unionChildren.childId],
     references: [individuals.id],
+  }),
+  import: one(gedcomImports, {
+    fields: [unionChildren.importId],
+    references: [gedcomImports.id],
   }),
 }));

@@ -537,6 +537,58 @@ exact marriage dates are often lost while the _order_ is remembered perfectly
 well ("she remarried after he died"). Sorting on dates alone would silently
 scramble the story whenever a year is missing.
 
+### Import provenance, and why a second import of the same file is refused
+
+`lib/gedcom-map.ts` mints a fresh id for every record on every parse, so
+nothing about a mapped row says whether the bytes it came from have gone in
+before. Before `YEO-89`, that made importing the same file twice a second
+complete copy of every person, union and child link — silently, because a
+doubled tree looks exactly like data until somebody notices the population
+has strangely doubled.
+
+The fix is a ledger, `gedcom_imports`, and a foreign key from each of
+`individuals`, `unions` and `union_children` back to it (`import_id`, nullable
+— null is every row typed by hand, and every row that existed before this
+column did). `lib/gedcom-import.ts` writes a row into the ledger, keyed on the
+uploaded file's SHA-256 digest, inside the same transaction as the three
+tables and before any of them.
+
+**The guard is the table's unique index on `digest`, not a check anywhere in
+this application's code.** A `select`-then-`insert` has a race in the middle —
+two requests can both see no prior row — and a second browser tab, a retried
+request, or a back button landing on a stale preview all find it. The unique
+constraint has no such gap: whichever transaction's insert loses is refused by
+Postgres itself, and the loser's entire write, ledger row included, rolls back
+with it. That is what makes the guard survive exactly the callers that could
+otherwise reach it — it does not depend on the route remembering to ask first,
+because Postgres asks regardless.
+
+A second import of a digest already in the ledger is **refused**, not merged
+and not used to replace what is already there. Both alternatives need a
+stable per-record identity to reconcile against — most real GEDCOM files carry
+none (no `_UID`, no `REFN`), and inventing one from a name and a pair of dates
+is a guess that can silently weld two different cousins into one person; a
+stable identity to match on is the honest fix for merging, and it remains
+future work, not something this table attempts. Replacing is worse than doing
+nothing: rows an import writes are exactly the rows somebody goes on to edit
+by hand, so "replace" would mean deleting somebody's edits to make room for
+bytes the tree already has. Refusing needs no identity model and destroys
+nothing it did not write itself, and `app/api/import/route.ts` answers `409`
+naming the date and what the earlier import added, so a reader who did it on
+purpose — a second tab, a slow connection retried — learns their first attempt
+already landed rather than being left to guess. The policy is also stated
+before that: `components/GedcomImport.tsx` reads the same ledger on the
+preview request and says, at the point of confirm, either that importing this
+file is recorded and a repeat will be refused, or that it already has been.
+
+What this does not solve, and is not trying to: **a different file describing
+the same people still duplicates them.** There is still no identity to match a
+record in one file against a record in another — only a file against its own
+past self, by the bytes it is made of. Merging duplicate _people_ is a
+separate, harder problem from the duplicate _unions_ `lib/merge-unions.ts`
+already reconciles, and it is out of scope here for the same reason merging an
+import into a populated tree is (`docs/epics.md`, E6, _Not in this epic_).
+
 ## Rendering
 
 Generation maps to dagre rank. Unions are laid out as their own small nodes,
@@ -855,23 +907,6 @@ grants write and delete on the store, and never appears in the repository.
 - **Orientation is respected, never repaired.** PNG, WebP and GIF keep
   whatever orientation tag they arrived with and nothing re-synthesises one,
   because nothing that produces those formats produces a rotated image.
-- **Importing the same file twice imports everybody twice.** `lib/gedcom-map.ts`
-  mints a fresh id for every record on every parse, so a second import of one
-  file is a second complete copy of the tree rather than a no-op or a merge.
-  The transaction (E6-T4) guarantees the copy lands whole; it does not notice
-  that it is a copy. Duplicate detection is out of scope for E6 and the honest
-  fix is not de-duplication after the fact but a stable identity to match on —
-  either the file's own `_UID`/`REFN` where a program wrote one, or a
-  reader-facing merge step of the kind E3-T10 already has for unions.
-
-  Worth knowing that this became _reachable_ with E6-T5 (`YEO-50`), which
-  wired the confirming branch of `app/api/import/route.ts` to the write; until
-  then it answered `501` and no import could happen at all. Two things stand
-  between a reader and a duplicated tree and both are on the screen rather
-  than in the data: the button is disabled while the request is out, and a
-  finished import takes the preview down, which takes the Import button with
-  it. Neither is a guarantee, which is why this stays on this list.
-
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.

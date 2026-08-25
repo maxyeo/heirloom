@@ -122,6 +122,10 @@ describe("what is read", () => {
     expect(tables.map((table) => table.table)).toEqual([
       "pages",
       "revisions",
+      // `gedcom_imports` (`YEO-89`) sits ahead of the three tables that
+      // reference it — see `EXPORT_TABLES`'s own docblock for why a restore
+      // fails its foreign key if this ever moved below `individuals`.
+      "gedcom_imports",
       "individuals",
       "unions",
       "union_children",

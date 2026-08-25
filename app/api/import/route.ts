@@ -1,12 +1,15 @@
-import type { ImportedCounts } from "@/lib/gedcom-import";
+import type { ImportedCounts, ImportOutcome } from "@/lib/gedcom-import";
 import { importGedcom } from "@/lib/gedcom-import";
 import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_FILE_FIELD,
+  formatImportedAt,
   type ImportDoneResponse,
   type ImportPreviewResponse,
   type ImportRefusal,
+  type PriorImport,
 } from "@/lib/import-endpoint";
+import { findImportByDigest } from "@/lib/import-ledger";
 import {
   checkGedcomUpload,
   gedcomDigest,
@@ -62,6 +65,30 @@ import { requireSessionOr401 } from "@/lib/session";
  * builds it and says why it travels inline: it describes bytes that exist
  * only inside this request, so there is nowhere to go and ask for it
  * afterwards.
+ *
+ * ## A second import of the same file is refused (`YEO-89`)
+ *
+ * `lib/gedcom-import.ts` writes a `gedcom_imports` row inside the same
+ * transaction as the three tables, keyed on the file's digest, before any of
+ * them — see that module's docblock and `gedcomImports` in `db/schema.ts`
+ * for why the table's **unique index** is the guard rather than any check
+ * this route could write, and why refusing beat merging or replacing the
+ * prior import. What this route owns is only the two ends of that guard
+ * being visible to a reader: the preview says, before anything is written,
+ * whether this digest is already in the ledger (`alreadyImported` below,
+ * read with `findImportByDigest` — a read, so the preview's own promise to
+ * write nothing holds; `lib/gedcom.purity.test.ts` constrains
+ * `lib/import-preview.ts`'s closure, not this route), and a confirmation
+ * that reaches the guard anyway answers `409` naming what the earlier import
+ * did.
+ *
+ * `409 Conflict` rather than `400`, matching the digest-mismatch refusal
+ * above: the request is well-formed and nothing about it is malformed or
+ * unauthorised, but the state the caller is proposing — write this file — has
+ * already happened, and the caller could not have known that from anything
+ * short of asking. That is what `409` is for, and it is the same status this
+ * route already used for the one other case where a confirmation is correct
+ * in form and refused on the facts.
  */
 
 /**
@@ -90,7 +117,7 @@ import { requireSessionOr401 } from "@/lib/session";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  const { response } = await requireSessionOr401();
+  const { session, response } = await requireSessionOr401();
   if (response) return response;
 
   /**
@@ -140,10 +167,20 @@ export async function POST(request: Request) {
 
   const confirm = form.get(IMPORT_CONFIRM_FIELD);
   if (confirm === null) {
+    /**
+     * A read, not a check — nothing here refuses anything, and the preview
+     * answers `200` whatever it finds. `findImportByDigest` reaches `@/db`,
+     * which the rest of this branch's closure deliberately does not
+     * (`lib/gedcom.purity.test.ts`); it is safe to call from here specifically
+     * because "cancelling leaves the database untouched" is a claim about
+     * writes, and a `select` that finds a ledger row changes nothing about it.
+     */
+    const alreadyImported = await findImportByDigest(digest);
     const answer: ImportPreviewResponse = {
       stage: "preview",
       digest,
       preview: read.preview,
+      alreadyImported,
     };
     return Response.json(answer);
   }
@@ -171,7 +208,8 @@ export async function POST(request: Request) {
   }
 
   /**
-   * The write, and the only thing on this path that can fail after consent.
+   * The write, and the only thing on this path that can fail — or be refused
+   * — after consent.
    *
    * Caught rather than left to propagate, for the reader rather than for the
    * code: an uncaught throw here is a bare platform `500` with no JSON in it,
@@ -181,13 +219,24 @@ export async function POST(request: Request) {
    * exception *means* nothing was written — the transaction rolled back — so
    * that is the sentence to say.
    *
-   * Logged as well as answered. Every refusal above is a fact about the
-   * request and needs no record; this one is a fault, and the only place it
-   * can be seen afterwards is the platform's log.
+   * Logged as well as answered. Every refusal is a fact about the request and
+   * needs no record; a thrown fault is different, and the only place it can
+   * be seen afterwards is the platform's log.
+   *
+   * `session` is destructured above alongside `response`: by the time
+   * execution reaches this line, `requireSessionOr401` has already refused
+   * anything without a `session.user.email`, so `?? null` below is a
+   * courtesy to a `Session` type that leaves `user` optional rather than a
+   * case this route expects to hit.
    */
-  let imported: ImportedCounts;
+  let outcome: ImportOutcome;
   try {
-    imported = await importGedcom(read.mapping);
+    outcome = await importGedcom(read.mapping, {
+      digest,
+      fileName: file instanceof File ? file.name : null,
+      byteCount: bytes.byteLength,
+      importedBy: session?.user?.email ?? null,
+    });
   } catch (error) {
     console.error("GEDCOM import failed:", error);
     return refuse(
@@ -200,6 +249,10 @@ export async function POST(request: Request) {
     );
   }
 
+  if (outcome.status === "already-imported") {
+    return refuse(alreadyImportedRefusal(outcome.previous), 409);
+  }
+
   /**
    * Built *after* the `try` closes, and that placement is the point of it.
    * Assembling the report is pure and cannot fail, but if it ever did inside
@@ -209,9 +262,38 @@ export async function POST(request: Request) {
    */
   const answer: ImportDoneResponse = {
     stage: "imported",
-    report: buildImportReport(read, writtenCounts(imported)),
+    report: buildImportReport(read, writtenCounts(outcome.counts)),
   };
   return Response.json(answer);
+}
+
+/**
+ * The sentence for a confirmation this route refuses because the ledger
+ * already holds this digest (`YEO-89`).
+ *
+ * Names the date and what the earlier import added, rather than only saying
+ * "already imported" — a reader who has forgotten uploading this file before
+ * needs the fact in front of them to believe the refusal, and a reader who
+ * did it on purpose (a second tab, a slow connection retried) needs to know
+ * their first attempt actually landed.
+ *
+ * The date comes from `formatImportedAt` in `lib/import-endpoint.ts` rather
+ * than from an `Intl` call here, and deliberately: the screen writes its own
+ * statement about the same moment (`components/GedcomImport.tsx`), and a
+ * reader who reaches this refusal because they missed that statement must not
+ * be shown two different dates for one import.
+ */
+function alreadyImportedRefusal(previous: PriorImport): ImportRefusal {
+  const when = formatImportedAt(previous.importedAt);
+  const people = previous.counts.people;
+
+  return {
+    error:
+      `This file has already been imported — on ${when}, adding ${people} ` +
+      `${people === 1 ? "person" : "people"}. Importing it again would add ` +
+      "a second copy of everybody in it, so it was refused and nothing was " +
+      "written.",
+  };
 }
 
 /**

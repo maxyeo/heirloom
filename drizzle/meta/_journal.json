@@ -43,6 +43,13 @@
       "when": 1787631722358,
       "tag": "0005_date_ranges",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787683690287,
+      "tag": "0006_import_ledger",
+      "breakpoints": true
     }
   ]
 }

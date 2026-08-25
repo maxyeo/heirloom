@@ -81,9 +81,19 @@ import { zipChunks } from "@/lib/zip-stream";
  *
  * The order is a foreign-key topological sort, and it is data rather than a
  * comment because `RESTORE.md` prints it: `revisions` point at `pages`,
- * `individuals` point at `pages`, `unions` point at `individuals`, and
- * `union_children` point at both. Loading them in this order means a restore
- * never has to defer a constraint.
+ * `gedcom_imports` points at nothing, `individuals` point at both `pages` and
+ * `gedcom_imports`, `unions` point at `individuals` and `gedcom_imports`, and
+ * `union_children` point at `unions`, `individuals` and `gedcom_imports`.
+ * Loading them in this order means a restore never has to defer a constraint.
+ *
+ * `gedcom_imports` (`YEO-89`) sits **ahead of** `individuals` for exactly that
+ * reason: `individuals.import_id`, `unions.import_id` and
+ * `union_children.import_id` all reference it, so a restore that loaded any
+ * of the three first would be inserting rows whose foreign key names a table
+ * that does not exist yet. Missing this is the trap this ticket sets for
+ * whoever forgets it — a full backup would silently omit the ledger, and a
+ * restore of it would fail that constraint on the very first `individuals`
+ * row with a non-null `import_id`.
  *
  * `revisions` has one further subtlety, which is why it is ordered by
  * `created_at` below rather than by id: `restored_from_id` points at another
@@ -94,6 +104,7 @@ import { zipChunks } from "@/lib/zip-stream";
 const EXPORT_TABLES = [
   schema.pages,
   schema.revisions,
+  schema.gedcomImports,
   schema.individuals,
   schema.unions,
   schema.unionChildren,
@@ -150,6 +161,7 @@ function orderFor(table: PgTable) {
   if (table === schema.revisions) {
     return [asc(schema.revisions.createdAt), asc(schema.revisions.id)];
   }
+  if (table === schema.gedcomImports) return [asc(schema.gedcomImports.id)];
   if (table === schema.individuals) return [asc(schema.individuals.id)];
   if (table === schema.unions) return [asc(schema.unions.id)];
   return [asc(schema.unionChildren.unionId), asc(schema.unionChildren.childId)];
