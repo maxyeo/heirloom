@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ALLOWED_IMAGE_TYPES } from "@/lib/image-type";
-import { MAX_UPLOAD_BYTES } from "@/lib/image-upload";
+import { MAX_UPLOAD_BYTES } from "@/lib/image-endpoint";
 import {
   PORTRAIT_MAX_EDGE,
   PORTRAIT_THUMB_TYPE,

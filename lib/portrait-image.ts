@@ -32,7 +32,7 @@
  */
 
 import { type Dimensions, scaledTo, shouldReencode } from "./image-scale";
-import { MAX_UPLOAD_BYTES } from "./image-upload";
+import { MAX_UPLOAD_BYTES } from "./image-endpoint";
 import { PORTRAIT_THUMB_MAX_EDGE } from "./portrait";
 
 /**

@@ -226,11 +226,11 @@ E5-T5's orphan sweep asks this question in reverse â€” "referenced by no row" â€
 and it has to consult both sources for the same reason. A sweep that knew only
 about bodies would delete every portrait in the wiki.
 
-One consequence of the entry-body half is worth stating plainly rather than
-discovering: **an archive can still contain no images from entries**, because
-`img` reaches the body only once E5-T3 widens
-[the sanitiser's allowlist](architecture.md#entry-html). The scan is written
-against the reference shape the architecture fixes rather than against
-today's emptiness, so the export starts carrying photographs on the day
-entries start having them, rather than quietly not doing so until somebody
-checks.
+The entry-body half of the scan was written before there was anything to
+find: `img` reached [the sanitiser's allowlist](architecture.md#entry-html)
+with E5-T3, which enabled the editor's image button, and until then no stored
+body contained one. Writing it against the reference shape the architecture
+fixes rather than against that emptiness is what made the archive start
+carrying photographs on the day entries started having them, rather than
+quietly not doing so until somebody checked. The portrait half arrived the
+same way and for the same reason, one ticket later.

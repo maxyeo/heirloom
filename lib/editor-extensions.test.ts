@@ -66,14 +66,15 @@ describe("the toolbar", () => {
     ]);
   });
 
-  it("ships the image button disabled, and only that one", () => {
-    // Present but inert until E5-T3 (`YEO-43`) — so the bar does not change
-    // shape on the day uploads land.
-    const disabled = TOOLBAR_ITEMS.filter(
-      (item) => "disabled" in item && item.disabled,
-    ).map((item) => item.id);
+  it("ships no inert buttons", () => {
+    // The image button was the last one, disabled until E5-T3 (`YEO-43`) gave
+    // it something to do. `disabled` is gone from the shape entirely rather
+    // than set to `false`, so a future placeholder has to reintroduce the
+    // field and argue for it — the bar not changing shape when a feature
+    // lands is worth a placeholder, and a placeholder nobody removes is not.
+    const inert = TOOLBAR_ITEMS.filter((item) => "disabled" in item);
 
-    expect(disabled).toEqual(["image"]);
+    expect(inert).toEqual([]);
   });
 
   it("offers exactly the heading levels the sanitiser keeps", () => {
@@ -106,6 +107,11 @@ describe("what the editor can emit", () => {
     heading: ["h2", "h3", "h4"],
     bulletList: ["ul"],
     listItem: ["li"],
+
+    // The photograph (E5-T3, `YEO-43`). A node of this repository's own
+    // rather than `@tiptap/extension-image`, so that what it will parse is
+    // held to the same predicate the sanitiser uses — see `EntryImage`.
+    image: ["img"],
 
     bold: ["strong"],
     italic: ["em"],

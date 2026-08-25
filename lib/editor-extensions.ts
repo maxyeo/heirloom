@@ -1,8 +1,9 @@
+import { Node, mergeAttributes } from "@tiptap/core";
 import type { Extensions } from "@tiptap/core";
 import { StarterKit } from "@tiptap/starter-kit";
 import type { StarterKitOptions } from "@tiptap/starter-kit";
 
-import { ALLOWED_URL_SCHEMES } from "@/lib/sanitize-html";
+import { ALLOWED_URL_SCHEMES, isStoredImageSrc } from "@/lib/sanitize-html";
 
 /**
  * Everything about the editor that is a *decision* rather than a *rendering*.
@@ -30,11 +31,17 @@ import { ALLOWED_URL_SCHEMES } from "@/lib/sanitize-html";
  * description of what it renders. A seventh control cannot be added to the
  * bar without being added here first, which is where the test is looking.
  *
- * `image` is here and disabled. A button that appeared only once image upload
- * landed (E5-T3, `YEO-43`) would shift every other button sideways on the day
- * it shipped; a button that is visibly not ready yet does not. It is also why
- * `img` is absent from the sanitiser's allowlist — the button and the tag are
- * enabled in one change or not at all.
+ * `image` shipped here disabled and is live as of E5-T3 (`YEO-43`). A button
+ * that appeared only once image upload landed would have shifted every other
+ * button sideways on the day it shipped; a button that is visibly not ready
+ * yet does not. The same argument is why `img` was absent from the sanitiser's
+ * allowlist until now — the button and the tag were enabled in one change, as
+ * that module's own docblock insisted.
+ *
+ * The hint says "picture" rather than "image" and names no file formats. It is
+ * a tooltip on a button an author presses to put a photograph in an entry, and
+ * `lib/image-type.ts` is where the four accepted formats are decided; the file
+ * picker enforces them without anybody having to read a tooltip.
  */
 export const TOOLBAR_ITEMS = [
   { id: "heading", label: "Paragraph style", hint: "Paragraph style" },
@@ -45,8 +52,7 @@ export const TOOLBAR_ITEMS = [
   {
     id: "image",
     label: "Image",
-    hint: "Image — available once uploads land",
-    disabled: true,
+    hint: "Add a picture from this device",
   },
 ] as const;
 
@@ -168,6 +174,101 @@ export function normaliseLinkHref(input: string): string | null {
 }
 
 /**
+ * The schema name of the image node, so that nothing spells it as a string
+ * literal twice. Tiptap resolves nodes by name at runtime, so a typo in one of
+ * two literals is a silent no-op rather than a compile error.
+ */
+export const IMAGE_NODE = "image";
+
+/**
+ * The photograph node (E5-T3, `YEO-43`).
+ *
+ * ## Why this is thirty lines rather than a dependency
+ *
+ * `@tiptap/extension-image` exists and would have been one line in
+ * `package.json`. It is not used, for the reason every `false` in
+ * `STARTER_KIT_OPTIONS` below exists: **the editor must not be able to emit
+ * anything the sanitiser drops.** That package's node accepts any `src` at
+ * all, so pasting a page from the web would fill an entry with `<img>` tags
+ * pointing at somebody else's server — every one of which `lib/sanitize-html.ts`
+ * discards on save. The author would watch pictures appear and then vanish,
+ * which is the content-loss failure this file exists to prevent, and no
+ * amount of `configure()` reaches a `parseHTML` rule.
+ *
+ * So the rule is written here instead, and it is the *same predicate the
+ * sanitiser uses*: `isStoredImageSrc`. One function decides what an entry body
+ * may point at, and both ends of the round trip ask it.
+ *
+ * ## A block, and an atom
+ *
+ * A block, because a photograph in a family entry is a photograph in the
+ * article, not a glyph in a sentence — the same shape MediaWiki gives
+ * `[[File:…|thumb]]`, and the shape `.wiki-body img` in `app/globals.css` is
+ * styled for. The acceptance criterion's "inserted inline at the cursor" is
+ * about *where* it lands — in the flow of the entry, at the cursor, rather
+ * than in a gallery or a sidebar somewhere — not about CSS display.
+ *
+ * An atom because there is nothing inside it to put a cursor in, and
+ * `draggable` because a picture is the one thing in an entry an author will
+ * want to move without cutting and pasting.
+ *
+ * ## No caption, and no width
+ *
+ * Both would be attributes the sanitiser strips, so both would be settings
+ * that survive until save. A caption is `<figure>`/`<figcaption>`, which is
+ * two more tags on the allowlist and a second editing surface inside the
+ * node; that is a product decision for a later ticket, not something to leave
+ * half-built here. `alt` is the one thing that does travel, and E5-T3 seeds it
+ * from the file's own name so no image arrives without one.
+ */
+export const EntryImage = Node.create({
+  name: IMAGE_NODE,
+  group: "block",
+  atom: true,
+  draggable: true,
+
+  addAttributes() {
+    return {
+      src: { default: null },
+      // `null` rather than `""`: ProseMirror's serialiser skips a null-valued
+      // attribute, so an image with no text alternative renders as `<img src>`
+      // rather than as `alt=""`, which claims the picture is decorative.
+      alt: { default: null },
+    };
+  },
+
+  /**
+   * Reading an `<img>` back in — from the stored body the editor opens with,
+   * from a drag between two entries, and from a paste of HTML off the web.
+   *
+   * Returning `false` from `getAttrs` makes the rule not match, and with no
+   * other rule for `img` the element is skipped and its (nonexistent)
+   * children kept. That is exactly the right outcome for a foreign image: it
+   * does not arrive, rather than arriving and being deleted on save.
+   *
+   * The parameter is an `HTMLElement`, which is a *type* from the DOM library
+   * rather than an import — this module still reaches for no browser global,
+   * and `lib/editor-extensions.test.ts` still runs in plain Node.
+   */
+  parseHTML() {
+    return [
+      {
+        tag: "img[src]",
+        getAttrs: (element: HTMLElement) => {
+          const src = element.getAttribute("src");
+          if (!isStoredImageSrc(src ?? undefined)) return false;
+          return { src, alt: element.getAttribute("alt") };
+        },
+      },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["img", mergeAttributes(HTMLAttributes)];
+  },
+});
+
+/**
  * How StarterKit is cut down to the toolbar.
  *
  * Exported as a plain object rather than written inline in the `configure`
@@ -256,7 +357,7 @@ export const STARTER_KIT_OPTIONS = {
  * an implementation detail rather than a constraint.
  */
 export function createEntryExtensions(): Extensions {
-  return [StarterKit.configure(STARTER_KIT_OPTIONS)];
+  return [StarterKit.configure(STARTER_KIT_OPTIONS), EntryImage];
 }
 
 /**
@@ -297,6 +398,13 @@ export const HATNOTE_STARTER_KIT_OPTIONS = {
  * carries per-editor storage, and there are now genuinely two editors on the
  * edit page — the body and the hatnote — so sharing one array would have them
  * sharing that storage.
+ *
+ * `EntryImage` is deliberately absent, which is why this is a separate array
+ * rather than the body's with things removed: a hatnote is one line of text
+ * and links, and `normaliseHatnote` would flatten a photograph out of it on
+ * save. The hatnote toolbar has no image button for the same reason, and
+ * `components/EntryEditor.tsx` keys its drop and paste handlers off the same
+ * fact rather than off the variant name.
  */
 export function createHatnoteExtensions(): Extensions {
   return [StarterKit.configure(HATNOTE_STARTER_KIT_OPTIONS)];

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import {
+  contentBlockText,
   describeBlockKind,
   describeContentDiffSummary,
   describeDiffStatus,
@@ -161,6 +162,13 @@ const BLOCK_TEXT_CLASS: Readonly<Record<ContentBlockKind, string>> = {
   // stylesheet's rule carries a bottom margin meant for sitting above a
   // paragraph, and in here every row supplies its own spacing.
   hatnote: "ps-4 italic",
+  // A photograph's row is its alt text (E5-T3, `YEO-43`), which is a
+  // description of the picture rather than words the author wrote into the
+  // article — so it is set in the note size and muted, the way a caption is.
+  // The picture itself is deliberately not rendered here: a diff of thirty
+  // revisions would become thirty image fetches, each one a signed-URL
+  // redirect, to say something the row already says in words.
+  image: "text-note text-ink-muted",
 };
 
 /**
@@ -361,7 +369,7 @@ export default async function CompareRevisionsPage({
                           {"•"}
                         </span>
                       ) : null}
-                      {row.block.text}
+                      {contentBlockText(row.block)}
                     </p>
                   </div>
                 </li>

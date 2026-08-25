@@ -78,9 +78,11 @@ beforeAll(async () => {
       id: PAGE,
       slug: "export-fixture-rose-hall",
       title: "Rose Hall",
-      // Written straight in rather than through `sanitizeHtml`, deliberately:
-      // `img` is not in the allowlist until E5-T3 (`YEO-43`), so a sanitised
-      // body could not carry one and this scan would have nothing to find.
+      // Written straight in rather than through `sanitizeHtml`, which is
+      // still deliberate now that E5-T3 (`YEO-43`) has put `img` on the
+      // allowlist: what this fixture is about is the scan, and going through
+      // the sanitiser would make every case here depend on a second module
+      // agreeing that the `src` is one of ours.
       bodyHtml: `<p>Rose.</p>${imgTag(CURRENT_IMAGE)}`,
     },
     {

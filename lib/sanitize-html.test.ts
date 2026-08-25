@@ -4,6 +4,7 @@ import {
   ALLOWED_ATTRIBUTES,
   ALLOWED_TAGS,
   ALLOWED_URL_SCHEMES,
+  isStoredImageSrc,
   sanitizeHtml,
 } from "@/lib/sanitize-html";
 
@@ -28,6 +29,10 @@ describe("sanitizeHtml", () => {
       ["headings", "<h2>Early life</h2><h3>Schooling</h3><h4>Detail</h4>"],
       ["bullet lists", "<ul><li>Alice</li><li>Brian</li></ul>"],
       ["links", '<p><a href="https://example.com">source</a></p>'],
+      [
+        "photographs",
+        '<img src="/api/images/ab/8f14e45f-ea0f-4b76-9d7c-1a2b3c4d5e6f.jpg" alt="Rose at Southwold" />',
+      ],
       ["nesting", "<ul><li><strong>Alice</strong> <em>Hale</em></li></ul>"],
     ])("keeps %s", (_label, html) => {
       expect(sanitizeHtml(html)).toBe(html);
@@ -224,16 +229,93 @@ describe("sanitizeHtml", () => {
       );
       expect(sanitizeHtml("<pre><code>x</code></pre>")).toBe("x");
       expect(sanitizeHtml("<hr>")).toBe("");
-      // `img` waits for E5-T3, which is blocked on this module for that reason.
-      expect(sanitizeHtml('<p><img src="/photo.jpg" alt="Rose"></p>')).toBe(
-        "<p></p>",
+    });
+  });
+
+  /**
+   * The `src` restriction (E5-T3, `YEO-43`), which is the half of "`img` and
+   * its `src` added to the allowlist" that an allowlist of tag and attribute
+   * *names* cannot express.
+   *
+   * Every case below is an image that would render. What separates them is
+   * where the bytes come from, and the rule is that they come from this
+   * application's own image route or the tag does not survive — see
+   * `isStoredImageSrc` for why that is the right reading of "restricted to
+   * the storage host" in an architecture whose bodies are deliberately
+   * site-relative.
+   */
+  describe("where a photograph may come from", () => {
+    const OURS =
+      "/api/images/ab/8f14e45f-ea0f-4b76-9d7c-1a2b3c4d5e6f.jpg" as const;
+
+    it("keeps one this application stores", () => {
+      expect(sanitizeHtml(`<img src="${OURS}">`)).toBe(`<img src="${OURS}" />`);
+    });
+
+    it("keeps its alt text, and nothing else on the tag", () => {
+      expect(
+        sanitizeHtml(
+          `<img src="${OURS}" alt="Rose" width="800" class="hero" onerror="alert(1)" title="x">`,
+        ),
+      ).toBe(`<img src="${OURS}" alt="Rose" />`);
+    });
+
+    it.each([
+      // Somebody else's server. A body that reaches out at render time leaks
+      // the reader's address to whoever wrote it, and this wiki is behind an
+      // email allowlist precisely so that reading it is not observable.
+      ["an absolute URL", '<img src="https://evil.example/track.png">'],
+      // Even one naming this host: bodies outlive the domain they were
+      // written on, which is why links are site-relative too.
+      [
+        "this host, spelled absolutely",
+        `<img src="https://heirloom.test${OURS}">`,
+      ],
+      // Reads as relative, inherits the page's scheme, is not relative.
+      ["a protocol-relative URL", '<img src="//evil.example/track.png">'],
+      // Megabytes of base64 in an append-only revision, with no key for the
+      // orphan sweep to match and nothing for the export to fetch.
+      ["a data URI", '<img src="data:image/png;base64,iVBORw0KGgo=">'],
+      ["a javascript: URL", '<img src="javascript:alert(1)">'],
+      // Under the route, but not a key `assertSafeStorageKey` would pass.
+      ["a traversal", '<img src="/api/images/../../etc/passwd">'],
+      ["a path outside the route", '<img src="/photo.jpg">'],
+      ["no src at all", '<img alt="Rose">'],
+    ])("drops %s", (_label, html) => {
+      expect(sanitizeHtml(`<p>before</p>${html}<p>after</p>`)).toBe(
+        "<p>before</p><p>after</p>",
+      );
+    });
+
+    it("drops the whole tag rather than only the attribute", () => {
+      // The difference between a foreign image disappearing and a permanently
+      // broken picture icon sitting in the entry.
+      expect(
+        sanitizeHtml('<img src="https://evil.example/x.png" alt="x">'),
+      ).toBe("");
+    });
+
+    it("is the same predicate the editor parses with", () => {
+      // `EntryImage` in `lib/editor-extensions.ts` refuses to parse an `img`
+      // this returns false for, which is what stops the editor from showing an
+      // author a picture that the save would then delete.
+      expect(isStoredImageSrc(OURS)).toBe(true);
+      expect(isStoredImageSrc("https://evil.example/x.png")).toBe(false);
+      expect(isStoredImageSrc(undefined)).toBe(false);
+    });
+
+    it("ignores a cache-busting query", () => {
+      // `imageKeyFromHref` drops the query before it reads the key, so this
+      // has to survive rather than be read as a stranger's URL.
+      expect(sanitizeHtml(`<img src="${OURS}?v=2">`)).toBe(
+        `<img src="${OURS}?v=2" />`,
       );
     });
   });
 
   describe("the exported allowlist", () => {
-    // E1-T2 has to configure TipTap to match this, and E5-T3 has to widen it.
-    // Exporting the lists is what makes that a readable diff rather than a
+    // E1-T2 had to configure TipTap to match this, and E5-T3 had to widen it.
+    // Exporting the lists is what made both a readable diff rather than a
     // grep through option objects.
     it("names only the tags the toolbar can produce", () => {
       expect([...ALLOWED_TAGS].sort()).toEqual([
@@ -243,6 +325,7 @@ describe("sanitizeHtml", () => {
         "h2",
         "h3",
         "h4",
+        "img",
         "li",
         "p",
         "strong",
@@ -250,8 +333,11 @@ describe("sanitizeHtml", () => {
       ]);
     });
 
-    it("permits attributes on links only", () => {
-      expect(ALLOWED_ATTRIBUTES).toEqual({ a: ["href"] });
+    it("permits attributes on links and photographs only", () => {
+      expect(ALLOWED_ATTRIBUTES).toEqual({
+        a: ["href"],
+        img: ["src", "alt"],
+      });
     });
 
     it("permits only the three schemes the ticket allows", () => {
