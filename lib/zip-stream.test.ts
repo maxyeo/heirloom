@@ -264,6 +264,204 @@ describe("the limit on one member", () => {
 });
 
 /**
+ * What stands between a caller's number and a silently wrapped field
+ * (`YEO-93`).
+ *
+ * ## Why the direct-call path is the one being tested
+ *
+ * `zipChunks` counts every member's bytes and calls `assertMemberFits` as it
+ * counts, so nothing reachable through it arrives at a record with a value
+ * the record cannot hold. But `centralHeader` and `endOfCentralDirectory` are
+ * **exported** — for the ZIP64 tests below, which is a good reason and does
+ * not change what it costs: the invariant is no longer held by one caller's
+ * discipline, and an assertion driven through `zipChunks` would be checking
+ * that caller rather than the writer.
+ *
+ * ## The failure being ruled out
+ *
+ * `DataView`'s setters wrap. `setUint32(0, 2 ** 32, true)` writes four zero
+ * bytes and throws nothing, so an oversized size reaching a central header
+ * produces a *structurally valid* archive stating a plausible wrong number —
+ * one that opens in every tool, passes every check that is not an extraction,
+ * and fails when somebody finally unpacks it. For a backup that is the worst
+ * available moment, which is why these are throws rather than comments.
+ */
+describe("a record handed a value it cannot hold", () => {
+  function centralEntry(overrides: Partial<CentralEntry> = {}): CentralEntry {
+    return {
+      name: new TextEncoder().encode("images/ab/photo.jpg"),
+      crc: 0x12345678,
+      size: 4096,
+      offset: 1000,
+      ...overrides,
+    };
+  }
+
+  function view(bytes: Uint8Array): DataView {
+    return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
+  describe("a member's size, arriving without zipChunks in front of it", () => {
+    it("is written when it is the largest a member may be", () => {
+      expect(() =>
+        centralHeader(centralEntry({ size: MAX_MEMBER_BYTES }), 0, 0),
+      ).not.toThrow();
+    });
+
+    it("is refused at the sentinel rather than written as one", () => {
+      // `0xffffffff` in a size slot does not mean four gibibytes, it means
+      // "the real size is in a ZIP64 extra field" — and there is none, since
+      // the data descriptor that would have needed it was written long
+      // before this record. See MAX_MEMBER_BYTES.
+      const oversized = centralEntry({ size: 0xffffffff });
+
+      expect(() => centralHeader(oversized, 0, 0)).toThrow(ZipWriteError);
+      expect(() => centralHeader(oversized, 0, 0)).toThrow(/larger than/);
+    });
+
+    it("is refused rather than wrapped when it passes the field entirely", () => {
+      // The number that makes this worth writing down: `setUint32` writes
+      // 0x00000000 for 2 ** 32 and reports success, so the table of contents
+      // would describe a four-gigabyte member as empty. Both layers catch
+      // this one — the cap first and the record's range check behind it —
+      // which is what belt and braces is supposed to look like.
+      expect(() =>
+        centralHeader(centralEntry({ size: 2 ** 32 }), 0, 0),
+      ).toThrow(ZipWriteError);
+    });
+
+    it("names the member it is refusing", () => {
+      // The bytes are all this function has of the name, and an error that
+      // cannot say which member is one nobody can act on.
+      expect(() =>
+        centralHeader(
+          centralEntry({
+            name: new TextEncoder().encode("images/ab/huge.jpg"),
+            size: 2 ** 32,
+          }),
+          0,
+          0,
+        ),
+      ).toThrow(/images\/ab\/huge\.jpg/);
+    });
+  });
+
+  describe("the other fields of a member's entry", () => {
+    it("refuses a checksum that is not a 32-bit value", () => {
+      // The writer's own `crc32` cannot produce one — it ends in `>>> 0`,
+      // deliberately. A caller reaching this directly can.
+      expect(() => centralHeader(centralEntry({ crc: 2 ** 32 }), 0, 0)).toThrow(
+        ZipWriteError,
+      );
+      expect(() => centralHeader(centralEntry({ crc: -1 }), 0, 0)).toThrow(
+        ZipWriteError,
+      );
+    });
+
+    it("refuses a name too long for the 16-bit field that counts it", () => {
+      // `assertSafeMemberName` catches this for `zipChunks` and takes a
+      // string; by the time a name reaches here it is bytes, and that check
+      // is somebody else's memory of having run it.
+      const name = new Uint8Array(0x10000).fill(0x61);
+
+      expect(() => centralHeader(centralEntry({ name }), 0, 0)).toThrow(
+        ZipWriteError,
+      );
+    });
+
+    it("refuses a DOS time or date outside the two bytes that hold it", () => {
+      expect(() => centralHeader(centralEntry(), 0x10000, 0)).toThrow(
+        ZipWriteError,
+      );
+      expect(() => centralHeader(centralEntry(), 0, 0x10000)).toThrow(
+        ZipWriteError,
+      );
+    });
+
+    it("still writes the permissions it always wrote", () => {
+      /**
+       * `EXTERNAL_ATTRIBUTES` is `0o100644 << 16`, which JavaScript evaluates
+       * as the *negative* signed integer −2119958528 — and `setUint32`
+       * happily wrote the right four bytes for it, which is why nobody had
+       * noticed. Stating it unsigned so the range check can accept it had to
+       * change no byte, and this is the assertion that says so: 0o100644 is
+       * `-rw-r--r--` plus the regular-file bit, and it is what gets a member
+       * extracted as that instead of `-rwxrwxrwx`.
+       */
+      expect(
+        view(centralHeader(centralEntry(), 0, 0)).getUint32(38, true),
+      ).toBe(0o100644 * 0x10000);
+    });
+  });
+
+  describe("the end-of-archive records, asked the same question", () => {
+    it("clamps rather than refuses, because all three totals have a 64-bit home", () => {
+      // Nothing a real archive can reach should throw here: a count, a
+      // directory size and an offset that do not fit go into the ZIP64
+      // record, and the classic one takes the sentinel.
+      expect(() => [
+        ...endOfCentralDirectory(0xffff, 0xffffffff, 0xffffffff),
+      ]).not.toThrow();
+      expect(() => [
+        ...endOfCentralDirectory(2 ** 40, 2 ** 40, 2 ** 40),
+      ]).not.toThrow();
+    });
+
+    it("refuses a total that is not a count of anything", () => {
+      expect(() => [...endOfCentralDirectory(-1, 0, 0)]).toThrow(ZipWriteError);
+      expect(() => [...endOfCentralDirectory(1, 1.5, 0)]).toThrow(
+        ZipWriteError,
+      );
+    });
+  });
+});
+
+describe("the timestamp every member is stamped with", () => {
+  /**
+   * The archive opens with a local header, whose fields run: signature,
+   * version, flags, method, time, then the date at offset 12.
+   */
+  function dosDate(archive: Uint8Array): number {
+    return new DataView(
+      archive.buffer,
+      archive.byteOffset,
+      archive.byteLength,
+    ).getUint16(12, true);
+  }
+
+  async function archiveDated(modified: Date): Promise<Uint8Array> {
+    return collect(
+      zipChunks(toAsync([{ name: "a.txt", body: "hi" }]), modified),
+    );
+  }
+
+  it("clamps a year past the end of the DOS date field", async () => {
+    /**
+     * The year is seven bits counted from 1980, so 2107 fills them and 2108
+     * carries into the month — which, now that a record refuses a value it
+     * cannot hold, would stop the archive being produced at all rather than
+     * quietly mis-stamping it.
+     *
+     * Neither of those is the right answer here. A member's size is what an
+     * extractor reads its bytes by; a member's timestamp is what a file
+     * listing prints. So a backup that fails because the clock has passed
+     * 2107 is a worse outcome than one whose listing shows the wrong year,
+     * and this is a clamp where the size is a throw.
+     */
+    const archive = await archiveDated(new Date("3000-06-15T00:00:00.000Z"));
+
+    expect(() => readZip(archive)).not.toThrow();
+    expect(dosDate(archive) >>> 9).toBe(2107 - 1980);
+  });
+
+  it("still floors a year before the field's epoch", async () => {
+    const archive = await archiveDated(new Date("1970-06-15T00:00:00.000Z"));
+
+    expect(dosDate(archive) >>> 9).toBe(0);
+  });
+});
+
+/**
  * The ZIP64 records, decoded against the specification.
  *
  * ## Why these are checked directly rather than through an archive

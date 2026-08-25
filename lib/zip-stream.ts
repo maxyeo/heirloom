@@ -112,8 +112,18 @@ const VERSION_ZIP64 = 45;
  */
 const VERSION_MADE_BY = (3 << 8) | VERSION_STORED;
 
-/** `0644`, in the top 16 bits where a Unix-made ZIP puts its mode. */
-const EXTERNAL_ATTRIBUTES = 0o100644 << 16;
+/**
+ * `0644`, in the top 16 bits where a Unix-made ZIP puts its mode.
+ *
+ * The `>>> 0` is not decoration. JavaScript's shift operators produce
+ * *signed* 32-bit integers and this mode sets bit 31, so `0o100644 << 16` is
+ * the number −2119958528. `DataView.setUint32` takes it and writes exactly
+ * the right four bytes, which is why nobody noticed; {@link ZipRecord}'s
+ * range check does not take it, and is right not to — every other negative
+ * reaching a 32-bit field would be a mistake. Same bytes, stated as the
+ * unsigned value they have always been.
+ */
+const EXTERNAL_ATTRIBUTES = (0o100644 << 16) >>> 0;
 
 /** The largest value a 32-bit field can hold; also its "look in ZIP64" sentinel. */
 const UINT32_MAX = 0xffffffff;
@@ -257,6 +267,14 @@ export type CentralEntry = {
 const encoder = new TextEncoder();
 
 /**
+ * To name a member in an error, where its bytes are all {@link centralHeader}
+ * has. The table of contents is one record per member and a name is a few
+ * dozen bytes, so decoding one per entry is nothing against the archive it
+ * describes — and it buys the same sentence `zipChunks` would have raised.
+ */
+const decoder = new TextDecoder();
+
+/**
  * CRC-32, the checksum ZIP has carried since 1989.
  *
  * The table is built once, on first use, rather than written out as 256
@@ -304,9 +322,14 @@ function crc32() {
  * Every ZIP record is a fixed run of 2-, 4- and 8-byte little-endian fields
  * in a fixed order, so this lets each one below read as its own layout table
  * rather than as a column of `setUint16(18, …, true)` calls whose offsets a
- * reader has to add up to check. `done` asserts the record was filled
- * exactly, which turns a miscounted field — the one mistake that produces a
- * plausible-looking corrupt archive — into a throw at the moment it is made.
+ * reader has to add up to check.
+ *
+ * The two ways to fill a record wrongly are both throws rather than bytes.
+ * {@link ZipRecord.done} asserts the record was filled exactly, which catches
+ * a miscounted field. {@link ZipRecord.fits} asserts each value belongs in
+ * the field it is going into, which catches the other one. Between them a
+ * record that comes out of here is either right or an exception, and never a
+ * plausible-looking wrong number.
  */
 class ZipRecord {
   private readonly bytes: Uint8Array;
@@ -319,21 +342,58 @@ class ZipRecord {
   }
 
   u16(value: number): this {
-    this.view.setUint16(this.at, value, true);
+    this.view.setUint16(this.at, this.fits(value, 16, UINT16_MAX), true);
     this.at += 2;
     return this;
   }
 
   u32(value: number): this {
-    this.view.setUint32(this.at, value, true);
+    this.view.setUint32(this.at, this.fits(value, 32, UINT32_MAX), true);
     this.at += 4;
     return this;
   }
 
   u64(value: number): this {
-    this.view.setBigUint64(this.at, BigInt(value), true);
+    const safe = this.fits(value, 64, Number.MAX_SAFE_INTEGER);
+    this.view.setBigUint64(this.at, BigInt(safe), true);
     this.at += 8;
     return this;
+  }
+
+  /**
+   * Refuse a value the field it is going into cannot hold.
+   *
+   * `DataView`'s setters **wrap**. `setUint32(0, 0x100000000, true)` writes
+   * four zero bytes, reports nothing and throws nothing, and that is the one
+   * failure this module cannot absorb: what comes out is a structurally valid
+   * archive stating a plausible wrong number, which opens in any tool and
+   * fails only when somebody extracts it — for a backup, possibly years
+   * later, which is the worst moment there is.
+   *
+   * So the check is here rather than at each of the twenty-odd call sites,
+   * and it is here rather than in the callers for the reason
+   * {@link assertSafeMemberName} gives about names: the writer is what
+   * survives everybody who currently knows what it may be handed. Three of
+   * the builders below are exported.
+   *
+   * Negatives are refused rather than wrapped, which is the same decision:
+   * a signed value arriving at an unsigned field means somebody computed it
+   * with `<<` and did not mean to — see {@link EXTERNAL_ATTRIBUTES}, the one
+   * place in this file that did.
+   *
+   * The 64-bit ceiling is `Number.MAX_SAFE_INTEGER` rather than 2⁶⁴ − 1
+   * because these arrive as JavaScript numbers: a byte count past 2⁵³ has
+   * already lost precision before this sees it, so the honest limit is the
+   * one the argument type imposes, not the one the field does.
+   */
+  private fits(value: number, bits: number, max: number): number {
+    if (!Number.isInteger(value) || value < 0 || value > max) {
+      throw new ZipWriteError(
+        `Cannot write ${value} into the ${bits}-bit field at offset ` +
+          `${this.at} of a ${this.length}-byte record`,
+      );
+    }
+    return value;
   }
 
   done(): Uint8Array {
@@ -351,18 +411,32 @@ function record(length: number): ZipRecord {
 }
 
 /**
+ * The last year MS-DOS's date field can state.
+ *
+ * The year is seven bits counted from 1980, so 2107 fills them and 2108
+ * carries into the month. Clamped rather than refused, which is the opposite
+ * of the call {@link MAX_MEMBER_BYTES} makes and for a reason worth stating:
+ * a member's size is what an extractor reads its bytes by, while a member's
+ * timestamp is what a file listing prints. Getting the first wrong loses the
+ * data; getting the second wrong shows the wrong date. So an oversized member
+ * stops the archive and a clock past 2107 does not.
+ */
+const MAX_DOS_YEAR = 1980 + 0x7f;
+
+/**
  * MS-DOS's date and time, which is what ZIP stores.
  *
- * Two-second resolution, no year before 1980, and no timezone — the format
- * predates all three concerns. **Read as UTC**, which makes the value a
- * function of the `Date` it is given rather than of the server's `TZ`, for
- * the same reason `gedcomFilename` in `lib/export-endpoint.ts` dates its file
- * in UTC: the server is the only clock in the exchange, and a timestamp that
- * moved with a deployment region would be a worse surprise than one that is
- * an hour off a reader's wall clock.
+ * Two-second resolution, no year outside 1980–{@link MAX_DOS_YEAR}, and no
+ * timezone — the format predates all three concerns. **Read as UTC**, which
+ * makes the value a function of the `Date` it is given rather than of the
+ * server's `TZ`, for the same reason `gedcomFilename` in
+ * `lib/export-endpoint.ts` dates its file in UTC: the server is the only
+ * clock in the exchange, and a timestamp that moved with a deployment region
+ * would be a worse surprise than one that is an hour off a reader's wall
+ * clock.
  */
 function dosDateTime(moment: Date): { time: number; date: number } {
-  const year = Math.max(moment.getUTCFullYear(), 1980);
+  const year = Math.min(Math.max(moment.getUTCFullYear(), 1980), MAX_DOS_YEAR);
   return {
     time:
       (moment.getUTCHours() << 11) |
@@ -528,17 +602,44 @@ export async function* zipChunks(
  * the offset is well-formed and is what a reader expects when only the offset
  * slot is `0xffffffff`.
  *
- * Exported for `lib/zip-stream.test.ts`. The ZIP64 branch is reachable only
- * by an archive over 4 GiB, and a test that produced one to check a field
- * offset would cost minutes of CI for every run to exercise sixteen bytes —
- * so the record is checked directly, decoded against the spec. That is the
- * same bargain `assertMemberFits` makes, one layer down.
+ * ## Which is why the size is checked here anyway
+ *
+ * That paragraph is an argument about `zipChunks`, and this function is
+ * exported, so `zipChunks` is not guaranteed to be what called it. The size
+ * arrives as a number and goes into a `.u32`, and `DataView.setUint32`
+ * *wraps* — an oversized one would be written as a plausible wrong number,
+ * with no exception anywhere and an archive that fails at extraction. So the
+ * cap is asserted rather than assumed, for the reason
+ * {@link assertSafeMemberName} gives about names: the check has to live in the
+ * writer, because the writer is what survives whoever knew the invariant.
+ *
+ * The other caller-supplied fields are covered a layer down, by
+ * {@link ZipRecord}: a `crc` or a name length that could not be represented
+ * is a throw rather than a wrap, and an `offset` that does not fit has the
+ * ZIP64 branch above. Only the size needs saying here, because its limit is
+ * not the field's — {@link MAX_MEMBER_BYTES} stops one short of it, and a
+ * value the field *can* hold is exactly the one `ZipRecord` cannot object to.
+ *
+ * ## Exported for the tests
+ *
+ * The ZIP64 branch is reachable only by an archive over 4 GiB, and a test
+ * that produced one to check a field offset would cost minutes of CI for
+ * every run to exercise sixteen bytes — so the record is checked directly,
+ * decoded against the spec. That is the same bargain `assertMemberFits`
+ * makes, one layer down.
+ *
+ * @throws ZipWriteError if `entry.size` is one this writer cannot describe
  */
 export function centralHeader(
   entry: CentralEntry,
   time: number,
   date: number,
 ): Uint8Array {
+  // `> MAX_MEMBER_BYTES` is `>= UINT32_MAX`, which is the boundary that
+  // matters: the largest value the slot holds is also its "look in ZIP64"
+  // sentinel, and there is no ZIP64 size field to look in.
+  assertMemberFits(decoder.decode(entry.name), entry.size);
+
   // `>=`, not `>`: the sentinel is a value the offset can legitimately take,
   // and writing it literally would tell a reader to look for a ZIP64 field
   // that is not there.
@@ -593,6 +694,15 @@ export function centralHeader(
  * it is the format: a reader finds the end of the archive by scanning
  * backwards for `PK\x05\x06`, and an archive without one is not a ZIP file to
  * anything.
+ *
+ * ## Nothing here needs the check {@link centralHeader} grew
+ *
+ * Asked the same question, this one already answers it. Each of the three
+ * arguments has a 64-bit home to go to when it does not fit, and each is
+ * written to the classic record through a `Math.min` against the sentinel —
+ * so there is no value of `count`, `size` or `offset` that this can be handed
+ * and silently truncate. What is left is a value that is not a byte count at
+ * all, a negative or a fraction, and {@link ZipRecord} refuses those.
  */
 export function* endOfCentralDirectory(
   count: number,
