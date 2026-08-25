@@ -211,7 +211,7 @@ describe("CRLF line endings and continuations, from a fixture file", () => {
 
   it("collects the tags outside the subset", () => {
     expect(unknownCounts(file)).toEqual({
-      "BIRT.SOUR": 1,
+      "INDI.BIRT.SOUR": 1,
       "INDI.NOTE": 1,
       "INDI.OBJE": 1,
       "INDI._UID": 1,
@@ -482,7 +482,24 @@ describe("the unknown-tag report", () => {
       ["0 @I1@ INDI", "1 NOTE x", "1 BIRT", "2 NOTE y"].join("\n"),
     );
 
-    expect(unknownCounts(file)).toEqual({ "INDI.NOTE": 1, "BIRT.NOTE": 1 });
+    expect(unknownCounts(file)).toEqual({
+      "INDI.NOTE": 1,
+      "INDI.BIRT.NOTE": 1,
+    });
+  });
+
+  it("starts every path with the record type, events included", () => {
+    // The contract E6-T5 groups on. `BIRT` occurring only inside `INDI` makes
+    // the short form unambiguous by coincidence rather than by rule, so the
+    // record type is always the first segment.
+    const file = parseGedcomText(
+      ["0 @F1@ FAM", "1 MARR", "2 SOUR @S1@", "1 NOTE x"].join("\n"),
+    );
+
+    expect(unknownCounts(file)).toEqual({
+      "FAM.MARR.SOUR": 1,
+      "FAM.NOTE": 1,
+    });
   });
 
   it("counts a whole record type it does not know", () => {

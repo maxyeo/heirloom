@@ -77,8 +77,10 @@ export type GedcomDecode = {
 /**
  * How far into the file to look for the `CHAR` declaration.
  *
- * The header is the first record in every conforming file and `CHAR` is
- * required to be in it, so a kilobyte is generous. A bound rather than a scan
+ * Characters, which for the byte path is also bytes: the sniff decodes as
+ * Latin-1, which is one character per byte. The header is the first record in
+ * every conforming file and `CHAR` is required to be in it, so a kilobyte is
+ * generous. A bound rather than a scan
  * of the whole file matters for the pathological case: `1 CHAR ANSEL` sitting
  * in a `NOTE` halfway down a ten-megabyte file is not a declaration, and
  * without a limit it would be read as one.
@@ -225,20 +227,32 @@ function startsWith(bytes: Uint8Array, prefix: readonly number[]): boolean {
 }
 
 /**
- * The `CHAR` value from the header, read as ASCII.
+ * The character set a file declares, from text that has already been decoded.
  *
- * Latin-1 rather than UTF-8 for the sniff, because it cannot fail: every byte
- * maps to a character, so a header containing an accented `SOUR` name above
- * the `CHAR` line cannot throw the sniff off. Only the ASCII part of the
- * result is ever matched against.
+ * Exported because `parseGedcomText` in `lib/gedcom.ts` needs the same answer
+ * and has no bytes to get it from — its caller already holds a string. Having
+ * it here rather than copied there keeps one regex and one window: two copies
+ * would drift, and a ticket whose own theme is "one date grammar, not two"
+ * should not ship two header sniffers.
+ */
+export function readDeclaredCharacterSet(text: string): string | null {
+  const match = CHAR_LINE.exec(text.slice(0, HEADER_BYTES));
+  return match === null ? null : match[1].toUpperCase();
+}
+
+/**
+ * The same, for bytes that have not been decoded yet.
+ *
+ * Latin-1 for the sniff, because it cannot fail: every byte maps to a
+ * character, so a header containing an accented `SOUR` name above the `CHAR`
+ * line cannot throw it off. Only the ASCII part of the result is ever matched
+ * against. Latin-1 is also exactly one character per byte, so the window above
+ * covers the same span of the file either way round.
  */
 function readDeclaredEncoding(bytes: Uint8Array): string | null {
-  const header = new TextDecoder("latin1").decode(
-    bytes.subarray(0, HEADER_BYTES),
+  return readDeclaredCharacterSet(
+    new TextDecoder("latin1").decode(bytes.subarray(0, HEADER_BYTES)),
   );
-
-  const match = CHAR_LINE.exec(header);
-  return match === null ? null : match[1].toUpperCase();
 }
 
 /** Whether the bytes are a well-formed UTF-8 sequence. */

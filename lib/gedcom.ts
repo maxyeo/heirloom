@@ -1,4 +1,8 @@
-import { decodeGedcom, type GedcomEncoding } from "./gedcom-encoding";
+import {
+  decodeGedcom,
+  readDeclaredCharacterSet,
+  type GedcomEncoding,
+} from "./gedcom-encoding";
 import { readGedcomTree, readPointer, type GedcomNode } from "./gedcom-lines";
 import {
   summariseUnknownTags,
@@ -304,6 +308,7 @@ function readIndividual(
           child,
           individual.birth,
           "birth",
+          "INDI.BIRT",
           issues,
           unknown,
         );
@@ -314,6 +319,7 @@ function readIndividual(
           child,
           individual.death,
           "death",
+          "INDI.DEAT",
           issues,
           unknown,
         );
@@ -369,6 +375,7 @@ function readFamily(
           child,
           family.marriage,
           "marriage",
+          "FAM.MARR",
           issues,
           unknown,
         );
@@ -379,6 +386,7 @@ function readFamily(
           child,
           family.divorce,
           "divorce",
+          "FAM.DIV",
           issues,
           unknown,
         );
@@ -464,11 +472,19 @@ function readSex(node: GedcomNode, issues: GedcomIssue[]): Sex {
  * than overwriting it — overwriting would make the imported date depend on
  * file order, which is the kind of thing nobody notices until two runs
  * disagree.
+ *
+ * `path` is the event's own dotted path — `INDI.BIRT`, `FAM.MARR` — and is
+ * carried in rather than taken from `node.tag` so that a tag inside the event
+ * is reported as `INDI.BIRT.SOUR` rather than `BIRT.SOUR`. The record type has
+ * to be the first segment for every row in the report, or E6-T5 cannot group
+ * on it without special-casing events. That `BIRT` happens to occur only in
+ * `INDI` today makes the short form unambiguous by coincidence, not by rule.
  */
 function readEvent(
   node: GedcomNode,
   existing: GedcomEvent | null,
   label: string,
+  path: string,
   issues: GedcomIssue[],
   unknown: Sighting[],
 ): GedcomEvent {
@@ -492,10 +508,7 @@ function readEvent(
         event.place = blankToNull(collapse(child.value ?? ""));
         break;
       default:
-        unknown.push({
-          path: `${node.tag}.${child.tag}`,
-          line: child.line,
-        });
+        unknown.push({ path: `${path}.${child.tag}`, line: child.line });
     }
   }
 
@@ -639,18 +652,6 @@ function reportDuplicateXrefs(
       seen.set(record.xref, record.line);
     }
   }
-}
-
-/**
- * The `HEAD.CHAR` value, for the text entry point.
- *
- * `parseGedcomText` never decodes anything — its caller already holds a string
- * — but the field is still reported, because a round trip has to be able to
- * write back the character set the file declared.
- */
-function readDeclaredCharacterSet(text: string): string | null {
-  const match = /^\s*\d+\s+CHAR\s+(\S+)\s*$/im.exec(text.slice(0, 1024));
-  return match === null ? null : match[1].toUpperCase();
 }
 
 /** A value, quoted, or a phrase for the absence of one. */
