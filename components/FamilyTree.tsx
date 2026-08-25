@@ -29,6 +29,7 @@ import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
+import { UnionMerge } from "@/components/UnionMerge";
 import { UnionOrder } from "@/components/UnionOrder";
 import type { AddChildFormAction } from "@/lib/child-form-state";
 import { type EntryLink, findEntry, unlinkedEntries } from "@/lib/entry-link";
@@ -699,6 +700,16 @@ function FamilyTreeCanvas({
                   spouses={detail.spouses}
                 />
               ) : null}
+              {/*
+                E3-T10's duplicate merge (`YEO-82`), between the sequence
+                editor and the removals for the same reason the sequence
+                editor sits where it does: it is a correction to what was
+                recorded rather than a deletion of it, and — like that one —
+                it renders nothing at all unless this person actually has two
+                families recorded with the same partner, which is nearly
+                everybody.
+              */}
+              <UnionMerge graph={graph} personId={detail.id} />
               <PersonRemoval graph={graph} personId={detail.id} />
             </>
           }

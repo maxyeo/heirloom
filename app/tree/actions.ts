@@ -23,8 +23,15 @@ import {
 } from "@/lib/individual-form-state";
 import { individualInputFromFormData } from "@/lib/individual-input";
 import { createEntryForPerson, setPersonEntry } from "@/lib/link-person-entry";
+import { mergeUnions } from "@/lib/merge-unions";
+import {
+  failedUnionMergeState,
+  mergedUnionState,
+  type UnionMergeState,
+} from "@/lib/merge-state";
 import {
   type ParentsFormState,
+  parentsDuplicateState,
   parentsFailedState,
   parentsInvalidState,
   parentsSavedState,
@@ -519,6 +526,16 @@ export async function setParentsAction(
         "They are already recorded as a child of that family.",
       );
 
+    case "union-exists":
+      /**
+       * Not a failure, and deliberately not worded as one. The two people
+       * named already have a family recorded, which the author could not have
+       * known from the pickers, so the form is handed the families and asks
+       * the question. Answering "they were married more than once" resubmits
+       * and writes the second one — see `lib/set-parents.ts`.
+       */
+      return parentsDuplicateState(result.unionIds);
+
     case "child-is-ancestor":
       /**
        * The cycle guard, and the only refusal here whose consequence would not
@@ -539,6 +556,58 @@ export async function setParentsAction(
        */
       revalidateTree();
       return parentsSavedState(result.unionId);
+  }
+}
+
+/**
+ * Merge two families recorded between the same two people (for E3-T10's
+ * confirmation dialogue).
+ *
+ * The counterpart to the prompt in `setParentsAction` above: that one keeps a
+ * duplicate from being created, and this one clears up the ones already there.
+ * Everything it does — moving the child links, choosing the surviving row's
+ * place in both partners' orders, keeping both sets of notes — lives in
+ * `lib/merge-unions.ts`, because all of it belongs in one transaction and a
+ * `"use server"` module is the wrong place to own one.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields: `keepUnionId` and `mergeUnionId`
+ * @returns a state to render, or the fact that there was nothing to merge
+ */
+export async function mergeUnionsAction(
+  _previous: UnionMergeState,
+  form: FormData,
+): Promise<UnionMergeState> {
+  await requireSession();
+
+  const result = await mergeUnions(
+    rowReference(form, "keepUnionId"),
+    rowReference(form, "mergeUnionId"),
+  );
+
+  switch (result.status) {
+    case "not-found":
+      // Said as a fact about the tree rather than as an error: the ordinary
+      // way to reach it is a panel left open in one tab while E3-T8 removed
+      // one of these two families in another.
+      return failedUnionMergeState(
+        "One of those families is no longer recorded. It may already have been removed. Nothing was changed.",
+      );
+
+    case "not-a-duplicate":
+      /**
+       * The guard that keeps this from being a way to move somebody's children
+       * under a couple they were never recorded with. Worded as a fact about
+       * the two families rather than as a rule, because what the author is
+       * looking at is a list that has gone stale.
+       */
+      return failedUnionMergeState(
+        "Those two families no longer record the same two people, so there is nothing to merge. Reload the tree.",
+      );
+
+    case "merged":
+      revalidateTree();
+      return mergedUnionState(result.unionId);
   }
 }
 

@@ -1,12 +1,6 @@
-import type {
-  FamilyGraph,
-  GraphChildLink,
-  GraphPerson,
-  GraphUnion,
-} from "./family-graph";
-import type { PersonSummary } from "./person-detail";
-import { formatLifespan, formatQualifiedDate } from "./format-date";
-import { formatPersonName } from "./person-format";
+import type { FamilyGraph, GraphChildLink, GraphUnion } from "./family-graph";
+import { personSummary, type PersonSummary } from "./person-detail";
+import { formatQualifiedDate } from "./format-date";
 
 /**
  * What disappears when something is removed from the tree (E3-T8, `YEO-36`).
@@ -282,14 +276,14 @@ export function previewPersonRemoval(
     .unionsOfChild(personId)
     .map((link) => ({
       unionId: link.unionId,
-      child: toSummary(person),
+      child: personSummary(person),
       relation: link.relation,
       parents: index.partnersOf(link.unionId, personId),
     }));
 
   return {
     kind: "person",
-    person: toSummary(person),
+    person: personSummary(person),
     unions,
     parentLinks,
     keepsEntry: person.pageId !== null,
@@ -364,7 +358,7 @@ export function previewPartnerDetachment(
       union.endDateQualifier,
       union.endDatePrecision,
     ),
-    person: toSummary(person),
+    person: personSummary(person),
     partner: index.summarise(otherPartnerId(union, personId)),
     children,
     /**
@@ -409,7 +403,7 @@ export function previewChildDetachment(
   return {
     kind: "child",
     unionId,
-    child: toSummary(child),
+    child: personSummary(child),
     relation: link.relation,
     parents: index.partnersOf(unionId, childId),
     removesUnion: isUnionOrphaned(
@@ -422,14 +416,6 @@ export function previewChildDetachment(
 /** The partner of `union` who is not `personId`, which may be nobody. */
 function otherPartnerId(union: GraphUnion, personId: string): string | null {
   return union.partnerAId === personId ? union.partnerBId : union.partnerAId;
-}
-
-function toSummary(person: GraphPerson): PersonSummary {
-  return {
-    id: person.id,
-    name: formatPersonName(person.givenName, person.surname),
-    lifespan: formatLifespan(person),
-  };
 }
 
 function isPresent<T>(value: T | null): value is T {
@@ -475,7 +461,7 @@ function indexGraph(graph: FamilyGraph) {
   const summarise = (id: string | null): PersonSummary | null => {
     if (id === null) return null;
     const person = byId.get(id);
-    return person ? toSummary(person) : null;
+    return person ? personSummary(person) : null;
   };
 
   return {

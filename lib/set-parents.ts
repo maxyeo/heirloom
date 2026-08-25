@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import {
@@ -9,6 +9,7 @@ import {
 import { deleteEmptyUnion } from "@/lib/remove-from-tree";
 import { attachChild } from "@/lib/save-child";
 import { individualExists } from "@/lib/save-individual";
+import type { Transaction } from "@/lib/save-page";
 import { nextSequence } from "@/lib/save-union";
 
 /**
@@ -33,6 +34,12 @@ import { nextSequence } from "@/lib/save-union";
  *   `type: "unknown"` — the honest value, because what has been said is that
  *   these two are somebody's parents and nothing at all about their
  *   relationship.
+ *   Since E3-T10 (`YEO-82`) it also *asks* before doing so, when the two people
+ *   named already have a family recorded. Not a refusal — two unions between
+ *   the same pair is a couple who remarried each other, which is ordinary
+ *   genealogy — but a question with both answers offered. See
+ *   `lib/union-merge.ts`, and `lib/merge-unions.ts` for the duplicates that
+ *   are already there.
  * - **the child may already be recorded somewhere.** Correcting that is a
  *   move, and a move is one operation rather than two: the ticket asks for it
  *   to be possible "without deleting and re-adding them".
@@ -100,7 +107,17 @@ export type SetParentsResult =
    * The chosen family's parents descend from this person, so recording them
    * as its child would make them their own ancestor. See `lib/ancestry.ts`.
    */
-  | { status: "child-is-ancestor" };
+  | { status: "child-is-ancestor" }
+  /**
+   * The two people named as parents already have a family recorded, and the
+   * author has not yet said whether they meant that one (E3-T10, `YEO-82`).
+   *
+   * Not a validation failure and emphatically not a refusal to record a
+   * second one: it is the question, asked once. Answering it by resubmitting
+   * with `allowDuplicate` writes the second family — which is a couple who
+   * married twice, and a case the tree must go on being able to express.
+   */
+  | { status: "union-exists"; unionIds: string[] };
 
 /**
  * Record who somebody's parents are.
@@ -170,7 +187,8 @@ export async function setParents(
          * unknown", and it is why no placeholder person is invented anywhere in
          * this flow.
          */
-        const parentIds = [value.parentAId, value.parentBId].filter(
+        const { parentAId, parentBId } = value;
+        const parentIds = [parentAId, parentBId].filter(
           (id): id is string => id !== null,
         );
 
@@ -186,6 +204,30 @@ export async function setParents(
            */
           if (!(await individualExists(tx, parentId))) {
             refuse({ status: "parent-not-found" });
+          }
+        }
+
+        /**
+         * The duplicate prompt (E3-T10, `YEO-82`).
+         *
+         * Asked only when *both* parents are named, and that restriction is
+         * the load-bearing part. Both partner columns are nullable so that
+         * "we know the mother, the father is unknown" needs no placeholder
+         * person, which means two rows each recording Rose and an unrecorded
+         * partner are not two records of one couple — they may be two
+         * children by two men nobody can name. Steering the author onto the
+         * first of those would assert something nobody said. See
+         * `couplePartnerIds` in `lib/union-merge.ts`, which draws the same
+         * line for the same reason.
+         *
+         * Refused with a throw like every refusal in here, because the detach
+         * above may already have run: a plain return would commit a move into
+         * a family that was never created.
+         */
+        if (!value.allowDuplicate && parentAId !== null && parentBId !== null) {
+          const existing = await unionsBetween(tx, parentAId, parentBId);
+          if (existing.length > 0) {
+            refuse({ status: "union-exists", unionIds: existing });
           }
         }
 
@@ -293,6 +335,46 @@ export async function setParents(
       if (error instanceof Refusal) return error.result;
       throw error;
     });
+}
+
+/**
+ * Every union recording exactly these two people, oldest first.
+ *
+ * A database read rather than a pass over `FamilyGraph`, because this is what
+ * makes the prompt load-bearing: `components/SetParentsForm.tsx` asks the same
+ * question client-side against a graph the browser may have loaded minutes
+ * ago, and a marriage recorded since then would walk straight through it. The
+ * same division `lib/parent-options.ts` states about its own filtering.
+ *
+ * Ordered by `sequence` and then `start_date`, matching `getFamilyGraph`, so a
+ * couple with more than one family is offered them in the order they happened.
+ *
+ * @param tx the caller's transaction, so the answer describes the rows this
+ *   write is about to act on
+ */
+async function unionsBetween(
+  tx: Transaction,
+  aId: string,
+  bId: string,
+): Promise<string[]> {
+  const rows = await tx
+    .select({ id: schema.unions.id })
+    .from(schema.unions)
+    .where(
+      or(
+        and(
+          eq(schema.unions.partnerAId, aId),
+          eq(schema.unions.partnerBId, bId),
+        ),
+        and(
+          eq(schema.unions.partnerAId, bId),
+          eq(schema.unions.partnerBId, aId),
+        ),
+      ),
+    )
+    .orderBy(asc(schema.unions.sequence), asc(schema.unions.startDate));
+
+  return rows.map((row) => row.id);
 }
 
 /**

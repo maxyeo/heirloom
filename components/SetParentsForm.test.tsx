@@ -8,6 +8,7 @@ import {
   emptyParentsFormState,
   type ParentsFormState,
   parentsFailedState,
+  parentsDuplicateState,
   parentsInvalidState,
   parentsSavedState,
   type SetParentsFormAction,
@@ -390,6 +391,125 @@ describe("naming the parents when no family is recorded yet", () => {
       familyMode: "existing",
       unionId: "u-thomas",
     });
+  });
+});
+
+describe("naming two people who already have a family", () => {
+  /**
+   * The bug this ticket exists for (E3-T10, `YEO-82`), at the seam where an
+   * author meets it. Rose and Thomas are already recorded as a family in the
+   * fixture, so naming them both as Dora's parents is exactly the submission
+   * that used to write a silent second `unions` row beside the first.
+   */
+  function nameBothParents() {
+    const mounted = mount();
+    click(buttonLabelled(mounted.host, "not recorded as a family yet"));
+    type(searchBoxes(mounted.host)[0], "Rose");
+    click(buttonLabelled(mounted.host, "Rose Hale"));
+    type(searchBoxes(mounted.host)[0], "Thomas");
+    click(buttonLabelled(mounted.host, "Thomas Hale"));
+    return mounted;
+  }
+
+  it("says so, and holds the submission until the author answers", () => {
+    const { host } = nameBothParents();
+
+    expect(host.textContent).toContain("already have a family recorded");
+    expect(buttonLabelled(host, "Set parents").hasAttribute("disabled")).toBe(
+      true,
+    );
+  });
+
+  it("offers the family they already have, and sends its id when taken", async () => {
+    const { host, submissions } = nameBothParents();
+
+    click(buttonLabelled(host, "Use this family"));
+    await submit(host);
+
+    expect(sent(submissions[0])).toMatchObject({
+      familyMode: "existing",
+      unionId: "u-thomas",
+      allowDuplicate: "no",
+    });
+  });
+
+  it("records a second family when the author says they married twice", async () => {
+    /**
+     * The criterion the whole ticket turns on. A couple who divorced and
+     * remarried each other is a real record, so this must be a prompt rather
+     * than a refusal — one click, and the submission goes through unchanged
+     * except for the answer.
+     */
+    const { host, submissions } = nameBothParents();
+
+    click(buttonLabelled(host, "married more than once"));
+    await submit(host);
+
+    expect(sent(submissions[0])).toMatchObject({
+      familyMode: "new",
+      parentAId: "rose",
+      parentBId: "thomas",
+      allowDuplicate: "yes",
+    });
+  });
+
+  it("asks again when the author changes who the second parent is", () => {
+    const { host } = nameBothParents();
+    click(buttonLabelled(host, "married more than once"));
+
+    // Consent belongs to the *pair*, not to the form: Rose and Walter are a
+    // different question from Rose and Thomas, and one already answered must
+    // not answer the other.
+    // Both slots are filled, so both show "Change" rather than a search box;
+    // the second one is Thomas's.
+    click(
+      [...host.querySelectorAll("button")].filter((button) =>
+        button.textContent?.includes("Change"),
+      )[1] as HTMLElement,
+    );
+    type(searchBoxes(host)[0], "Walter");
+    click(buttonLabelled(host, "Walter Byrne"));
+
+    expect(host.textContent).toContain("already have a family recorded");
+  });
+
+  it("does not ask when only one parent is named", () => {
+    /**
+     * Two rows that each record Rose and an unrecorded partner are not two
+     * records of one couple — they may be two children by two men nobody can
+     * name. Rose has `u-dora`-shaped company in the fixture, and naming her
+     * alone must still go straight through.
+     */
+    const { host } = mount();
+    click(buttonLabelled(host, "not recorded as a family yet"));
+    type(searchBoxes(host)[0], "Rose");
+    click(buttonLabelled(host, "Rose Hale"));
+
+    expect(host.textContent).not.toContain("already have a family recorded");
+    expect(buttonLabelled(host, "Set parents").hasAttribute("disabled")).toBe(
+      false,
+    );
+  });
+
+  it("reports a family recorded since the page loaded, which its graph cannot show", async () => {
+    /**
+     * The client-side check runs against a graph the browser may have loaded
+     * minutes ago. `lib/set-parents.ts` re-asks inside the transaction, and
+     * what comes back is a list of ids this graph does not hold — so all the
+     * form can honestly do is say they exist and ask for a reload.
+     */
+    const { host } = mount({
+      reply: parentsDuplicateState(["recorded-elsewhere"]),
+    });
+
+    click(buttonLabelled(host, "not recorded as a family yet"));
+    type(searchBoxes(host)[0], "Walter");
+    click(buttonLabelled(host, "Walter Byrne"));
+    type(searchBoxes(host)[0], "Thomas");
+    click(buttonLabelled(host, "Thomas Hale"));
+    await submit(host);
+
+    expect(host.textContent).toContain("recorded since this page loaded");
   });
 });
 
