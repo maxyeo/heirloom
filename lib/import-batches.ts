@@ -5,10 +5,14 @@
  *
  * The acceptance criterion is that "a file with several hundred people should
  * not be several hundred round trips", and that is a claim about a number.
- * Kept here, it is a pure function CI can assert against; folded into
- * `lib/gedcom-import.ts`, it would be a property of a transaction and could
- * only be checked by `npm run test:db`, which CI does not run — so the commit
- * that broke it would go green. That is the same split
+ * Kept here, it is a pure function any run of `npm test` asserts against;
+ * folded into `lib/gedcom-import.ts`, it would be a property of a transaction
+ * and could only be checked by `npm run test:db`. That mattered more when this
+ * was written than it does now — `YEO-90` put `test:db` in CI, so that is no
+ * longer the difference between a checked claim and an unchecked one. The
+ * split stays because the arithmetic is genuinely arithmetic and reads better
+ * proved as such, not because one suite runs and the other does not. It is the
+ * same split
  * `lib/union-order.ts` / `lib/reorder-unions.ts` and
  * `lib/removal-preview.ts` / `lib/remove-from-tree.ts` already draw, on the
  * same line and for the same reason.

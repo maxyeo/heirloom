@@ -26,7 +26,7 @@ import { readZip, zipText } from "@/test/read-zip";
  *   - the images an entry body refers to are found, including one referred to
  *     only by an old revision.
  *
- * See docs/testing.md for why this is a `.db.test.ts` and why CI does not run
+ * See docs/testing.md for why this is a `.db.test.ts`, and which CI job runs
  * it.
  */
 
