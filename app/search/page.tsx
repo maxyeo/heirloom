@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Form from "next/form";
 
+import { EntrySearchResults } from "@/components/EntrySearchResults";
 import { PersonSearchResults } from "@/components/PersonSearchResults";
+import { searchEntries } from "@/lib/pages";
 import { searchPeopleByName } from "@/lib/people";
 import { requireSession } from "@/lib/session";
 
@@ -61,10 +63,21 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   const query = singleParam((await searchParams).q) ?? "";
   const trimmed = query.trim();
 
-  // No query issues no query: reading the whole `individuals` table to rank
-  // it against nothing would be work spent producing the same "type a name"
-  // invitation this renders without it.
-  const people = trimmed === "" ? [] : await searchPeopleByName(trimmed);
+  // Two reads of two tables that have nothing to do with each other, so they
+  // are issued together rather than one after the other: awaiting them in
+  // sequence would make the page as slow as the sum of them for no reason.
+  //
+  // No query issues no query at all. `searchEntries` makes the same decision
+  // for itself, but reading the whole `individuals` table to rank it against
+  // nothing would be work spent producing the same "type a name" invitation
+  // this renders without it.
+  const [people, entries] =
+    trimmed === ""
+      ? [[], []]
+      : await Promise.all([
+          searchPeopleByName(trimmed),
+          searchEntries(trimmed),
+        ]);
 
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
@@ -81,15 +94,21 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         02-components/form.md`.
       */}
       <Form action="/search" className="mt-4 flex gap-2">
+        {/*
+          "Search by name" until E8-T1 (`YEO-55`) put the entries beside the
+          people: the box now asks one question of both, so labelling it after
+          only one of them would be telling a screen-reader user the narrower
+          of two truths.
+        */}
         <label className="sr-only" htmlFor="search-query">
-          Search by name
+          Search people and entries
         </label>
         <input
           id="search-query"
           type="search"
           name="q"
           defaultValue={query}
-          placeholder="Search by name"
+          placeholder="Search people and entries"
           autoComplete="off"
           className="block w-full max-w-96 rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink"
         />
@@ -102,13 +121,17 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       </Form>
 
       {/*
-        This is deliberately the *only* group on the page today. E8-T3
-        (`YEO-57`) adds an "Entries" group alongside it, drawing on E8-T1's
-        (`YEO-55`) full-text search over `pages` — so this becomes one
-        combined results box with a heading per kind of thing found, rather
-        than two separate search experiences. Nothing here should be read as
-        the final shape of the page; the heading below is what makes room for
-        that group to arrive beside it rather than replace it.
+        Two groups, one per kind of thing the wiki holds, under one query —
+        the shape `app/search/page.tsx` was written to make room for when
+        E8-T2 (`YEO-56`) landed with only the first of them. E8-T3 (`YEO-57`)
+        still owns what remains: the header's search box becoming live, and
+        whatever ordering or interleaving one combined box wants. What is
+        settled here is that a search is one question with two kinds of
+        answer, not two search experiences.
+
+        People first because a family wiki is a family: the commonest thing
+        to search for is a person, and an entry about them is very often the
+        second result rather than the thing being looked for.
       */}
       <h2 className="mt-8">People</h2>
 
@@ -130,6 +153,28 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
             found.
           </p>
           <PersonSearchResults matches={people} />
+        </>
+      )}
+
+      <h2 className="mt-8">Entries</h2>
+
+      {trimmed === "" ? (
+        <p className="mt-2 text-ink-muted">
+          Search the text of every entry. Words are matched by their stem, so
+          “marriages” finds an entry that says “married”, and an entry whose
+          title matches comes before one that only mentions the word.
+        </p>
+      ) : entries.length === 0 ? (
+        <p className="mt-2 text-ink-muted">
+          {`No entry mentions “${trimmed}”. This searches what is written in every entry, not just the titles, so the words are simply not in the wiki yet.`}
+        </p>
+      ) : (
+        <>
+          <p className="text-caption text-ink-muted">
+            {entries.length === 1 ? "1 entry" : `${entries.length} entries`}{" "}
+            found.
+          </p>
+          <EntrySearchResults matches={entries} />
         </>
       )}
     </main>

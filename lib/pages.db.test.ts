@@ -1,8 +1,13 @@
-import { inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
-import { findExistingSlugs, getPageBySlug, listPages } from "@/lib/pages";
+import {
+  findExistingSlugs,
+  getPageBySlug,
+  listPages,
+  searchEntries,
+} from "@/lib/pages";
 
 /**
  * `getPageBySlug` is one `WHERE slug = $1`, so most of it is not worth a test.
@@ -214,5 +219,284 @@ describe("findExistingSlugs", () => {
     await expect(
       findExistingSlugs(["' OR 1=1 --", `'); drop table pages; --`]),
     ).resolves.toEqual(new Set());
+  });
+});
+
+/**
+ * Full-text search over entries (E8-T1, `YEO-55`), which is almost entirely a
+ * property of Postgres and therefore almost entirely untestable in the suite
+ * CI runs. `lib/entry-search.test.ts` owns the reading of a `ts_headline`
+ * string; every acceptance criterion below it — the generated column, the GIN
+ * index, tags not being indexed, a title outranking a body, a snippet showing
+ * the term in context — is expressed in SQL, so this is where they are
+ * checked.
+ *
+ * The fixture uses invented words ("quernstone", "carbuncle") rather than
+ * ordinary ones, for the same reason the ids are explicit: these tests run
+ * against a database that already has entries in it, and an assertion about
+ * *ranking* cannot simply filter down to its own rows if a real entry can
+ * outrank them out of the result set entirely.
+ */
+describe("searchEntries", () => {
+  const TITLE_MATCH_ID = "00000000-0000-4000-8000-00000000e101";
+  const BODY_MATCH_ID = "00000000-0000-4000-8000-00000000e102";
+  const PROSE_ID = "00000000-0000-4000-8000-00000000e103";
+  const MARKUP_ID = "00000000-0000-4000-8000-00000000e104";
+  const REWRITTEN_ID = "00000000-0000-4000-8000-00000000e105";
+
+  const SEARCH_FIXTURE = [
+    {
+      id: TITLE_MATCH_ID,
+      title: "Quernstone Mill",
+      // Says it once, in the title, and never in the body.
+      bodyHtml: "<p>A watermill on the river, in the family since 1840.</p>",
+    },
+    {
+      id: BODY_MATCH_ID,
+      title: "The River Farm",
+      // Says it eight times, in the body, and never in the title. This is the
+      // entry that must not win.
+      bodyHtml: `<p>${"quernstone ".repeat(8).trim()}</p>`,
+    },
+    {
+      id: PROSE_ID,
+      title: "Marriage Records",
+      bodyHtml:
+        "<p>Rose and Walter were <em>married</em> at the quernstone chapel" +
+        " in 1902, and the parish record of it survives to this day.</p>",
+    },
+    {
+      id: MARKUP_ID,
+      title: "Sources",
+      // Every searchable-looking string here is markup rather than prose: a
+      // tag name, an attribute name, and a URL inside an attribute value.
+      bodyHtml:
+        '<p>A <em>note</em> with <a href="https://carbuncle.example/deeds">a' +
+        " source</a>.</p>",
+    },
+    {
+      id: REWRITTEN_ID,
+      title: "Notebook",
+      bodyHtml: "<p>Nothing much yet.</p>",
+    },
+  ].map((entry) => ({
+    ...entry,
+    slug: `search-fixture-${entry.id.slice(-4)}`,
+  }));
+
+  const SEARCH_IDS = SEARCH_FIXTURE.map((entry) => entry.id);
+  const SEARCH_ID_SET = new Set(SEARCH_IDS);
+
+  async function removeSearchFixture() {
+    await db.delete(schema.pages).where(inArray(schema.pages.id, SEARCH_IDS));
+  }
+
+  /** This file's own matches, in the order `searchEntries` ranked them. */
+  async function fixtureMatches(query: string, limit?: number) {
+    const matches = await searchEntries(
+      query,
+      limit === undefined ? {} : { limit },
+    );
+    return matches.filter((match) => SEARCH_ID_SET.has(match.id));
+  }
+
+  beforeAll(async () => {
+    await removeSearchFixture();
+    await db.insert(schema.pages).values(SEARCH_FIXTURE);
+  });
+
+  afterAll(removeSearchFixture);
+
+  describe("the column and the index", () => {
+    it("keeps the vector as a generated column, not a trigger", async () => {
+      const rows = await db.execute<{
+        is_generated: string;
+        generation_expression: string | null;
+      }>(sql`
+        select is_generated, generation_expression
+        from information_schema.columns
+        where table_name = 'pages' and column_name = 'search_vector'
+      `);
+
+      // "ALWAYS" is what makes every write path correct by construction: no
+      // save action, seed script or hand-typed UPDATE can produce a row whose
+      // vector disagrees with its text.
+      expect(rows[0]?.is_generated).toBe("ALWAYS");
+
+      // And it is the expression `db/schema.ts` describes: both columns, at
+      // the two weights the ranking depends on.
+      const expression = rows[0]?.generation_expression ?? "";
+      expect(expression).toContain("title");
+      expect(expression).toContain("body_html");
+      expect(expression).toContain("'A'");
+      expect(expression).toContain("'B'");
+    });
+
+    it("indexes the vector with GIN", async () => {
+      const rows = await db.execute<{ indexdef: string }>(sql`
+        select indexdef from pg_indexes
+        where tablename = 'pages' and indexname = 'pages_search_vector_idx'
+      `);
+
+      expect(rows[0]?.indexdef).toContain("USING gin");
+      expect(rows[0]?.indexdef).toContain("search_vector");
+    });
+  });
+
+  describe("what is searched", () => {
+    it("finds an entry by a word written in its body", async () => {
+      const ids = (await fixtureMatches("quernstone")).map((m) => m.id);
+
+      // The title-only entry, the body-only entry, and the one that says it
+      // in prose — all three, because the vector covers both columns.
+      expect(new Set(ids)).toEqual(
+        new Set([TITLE_MATCH_ID, BODY_MATCH_ID, PROSE_ID]),
+      );
+    });
+
+    it("matches a word by its stem rather than its spelling", async () => {
+      // The entry says "married"; nobody types that into a search box.
+      const ids = (await fixtureMatches("marriages")).map((m) => m.id);
+      expect(ids).toContain(PROSE_ID);
+    });
+
+    it("indexes the text content, not the HTML tags", async () => {
+      // A tag name, an attribute name, and a host out of an `href`. Every one
+      // of them is in `MARKUP_ID`'s stored HTML and none of them is text a
+      // reader ever sees, so none of them is a way to find the entry.
+      for (const query of ["carbuncle", "href", "https"]) {
+        expect(await fixtureMatches(query)).toEqual([]);
+      }
+
+      // The prose in the same entry is found, which is what makes the four
+      // assertions above about markup rather than about an unsearchable row.
+      expect((await fixtureMatches("deeds")).map((m) => m.id)).toEqual([]);
+      expect((await fixtureMatches("note source")).map((m) => m.id)).toEqual([
+        MARKUP_ID,
+      ]);
+    });
+  });
+
+  describe("ranking", () => {
+    it("ranks a title match above a body match, however often the body says it", async () => {
+      const ids = (await fixtureMatches("quernstone")).map((m) => m.id);
+
+      // One mention in a title beats eight in a body. This is arithmetic
+      // rather than a tie-break: `ts_rank` caps a `B` lexeme at 0.4 and a
+      // single `A` occurrence already scores about 0.61. See `db/schema.ts`.
+      expect(ids.indexOf(TITLE_MATCH_ID)).toBeLessThan(
+        ids.indexOf(BODY_MATCH_ID),
+      );
+    });
+
+    it("returns at most the limit it was given", async () => {
+      expect(await fixtureMatches("quernstone", 2)).toHaveLength(2);
+    });
+  });
+
+  describe("snippets", () => {
+    it("shows the matched term in context", async () => {
+      const [match] = await fixtureMatches("married");
+      expect(match.id).toBe(PROSE_ID);
+
+      const marked = match.snippet.filter((segment) => segment.matched);
+      expect(marked.map((segment) => segment.text)).toEqual(["married"]);
+
+      // In context, not on its own: the sentence around it comes back too.
+      const text = match.snippet.map((segment) => segment.text).join("");
+      expect(text).toContain("Rose and Walter were married at the");
+    });
+
+    it("leaves no markup in the snippet", async () => {
+      const [match] = await fixtureMatches("married");
+      const text = match.snippet.map((segment) => segment.text).join("");
+
+      // The `<em>` around "married" and the `<p>` around the sentence are
+      // both gone, and the words either side of the `<em>` did not run
+      // together where it used to be.
+      expect(text).not.toContain("<");
+      expect(text).not.toContain("em>");
+      expect(text).toContain("were married at");
+    });
+
+    it("gives an entry matched only by its title a snippet of its opening", async () => {
+      const [match] = await fixtureMatches("quernstone");
+      expect(match.id).toBe(TITLE_MATCH_ID);
+
+      // Nothing in the body matched, so nothing in the snippet is marked —
+      // but the reader still gets to see what the entry is about.
+      expect(match.snippet.every((segment) => !segment.matched)).toBe(true);
+      expect(match.snippet.map((segment) => segment.text).join("")).toContain(
+        "A watermill on the river",
+      );
+    });
+  });
+
+  describe("keeping up with the writes", () => {
+    it("re-indexes an entry when its body is rewritten", async () => {
+      // Nothing in the application does this. `lib/save-page.ts` writes
+      // `body_html` and knows nothing about `search_vector`; Postgres
+      // recomputes it as part of the same UPDATE, which is the whole argument
+      // for a generated column over a trigger.
+      expect(
+        (await fixtureMatches("quernstone")).map((m) => m.id),
+      ).not.toContain(REWRITTEN_ID);
+
+      await db
+        .update(schema.pages)
+        .set({ bodyHtml: "<p>The quernstone is in the barn.</p>" })
+        .where(eq(schema.pages.id, REWRITTEN_ID));
+
+      expect((await fixtureMatches("quernstone")).map((m) => m.id)).toContain(
+        REWRITTEN_ID,
+      );
+
+      await db
+        .update(schema.pages)
+        .set({ bodyHtml: "<p>Nothing much yet.</p>" })
+        .where(eq(schema.pages.id, REWRITTEN_ID));
+
+      expect(
+        (await fixtureMatches("quernstone")).map((m) => m.id),
+      ).not.toContain(REWRITTEN_ID);
+    });
+  });
+
+  describe("what a search box gets typed into it", () => {
+    it("returns nothing for a blank query", async () => {
+      expect(await searchEntries("   ")).toEqual([]);
+    });
+
+    it("returns nothing for a query with no lexemes in it", async () => {
+      // A stop word and punctuation both parse to an empty tsquery, which
+      // matches no row — rather than raising the syntax error `to_tsquery`
+      // would, which would turn a typo into a 500.
+      expect(await fixtureMatches("the")).toEqual([]);
+      expect(await fixtureMatches("!!! ???")).toEqual([]);
+    });
+
+    it("honours the search-box syntax people already type", async () => {
+      // `websearch_to_tsquery`, not `plainto_tsquery`: a quoted phrase is a
+      // phrase, and a leading `-` excludes.
+      expect(
+        (await fixtureMatches('"quernstone chapel"')).map((m) => m.id),
+      ).toEqual([PROSE_ID]);
+
+      const excluded = (await fixtureMatches("quernstone -chapel")).map(
+        (m) => m.id,
+      );
+      expect(excluded).not.toContain(PROSE_ID);
+      expect(excluded).toContain(TITLE_MATCH_ID);
+    });
+
+    it("parameterises the query instead of interpolating it", async () => {
+      // This is whatever a signed-in reader typed, against a database with no
+      // RLS and one role for the whole application.
+      expect(await searchEntries("' OR 1=1 --")).toEqual([]);
+      expect(await searchEntries("'); drop table pages; --")).toEqual([]);
+
+      // And the table is still there.
+      expect(await getPageBySlug(SLUG)).toBeDefined();
+    });
   });
 });
