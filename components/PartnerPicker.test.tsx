@@ -37,6 +37,8 @@ function person(overrides: Partial<GraphPerson> & { id: string }): GraphPerson {
     deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
+    portraitKey: null,
+    portraitThumbKey: null,
     pageId: null,
     ...overrides,
   };

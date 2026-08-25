@@ -431,6 +431,8 @@ function family(spec: {
       deathDateUpperPrecision: "day",
       deathPlace: null,
       notes: null,
+      portraitKey: null,
+      portraitThumbKey: null,
       pageId: null,
     })),
     unions: unions.map(([id, partnerAId, partnerBId], index) => ({

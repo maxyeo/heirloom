@@ -94,6 +94,8 @@ const FIELD_NAMES = Object.keys({
   deathDateUpperPrecision: true,
   deathPlace: true,
   notes: true,
+  portraitKey: true,
+  portraitThumbKey: true,
 } satisfies Record<keyof IndividualFields, true>) as (keyof IndividualFields)[];
 
 /**
@@ -173,6 +175,8 @@ export async function updateIndividual(
       deathDateUpperPrecision: schema.individuals.deathDateUpperPrecision,
       deathPlace: schema.individuals.deathPlace,
       notes: schema.individuals.notes,
+      portraitKey: schema.individuals.portraitKey,
+      portraitThumbKey: schema.individuals.portraitThumbKey,
     })
     .from(schema.individuals)
     .where(eq(schema.individuals.id, id));

@@ -40,6 +40,8 @@ const MINIMAL_FIELDS: IndividualFields = {
   deathDateUpperPrecision: "day",
   deathPlace: null,
   notes: null,
+  portraitKey: null,
+  portraitThumbKey: null,
 };
 
 /** Assert success and hand back the value, so tests need no `ok` guard. */
@@ -79,6 +81,8 @@ describe("validateIndividual", () => {
       deathDatePrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
+      portraitKey: null,
+      portraitThumbKey: null,
     });
 
     expect(fields).toEqual({
@@ -98,6 +102,8 @@ describe("validateIndividual", () => {
       deathDateUpperPrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
+      portraitKey: null,
+      portraitThumbKey: null,
     });
   });
 
@@ -143,6 +149,8 @@ describe("validateIndividual", () => {
         birthPlace: "   ",
         deathPlace: "",
         notes: "",
+        portraitKey: null,
+        portraitThumbKey: null,
       });
 
       expect(fields.surname).toBeNull();
@@ -635,6 +643,8 @@ describe("individualInputFromFormData", () => {
       deathDateUpperPrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
+      portraitKey: null,
+      portraitThumbKey: null,
     });
   });
 

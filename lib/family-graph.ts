@@ -38,6 +38,19 @@ export type GraphPerson = {
   deathDateUpperPrecision: DatePrecision;
   deathPlace: string | null;
   notes: string | null;
+  /**
+   * The person's portrait and its thumbnail, as storage keys (E5-T4,
+   * `YEO-44`). Both nullable and separately so — `lib/portrait.ts` explains
+   * why the pair can disagree and which one a node loads.
+   *
+   * Carried on the graph rather than fetched per node, because the graph is
+   * how the canvas already learns everything else about a person and a
+   * portrait is two short strings. The *images* are not carried: what crosses
+   * the wire here is the key, and the browser resolves it to a fresh signed
+   * URL by asking `GET /api/images/…` for the ones it actually draws.
+   */
+  portraitKey: string | null;
+  portraitThumbKey: string | null;
   pageId: string | null;
 };
 
@@ -137,6 +150,8 @@ export async function getFamilyGraph(
       deathDateUpperPrecision: p.deathDateUpperPrecision,
       deathPlace: p.deathPlace,
       notes: p.notes,
+      portraitKey: p.portraitKey,
+      portraitThumbKey: p.portraitThumbKey,
       pageId: p.pageId,
     })),
     unions: unions.map((u) => ({

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type Ref } from "react";
 
+import { PersonPortrait } from "@/components/PersonPortrait";
 import { useDismissableSurface } from "@/components/surface-stack";
 import type {
   ChildLink,
@@ -176,6 +177,31 @@ export function PersonPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {/*
+          The portrait (E5-T4, `YEO-44`), and the **full-resolution** one:
+          this is the one place in the application somebody has asked to look
+          at a particular person, and there is exactly one image on screen.
+          The tree's thumbnail exists because a canvas draws hundreds at once,
+          which is not this.
+
+          Rendered only when there is one, unlike the tree node — and that
+          asymmetry is deliberate rather than an oversight. A node reserves
+          the box whether or not it is filled, because the layout must not
+          move; the panel is ordinary flow, so nothing depends on its height,
+          and a large empty silhouette on the majority of people who have no
+          photograph would be noise offering something this read-only panel
+          cannot do anything about.
+        */}
+        {detail.portraitSrc ? (
+          <div className="mb-3">
+            <PersonPortrait
+              src={detail.portraitSrc}
+              name={detail.name}
+              size="panel"
+            />
+          </div>
+        ) : null}
+
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-caption">
           <Fact term="Born" event={detail.birth} />
           <Fact term="Died" event={detail.death} />

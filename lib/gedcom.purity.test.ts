@@ -80,6 +80,29 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * is the half that decides, so a `@/db` import in it would be the same defect
  * as one in the parser, arriving one module further along.
  */
+/**
+ * ## The three modules that joined every closure in E5-T4 (`YEO-44`)
+ *
+ * `lib/portrait.ts`, `lib/storage-key.ts` and `lib/image-type.ts` appear in
+ * all five lists below, and they arrived through one edge: a person's record
+ * gained a portrait, so `lib/individual-input.ts` — which every entry point
+ * here already reaches — has to be able to say whether a submitted portrait
+ * key is one this application could have written.
+ *
+ * They belong on this side of the line, and the test still means what it
+ * meant. All three are pure: no package, no `@/db`, no DOM. What a legal
+ * storage key looks like is a fact about text, decided by
+ * `assertSafeStorageKey` with a regular expression, and the GEDCOM path
+ * exercises it exactly the way every other path does — by never producing a
+ * portrait key and having the validator confirm that null is fine.
+ *
+ * What was deliberately kept *out* is the half that makes a portrait rather
+ * than describes one. `lib/portrait-image.ts` holds the sizes, the caps and
+ * the encoding, and it imports `lib/image-upload.ts`, which imports
+ * `lib/image-metadata.ts` — an Exif scrubber, which has no business being
+ * reachable from a text-file parser. That split exists because of this test;
+ * see the docblock on `lib/portrait-image.ts`, which records it.
+ */
 const ENTRIES = {
   parser: join("lib", "gedcom.ts"),
   mapper: join("lib", "gedcom-map.ts"),
@@ -99,8 +122,40 @@ const ALLOWED: ReadonlySet<string> = new Set([]);
 /** `from "x"`, `import "x"`, and the re-export form `export … from "x"`. */
 const SPECIFIER = /\bfrom\s+"([^"]+)"|\bimport\s+"([^"]+)"/g;
 
+/**
+ * A string literal, or a comment — in that order, which is the whole trick.
+ *
+ * The alternation is tried left to right at each position, so a `//` or a
+ * `"quoted phrase"` *inside* a string is consumed as part of that string and
+ * survives, while a comment is matched only where one actually starts. That
+ * is what lets {@link withoutComments} below delete comments without having to
+ * parse TypeScript.
+ */
+const LITERAL_OR_COMMENT =
+  /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+
+/**
+ * `source` with its comments removed.
+ *
+ * This exists because the scanner below reads with a regular expression, and
+ * a regular expression cannot tell code from prose. `lib/storage-key.ts`
+ * contains the sentence *"a caller that ever does want to distinguish this
+ * from \"the store was unreachable\" can"* — which is `from "…"`, and was
+ * duly reported as an imported package the first time that module entered
+ * this closure (E5-T4, `YEO-44`).
+ *
+ * Worth fixing here rather than rewording the docblock over there. A test
+ * that fails on English is a test that will be silenced the third time
+ * somebody hits it, and the sentence it objected to was not wrong.
+ */
+function withoutComments(source: string): string {
+  return source.replace(LITERAL_OR_COMMENT, (match) =>
+    match.startsWith("/") ? "" : match,
+  );
+}
+
 function read(file: string): string {
-  return readFileSync(join(repoRoot, file), "utf8");
+  return withoutComments(readFileSync(join(repoRoot, file), "utf8"));
 }
 
 function specifiers(source: string): string[] {
@@ -160,6 +215,9 @@ describe("the parser's import closure", () => {
         join("lib", "gedcom-report.ts"),
         join("lib", "gedcom.ts"),
         join("lib", "individual-input.ts"),
+        join("lib", "image-type.ts"),
+        join("lib", "portrait.ts"),
+        join("lib", "storage-key.ts"),
         join("lib", "parse-date.ts"),
       ].sort(),
     );
@@ -207,6 +265,9 @@ describe("the mapper's import closure", () => {
         join("lib", "gedcom-report.ts"),
         join("lib", "gedcom.ts"),
         join("lib", "individual-input.ts"),
+        join("lib", "image-type.ts"),
+        join("lib", "portrait.ts"),
+        join("lib", "storage-key.ts"),
         join("lib", "parse-date.ts"),
         join("lib", "row-id.ts"),
         join("lib", "union-input.ts"),
@@ -260,6 +321,9 @@ describe("the preview's import closure", () => {
         join("lib", "gedcom.ts"),
         join("lib", "import-preview.ts"),
         join("lib", "individual-input.ts"),
+        join("lib", "image-type.ts"),
+        join("lib", "portrait.ts"),
+        join("lib", "storage-key.ts"),
         join("lib", "parse-date.ts"),
         join("lib", "person-format.ts"),
         join("lib", "row-id.ts"),
@@ -311,6 +375,9 @@ describe("the import's row-building closure", () => {
         join("lib", "gedcom.ts"),
         join("lib", "import-rows.ts"),
         join("lib", "individual-input.ts"),
+        join("lib", "image-type.ts"),
+        join("lib", "portrait.ts"),
+        join("lib", "storage-key.ts"),
         join("lib", "parse-date.ts"),
         join("lib", "row-id.ts"),
         join("lib", "union-input.ts"),
@@ -354,6 +421,9 @@ describe("the exporter's import closure", () => {
         join("lib", "gedcom-report.ts"),
         join("lib", "gedcom.ts"),
         join("lib", "individual-input.ts"),
+        join("lib", "image-type.ts"),
+        join("lib", "portrait.ts"),
+        join("lib", "storage-key.ts"),
         join("lib", "parse-date.ts"),
         join("lib", "row-id.ts"),
         join("lib", "union-input.ts"),

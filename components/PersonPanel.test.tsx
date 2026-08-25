@@ -28,6 +28,7 @@ function detail(overrides: Partial<PersonDetail> = {}): PersonDetail {
     birth: { date: "5 May 1910", place: "Cork" },
     death: null,
     notes: null,
+    portraitSrc: null,
     pageId: null,
     spouses: [],
     children: [],

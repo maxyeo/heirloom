@@ -57,6 +57,13 @@
       "when": 1787686546499,
       "tag": "0007_hatnote",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787691581684,
+      "tag": "0008_portrait",
+      "breakpoints": true
     }
   ]
 }
