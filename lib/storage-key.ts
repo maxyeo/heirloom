@@ -179,6 +179,33 @@ export function newImageKey(type: ImageType): string {
 }
 
 /**
+ * Whether `key` names something this application stored as an image.
+ *
+ * Two checks, not one: inside the `images/` namespace, and safe as a storage
+ * key. The namespace half is what keeps a stored key from addressing anything
+ * else that ever shares the store, and the safety half is the rules above,
+ * asked as a question rather than as an assertion.
+ *
+ * A predicate rather than a throw, unlike {@link assertSafeStorageKey}, and
+ * the difference is who is asking. That function checks a key this
+ * application just minted, where a failure is a bug worth a stack trace. This
+ * one checks a value that arrived from somewhere else — a form submission
+ * (`lib/portrait.ts`), or a listing of the store itself (`E5-T5`'s orphan
+ * sweep, which uses it to leave alone anything it cannot recognise rather
+ * than deleting it).
+ */
+export function isStoredImageKey(key: string): boolean {
+  if (!key.startsWith(IMAGE_KEY_PREFIX)) return false;
+  try {
+    assertSafeStorageKey(key);
+    return true;
+  } catch (error) {
+    if (error instanceof UnsafeStorageKeyError) return false;
+    throw error;
+  }
+}
+
+/**
  * Where the image route lives.
  *
  * The durable reference an entry body carries is a site-relative path of this
@@ -238,13 +265,13 @@ export function imageKeyFromPath(segments: readonly string[]): string {
  * src>` in an entry body refers to (E7-T4, `YEO-54`).
  *
  * The full export has to put the family's photographs in the archive, and
- * `lib/storage.ts` deliberately has no `list` — the seam is exactly
- * `put`/`get`/`delete`, and widening it to enumerate a store would narrow the
- * set of hosts that can implement it (docs/architecture.md#the-storage-seam).
- * So the set of images an archive should carry is read off the *references*:
- * every `src` in every entry body and every revision of one. That is also the
- * question E5-T5's orphan sweep asks in reverse — "referenced by no revision"
- * — so the two agree about what "referenced" means by sharing this function.
+ * what belongs in it is what the wiki *refers to* rather than whatever the
+ * store happens to hold — an abandoned upload is not part of the family's
+ * history, it is what E5-T5 reclaims. So the set of images an archive should
+ * carry is read off the references: every `src` in every entry body and every
+ * revision of one. That is also the question E5-T5's orphan sweep asks in
+ * reverse — "referenced by no revision" — so the two agree about what
+ * "referenced" means by sharing this function.
  *
  * Deliberately strict, and strict in the same directions
  * `entrySlugFromHref` is:

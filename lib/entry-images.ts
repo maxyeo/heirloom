@@ -6,17 +6,21 @@ import { imageKeyFromHref } from "@/lib/storage-key";
  *
  * ## Why the archive asks the bodies and not the store
  *
- * `lib/storage.ts` exports exactly `put`, `get` and `delete`, and
- * docs/architecture.md#the-storage-seam is explicit that the moment a fourth
- * function appears — `list` among them — the set of hosts that can implement
- * the seam narrows to the ones that agree with Vercel. So there is no
- * enumeration of the store to export from, and there should not be one.
+ * Not because it cannot ask the store — `lib/storage.ts` grew a `list` for
+ * E5-T5, which needs to enumerate objects because an orphan is by definition
+ * one no row names. The archive has the opposite problem and the enumeration
+ * would be the wrong answer to it: what belongs in a backup is what the wiki
+ * *refers to*, and an object sitting in the store that nothing points at is
+ * precisely what the sweep exists to delete. An export built from a listing
+ * would faithfully carry the abandoned uploads and would still be wrong the
+ * moment the store held anything that was not an entry's image.
  *
- * What there is instead is a *reference graph*: an image is in the wiki
- * because some body points at it. That is the same question E5-T5's orphan
- * sweep asks from the other side ("referenced by no revision"), which is why
- * both go through `imageKeyFromHref` rather than each matching `/api/images/`
- * for themselves.
+ * So this is a *reference graph*: an image is in the wiki because some body
+ * points at it. That is the same question E5-T5's orphan sweep asks from the
+ * other side ("referenced by no revision"), which is why both go through
+ * `imageKeyFromHref` rather than each matching `/api/images/` for themselves,
+ * and why the union of the two kinds of reference lives in one place
+ * (`lib/image-references.ts`).
  *
  * ## Revisions count, not just the current body
  *

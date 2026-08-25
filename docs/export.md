@@ -197,12 +197,16 @@ for exactly this shape of work — and the cost of exhausting that pool is the
 whole site, in exchange for protection against a family wiki's rows changing
 during a few milliseconds of `select`s.
 
-**The photographs are found by asking the rows, not the store.**
-`lib/storage.ts` exports exactly `put`, `get` and `delete`, and
-[the storage seam](architecture.md#the-storage-seam) is explicit that adding a
-`list` would narrow the set of hosts that can implement it. So the archive
-carries the images something in the database still refers to, and since
-`E5-T4` there are **two** kinds of reference:
+**The photographs are found by asking the rows, not the store.** Not because
+the store cannot be asked — `lib/storage.ts` grew a `list` for `E5-T5`, which
+has to enumerate objects because an orphan is by definition one no row names
+([the storage seam](architecture.md#the-fourth-function-and-why-this-section-used-to-forbid-it)).
+It is because a listing is the wrong question here: what belongs in a backup
+is what the wiki _refers to_, and an object nothing points at is precisely
+what the sweep exists to delete. An archive built from a listing would
+faithfully carry every abandoned upload. So the archive carries the images
+something in the database still refers to, and since `E5-T4` there are **two**
+kinds of reference:
 
 - **Entry bodies**, where a reference is an `<img src>` inside authored HTML
   and has to be parsed back out (`lib/entry-images.ts`). Both `pages` and
@@ -224,7 +228,11 @@ that file does not watch.
 
 E5-T5's orphan sweep asks this question in reverse — "referenced by no row" —
 and it has to consult both sources for the same reason. A sweep that knew only
-about bodies would delete every portrait in the wiki.
+about bodies would delete every portrait in the wiki. The union of the two
+kinds now lives in `lib/image-references.ts`, which both this scan and the
+sweep go through, so that the export and the cleanup cannot come to disagree
+about what "referenced" means — the disagreement would show up as holes in a
+backup that nobody notices until the restore.
 
 The entry-body half of the scan was written before there was anything to
 find: `img` reached [the sanitiser's allowlist](architecture.md#entry-html)
