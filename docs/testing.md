@@ -272,6 +272,27 @@ holding characters a selector would have to escape), and it parses
 should read as a text editor reads as an ordinary div. The contenteditable test
 defines the property itself, and says why.
 
+**A third, and the one that throws rather than lies.** jsdom implements no
+`document.elementFromPoint`, and ProseMirror's `posAtCoords` — how a dropped
+photograph finds the place it was aimed at — calls it unguarded.
+`components/EntryEditor.test.tsx` defines it as `() => null` for E5-T3's tests,
+which is a truthful stub rather than a convenient one: there is no layout in
+jsdom, so there is genuinely no element under a coordinate, and `null` is what
+a real browser answers for a drop outside the text.
+
+**`XMLHttpRequest` is a seam like `fetch`.** The same file stubs it, for the
+same reason `SearchBox` stubs `fetch` — "the network is not a module boundary,
+it is the boundary itself" — and it is XHR rather than `fetch` because the
+upload path has to report how far the request body has got, which `fetch`
+cannot do. The fake is thirty lines: it records the method, the URL and the
+`FormData`, and exposes `progress()` and `respond()` so a test can hold an
+upload half-finished and assert on the bar. Everything on this side of it is
+real, including the queue that serialises a batch and the editor the picture
+lands in. What is _not_ stubbed is the canvas: the resize path is only reached
+by a file over the 4 MB cap, so the decisions around it (`needsDownscale`,
+`scaleToFit`, the quality ladder) are asserted in `lib/image-insert.test.ts`
+with no browser at all, which is where they belong.
+
 **A form with more than one button needs the submitter asserted.**
 `components/UnionOrder.test.tsx` (E3-T7) is the case: one form carries an up
 and a down button for every union, and which one was pressed travels in that

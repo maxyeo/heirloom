@@ -449,6 +449,29 @@
       image-orientation: from-image;
     }
 
+    /* A photograph the editor's image button put in the entry (E5-T3).
+     *
+     * A direct child, which is what distinguishes it from the one inside a
+     * `figure` below: the sanitiser's allowlist has no `figure` in it and no
+     * `width` attribute either, so a picture in an entry body is a bare
+     * `<img>` at the top level of the document and this is the only place it
+     * is given a size. A thumbnail's own rules are further down and unchanged.
+     *
+     * `max-width` rather than `width`, so a small scan is clamped but never
+     * stretched, and `height: auto` so the ratio survives the clamp.
+     * `display: block` because the node is a block in the document
+     * (`EntryImage` in `lib/editor-extensions.ts`); left inline it would sit
+     * on a text baseline with a descender's worth of gap beneath it. The
+     * margin is the paragraph's, so a picture between two paragraphs is
+     * spaced like one. The editing surface wears `.wiki-body` as well, so
+     * what the author sees while placing a photograph is where it lands. */
+    > img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin-block: 0 0.75rem;
+    }
+
     /* The framed thumbnail. Floats right by default, the way
      * `[[File:…|thumb]]` does; `.thumb-left` is the other side. */
     figure {

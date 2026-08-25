@@ -1,3 +1,4 @@
+import { IMAGE_UPLOAD_FIELD, type UploadedImage } from "@/lib/image-endpoint";
 import { MAX_REQUEST_BYTES, prepareUpload } from "@/lib/image-upload";
 import { requireSessionOr401 } from "@/lib/session";
 import * as storage from "@/lib/storage";
@@ -60,10 +61,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const file = form.get("file");
+  const file = form.get(IMAGE_UPLOAD_FIELD);
   if (!(file instanceof Blob)) {
     return Response.json(
-      { error: "Expected a file in a field named 'file'." },
+      { error: `Expected a file in a field named '${IMAGE_UPLOAD_FIELD}'.` },
       { status: 400 },
     );
   }
@@ -97,12 +98,17 @@ export async function POST(request: Request) {
     contentType: prepared.contentType,
   });
 
-  return Response.json(
-    {
-      key: stored.key,
-      path: imagePath(stored.key),
-      contentType: prepared.contentType,
-    },
-    { status: 201 },
-  );
+  /**
+   * Annotated rather than inferred, so that this handler and the browser that
+   * reads it cannot drift: `UploadedImage` is the shape E5-T3's image button
+   * parses, and a field renamed here without being renamed there would
+   * otherwise typecheck on both sides and be wrong in the middle.
+   */
+  const uploaded: UploadedImage = {
+    key: stored.key,
+    path: imagePath(stored.key),
+    contentType: prepared.contentType,
+  };
+
+  return Response.json(uploaded, { status: 201 });
 }

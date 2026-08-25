@@ -206,10 +206,10 @@ carries the images that some body — current or historical — refers to. Both
 photograph taken out of an entry last year is still in the version that had
 it.
 
-One consequence of that is worth stating plainly rather than discovering:
-**today the archive contains no images at all**, because `img` is not yet in
-[the sanitiser's allowlist](architecture.md#entry-html) — E5-T3 enables the
-editor's image button and widens it. The scan is written against the reference
-shape the architecture fixes rather than against today's emptiness, so the
-export starts carrying photographs on the day entries start having them,
-rather than quietly not doing so until somebody checks.
+The scan was written before there was anything to find: `img` reached
+[the sanitiser's allowlist](architecture.md#entry-html) with E5-T3, which
+enabled the editor's image button, and until then no stored body contained
+one. Writing it against the reference shape the architecture fixes rather than
+against that emptiness is what made the archive start carrying photographs on
+the day entries started having them, rather than quietly not doing so until
+somebody checked.

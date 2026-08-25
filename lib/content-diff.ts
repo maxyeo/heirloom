@@ -1,10 +1,12 @@
 import {
+  attributeValue,
   collapseWhitespace,
   decodeHtmlEscapes,
   HTML_TOKEN_PATTERN,
 } from "@/lib/html-text";
 import { hatnoteText, normaliseHatnote } from "@/lib/hatnote";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { imageKeyFromHref } from "@/lib/storage-key";
 
 /**
  * The diff between two revisions of an entry (E1-T6, `YEO-20`), as plain
@@ -61,9 +63,24 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
  * report as the edit it is. Without it, a hatnote-only save would write a
  * revision and then diff as "No change to the rendered content", which is the
  * worst of both answers.
+ *
+ * `image` is here for exactly that argument, one ticket later (E5-T3,
+ * `YEO-43`). A photograph is the first thing an author can put in an entry
+ * that a reader sees and that carries **no text at all**, so every other kind
+ * here would have swallowed it: an `<img>` folded into the paragraph around
+ * it contributes an empty string, and adding, removing or swapping one would
+ * have diffed as "No change to the rendered content" — the worst of both
+ * answers again, and this time about the one piece of content nobody can
+ * retype from memory.
  */
 export type ContentBlockKind =
-  "paragraph" | "heading2" | "heading3" | "heading4" | "listItem" | "hatnote";
+  | "paragraph"
+  | "heading2"
+  | "heading3"
+  | "heading4"
+  | "listItem"
+  | "hatnote"
+  | "image";
 
 /**
  * One block of rendered content: what kind of thing it is, and the text a
@@ -76,6 +93,24 @@ export type ContentBlockKind =
 export type ContentBlock = {
   kind: ContentBlockKind;
   text: string;
+  /**
+   * Which photograph, as its storage key — `image` blocks only, and absent on
+   * every other kind.
+   *
+   * The model is widened rather than made to approximate, because the two
+   * fields above cannot identify a picture. A photograph's `text` is its alt
+   * text, which is what a reader hears; it is routinely empty, and it is very
+   * often *the same* across two different pictures in one entry. Keying
+   * identity on that alone would make replacing one photograph with another
+   * diff as unchanged — the failure this kind exists to prevent, rather than a
+   * smaller version of it.
+   *
+   * The key rather than the `src` path: it is the durable handle
+   * (docs/architecture.md#the-storage-seam), and it is what E5-T5's sweep and
+   * the full export reason about, so a diff row and an archive entry name the
+   * same object.
+   */
+  source?: string;
 };
 
 /**
@@ -211,8 +246,9 @@ export function extractContentBlocks(
     // string, so an empty slot is always an alternative that did not fire.
     const closing = token[1];
     const tagName = token[2];
-    // Group 3 is the attribute run, which this scanner has no use for; the
-    // text a reader sees is group 4. See `HTML_TOKEN_PATTERN`.
+    // Group 3 is the attribute run, which only the `img` branch below reads;
+    // the text a reader sees is group 4. See `HTML_TOKEN_PATTERN`.
+    const attributes = token[3];
     const text = token[4];
 
     if (text) {
@@ -229,6 +265,46 @@ export function extractContentBlocks(
     // a gap between words, so that is what it contributes.
     if (tag === "br") {
       buffer += " ";
+      continue;
+    }
+
+    /**
+     * A photograph (E5-T3, `YEO-43`).
+     *
+     * Handled here rather than through `BLOCK_TAGS` because it is neither of
+     * the two shapes that table describes. It is **void** — there is no
+     * `</img>` to close, so it must never be pushed onto `open` — and it has
+     * **no text**, so `flush()` would drop it: that function discards an empty
+     * block on purpose, which is right for TipTap's `<p></p>` and exactly
+     * wrong for a picture.
+     *
+     * So the buffer is flushed first, to close off whatever text preceded the
+     * picture, and then the block is pushed directly.
+     *
+     * An `img` whose `src` is not one of ours contributes nothing. That is not
+     * a case a stored body can reach — `sanitizeHtml` above has already
+     * dropped any such tag whole — but the check is what makes that true here
+     * rather than assumed, and it is the same `imageKeyFromHref` the export
+     * and the sanitiser ask.
+     */
+    if (tag === "img") {
+      if (closing) continue;
+      flush();
+
+      const source = imageKeyFromHref(attributeValue(attributes, "src") ?? "");
+      if (source === null) continue;
+
+      blocks.push({
+        kind: "image",
+        // The alt text, which is what a reader with a screen reader hears and
+        // therefore the closest thing a picture has to text. Decoded and
+        // collapsed like any other, and `""` when there is none — `source` is
+        // what identifies the block, so an empty one is not a lost row.
+        text: collapseWhitespace(
+          decodeHtmlEscapes(attributeValue(attributes, "alt") ?? ""),
+        ),
+        source,
+      });
       continue;
     }
 
@@ -268,7 +344,10 @@ export function extractContentBlocks(
  * collide with another's.
  */
 function blockKey(block: ContentBlock): string {
-  return `${block.kind}\u0000${block.text}`;
+  // Three parts now. `source` is a storage key — alphanumerics, `._-` and
+  // slashes, by `assertSafeStorageKey` — so it cannot hold the separator
+  // either, and it is the empty string for every kind but `image`.
+  return `${block.kind}\u0000${block.text}\u0000${block.source ?? ""}`;
 }
 
 /**
@@ -574,7 +653,32 @@ export function describeBlockKind(kind: ContentBlockKind): string {
       return "List item";
     case "hatnote":
       return "Hatnote";
+    case "image":
+      return "Photograph";
   }
+}
+
+/**
+ * What to render as a row's own text.
+ *
+ * For everything but a photograph this is the block's text unchanged, and the
+ * function exists for the one case where it cannot be: an `image` block whose
+ * `alt` is empty has nothing to show, and an *unchanged* row draws no kind
+ * label either — so without this a picture that had never been described would
+ * be a completely blank line in the diff, which reads as a bug rather than as
+ * a photograph.
+ *
+ * Here rather than in the route for the reason `describeBlockKind` is here: it
+ * is the other half of `ContentBlockKind`, and a kind added without a way to
+ * render it should be a type error in one place instead of an empty row
+ * discovered on a page.
+ */
+export function contentBlockText(block: ContentBlock): string {
+  if (block.kind !== "image") return block.text;
+  // Not the storage key, which is a UUID and tells a reader nothing. That a
+  // picture is there, and that nobody has described it, is the whole of what
+  // can honestly be said.
+  return block.text || "Photograph with no description";
 }
 
 /**

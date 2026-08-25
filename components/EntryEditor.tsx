@@ -11,11 +11,13 @@ import {
   useState,
 } from "react";
 
+import { ImageUploadError, uploadImage } from "@/components/image-upload";
 import {
   BLOCK_STYLES,
   EDITOR_INPUT_OPTIONS,
   HATNOTE_TOOLBAR_ITEMS,
   HEADING_LEVELS,
+  IMAGE_NODE,
   TOOLBAR_ITEMS,
   createEntryExtensions,
   createHatnoteExtensions,
@@ -25,6 +27,11 @@ import {
   type ToolbarItemId,
 } from "@/lib/editor-extensions";
 import { entryHref, entrySlugFromHref, searchEntries } from "@/lib/entry-links";
+import {
+  IMAGE_ACCEPT,
+  altTextFromFilename,
+  picturesAmong,
+} from "@/lib/image-insert";
 import type { TitledEntry } from "@/lib/page-index";
 import { headingNodePosition } from "@/lib/section-edit";
 
@@ -95,6 +102,23 @@ import { headingNodePosition } from "@/lib/section-edit";
  *
  * See `VARIANTS` below for what each one is, and `lib/hatnote.ts` for why the
  * hatnote's stored form has room for text and links and nothing else.
+ *
+ * ## Photographs (E5-T3, `YEO-43`)
+ *
+ * The image button, a drop target and a paste handler, all reaching the same
+ * upload. There is **no URL field**, which is the acceptance criterion stated
+ * as an absence: the author picks a file the way they would in any other
+ * program, and what goes into the body is a site-relative path of this
+ * application's own — never a storage URL, which expires in fifteen minutes
+ * (docs/architecture.md#the-storage-seam).
+ *
+ * The work is split three ways, and the split is the same one the rest of this
+ * component follows. What is a *decision* — which files are pictures, what
+ * `alt` should say, when a photograph has to be shrunk — is in
+ * `lib/image-insert.ts` and tested with no DOM. What needs a browser — a
+ * canvas, an `XMLHttpRequest` whose progress can be watched — is in
+ * `components/image-upload.ts`. What is left here is the queue, the strip that
+ * reports on it, and the insert.
  */
 export interface EntryEditorProps {
   /** Existing body HTML to open with. Sanitised server-side before it gets here. */
@@ -208,6 +232,45 @@ const VARIANTS: Readonly<
  */
 const NO_ENTRIES: readonly TitledEntry[] = [];
 
+/**
+ * What the strip under the toolbar is saying, or `null` for "nothing is
+ * happening" (E5-T3, `YEO-43`).
+ *
+ * One state for the whole editor rather than one per picture. An author who
+ * drops four photographs at once is watching one thing happen four times, not
+ * four things at once — the uploads are deliberately serialised, because four
+ * parallel 4 MB posts on a domestic connection make all four slower and the
+ * progress bar meaningless.
+ */
+type UploadState =
+  | {
+      status: "uploading";
+      /** 0–100, or `null` when the browser cannot measure the body. */
+      percent: number | null;
+      /** Which picture of how many, both 1-based, for "2 of 4". */
+      position: number;
+      total: number;
+    }
+  | { status: "error"; message: string }
+  | null;
+
+/** One queued picture, and where it should land. */
+interface QueuedPicture {
+  file: File;
+  /**
+   * The document position to insert at, or `null` for "wherever the cursor
+   * is".
+   *
+   * Only ever set for the first file of a drop, which is the only one with a
+   * place it was aimed at; the rest go immediately after the one before, which
+   * the drain loop tracks for itself. A drop that arrives while an earlier
+   * batch is still uploading keeps its position and has it clamped, for the
+   * reason the clamp exists: by the time it is reached the document may have
+   * changed underneath it.
+   */
+  at: number | null;
+}
+
 export function EntryEditor({
   initialHtml = "",
   name,
@@ -222,6 +285,21 @@ export function EntryEditor({
   const { createExtensions, items, surfaceClass, multiline } =
     VARIANTS[variant];
 
+  /**
+   * Whether this editor takes pictures at all, read off the toolbar rather
+   * than off the variant name.
+   *
+   * The hatnote has no image button *and* no image node — see
+   * `createHatnoteExtensions` — so a drop handler there would upload a
+   * photograph and then fail to insert it. Asking the toolbar keeps the two
+   * facts from having to be remembered together: a variant that loses the
+   * button loses the drop target in the same edit.
+   */
+  const acceptsPictures = items.some((item) => item.id === "image");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [upload, setUpload] = useState<UploadState>(null);
+
   // `useEditor` builds the editor once and does not rebuild it when props
   // change, so reading `onChange` directly inside `onUpdate` would pin the
   // first render's copy forever. The ref is the standard way round that.
@@ -233,6 +311,16 @@ export function EntryEditor({
   // Built once and kept. Tiptap compares extension arrays by reference, so a
   // fresh array on every render makes it re-apply options it already has.
   const [extensions] = useState(createExtensions);
+
+  /**
+   * The drop and paste handlers below are captured once, when the editor is
+   * built — the same reason `onChangeRef` exists — and at that moment there is
+   * no editor for them to insert into. So they call through a ref, which the
+   * effect further down keeps pointed at the current uploader.
+   */
+  const addPicturesRef = useRef<(pictures: readonly QueuedPicture[]) => void>(
+    () => {},
+  );
 
   const editor = useEditor({
     ...EDITOR_INPUT_OPTIONS,
@@ -276,6 +364,70 @@ export function EntryEditor({
           // impossible to type a name into in exactly the scripts
           // `lib/entry-slug.ts` went out of its way to keep addressable.
           (_view, event) => event.key === "Enter" && !event.isComposing,
+
+      /**
+       * Dragging a photograph out of a folder and onto the entry (E5-T3,
+       * `YEO-43`).
+       *
+       * `moved` is ProseMirror telling us this is a drag that started inside
+       * this document — the author moving the picture they inserted a moment
+       * ago — and handling it would upload a copy of nothing and lose the
+       * move. Letting it through is what makes `draggable` on the image node
+       * work.
+       *
+       * Returning `true` is what stops ProseMirror's own drop handling, which
+       * for a file drop would paste the filename in as text. It is returned
+       * only when there is actually a picture in the payload, so dragging in a
+       * chunk of HTML or a `.ged` still does whatever it did before.
+       */
+      handleDrop: !acceptsPictures
+        ? undefined
+        : (view, event, _slice, moved) => {
+            if (moved) return false;
+
+            const files = picturesAmong([...(event.dataTransfer?.files ?? [])]);
+            if (files.length === 0) return false;
+
+            event.preventDefault();
+            // Where the pointer actually was, so a picture lands where it was
+            // aimed rather than wherever the cursor happened to be left. A
+            // drop outside any text — the padding below the last paragraph —
+            // gives no position, and `null` means "at the cursor".
+            const at =
+              view.posAtCoords({ left: event.clientX, top: event.clientY })
+                ?.pos ?? null;
+
+            addPicturesRef.current(
+              files.map((file, index) => ({
+                file,
+                at: index === 0 ? at : null,
+              })),
+            );
+            return true;
+          },
+
+      /**
+       * Pasting one (⌘V from Preview, from a screenshot, from a chat window).
+       *
+       * `clipboardData.files` rather than `items`: a paste from a word
+       * processor carries the picture *and* an `text/html` flavour of the
+       * paragraph around it, and taking the files is what keeps this from
+       * firing on ordinary formatted text. When there is no picture in the
+       * payload this returns `false` and the Link extension's paste handler
+       * and ProseMirror's own HTML parsing run exactly as before.
+       */
+      handlePaste: !acceptsPictures
+        ? undefined
+        : (_view, event) => {
+            const files = picturesAmong([
+              ...(event.clipboardData?.files ?? []),
+            ]);
+            if (files.length === 0) return false;
+
+            event.preventDefault();
+            addPicturesRef.current(files.map((file) => ({ file, at: null })));
+            return true;
+          },
     },
     onUpdate: ({ editor: updated }) => {
       const html = updated.getHTML();
@@ -343,10 +495,181 @@ export function EntryEditor({
       heading.scrollIntoView({ block: "start" });
   }, [editor, initialHeadingIndex]);
 
+  /**
+   * The pictures waiting to be uploaded, and whether the loop that empties the
+   * queue is already running (E5-T3, `YEO-43`).
+   *
+   * Refs rather than state, because nothing renders from them and a queue in
+   * state would re-render the editor's container on every push — the same
+   * argument `onUpdate` makes about writing the body straight to the hidden
+   * input. What renders is {@link UploadState}, which is one line of status
+   * rather than a list.
+   *
+   * The loop is what makes uploads **serial**. Four 4 MB posts at once on a
+   * domestic uplink finish no sooner together than one after another, and they
+   * turn a progress bar into a number that means nothing; one at a time is
+   * also the only shape in which "picture 2 of 4" is true.
+   */
+  const queueRef = useRef<QueuedPicture[]>([]);
+  const drainingRef = useRef(false);
+
+  /**
+   * Aborts every upload still in flight when the editor goes away.
+   *
+   * One controller for the editor's whole life rather than one per file: the
+   * only thing that ever aborts is the unmount, and an author navigating away
+   * mid-upload should leave nothing running behind them.
+   */
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return () => controller.abort();
+  }, []);
+
+  const drain = useCallback(async (): Promise<void> => {
+    // Nothing to do is checked before the flag is taken, so that a call with
+    // an empty queue cannot clear a refusal the author has not read yet — the
+    // `setUpload(null)` at the end of the loop below would otherwise fire on
+    // a run that uploaded nothing.
+    if (queueRef.current.length === 0) return;
+    if (drainingRef.current || !editor) return;
+    drainingRef.current = true;
+
+    let done = 0;
+    /**
+     * Where the *next* picture of this run goes, once the first has landed.
+     *
+     * Tracked rather than re-read from the selection, and tracked as a number
+     * rather than left to the cursor, because inserting an atom leaves it
+     * *selected* — so a second `insertContent` would replace the first
+     * photograph with the second and look, in the document, exactly like only
+     * one of them having uploaded.
+     */
+    let after: number | null = null;
+
+    try {
+      for (;;) {
+        const next = queueRef.current.shift();
+        if (next === undefined) break;
+
+        const position = done + 1;
+        /**
+         * How many there are altogether, asked of the queue each time rather
+         * than fixed when the batch started: a picture dropped while an
+         * earlier one is still going up is counted into the "of 4" the author
+         * is already reading, rather than restarting the count when the loop
+         * reaches it.
+         */
+        const total = () => position + queueRef.current.length;
+
+        setUpload({
+          status: "uploading",
+          percent: 0,
+          position,
+          total: total(),
+        });
+
+        const uploaded = await uploadImage(next.file, {
+          signal: abortRef.current?.signal,
+          onProgress: (percent) =>
+            setUpload((current) =>
+              current?.status === "uploading"
+                ? { status: "uploading", percent, position, total: total() }
+                : current,
+            ),
+        });
+
+        const content = {
+          type: IMAGE_NODE,
+          attrs: {
+            src: uploaded.path,
+            alt: altTextFromFilename(next.file.name),
+          },
+        };
+
+        // Clamped, because a dropped position was measured against the
+        // document as it was when the file landed on it and an edit — or an
+        // undo — may have shortened it since. An out-of-range position is a
+        // throw, not a no-op.
+        const at = Math.min(
+          next.at ?? after ?? editor.state.selection.to,
+          editor.state.doc.content.size,
+        );
+
+        const before = editor.state.doc.content.size;
+        editor.chain().focus().insertContentAt(at, content).run();
+        // Exactly past what was just inserted, however much that turned out
+        // to be: dropping a block into the middle of a paragraph splits it,
+        // so the picture's own size is not the whole of the difference.
+        after = at + (editor.state.doc.content.size - before);
+
+        done += 1;
+      }
+
+      setUpload(null);
+    } catch (error) {
+      // An abort is the editor unmounting, not a failure, and there is
+      // nothing left to render it into.
+      if (error instanceof DOMException && error.name === "AbortError") return;
+
+      /**
+       * One refusal ends the batch, and the rest of the queue is dropped.
+       *
+       * Every reason an upload is refused — too large, not one of the four
+       * formats, a session that expired, the connection — is a reason the
+       * next four will be refused too, so carrying on would show the same
+       * sentence four times and put the author four failures away from
+       * reading it. What is already inserted stays inserted.
+       */
+      queueRef.current = [];
+      setUpload({
+        status: "error",
+        message:
+          error instanceof ImageUploadError
+            ? error.message
+            : "That picture could not be added. Try again.",
+      });
+    } finally {
+      drainingRef.current = false;
+    }
+  }, [editor]);
+
+  const addPictures = useCallback(
+    (pictures: readonly QueuedPicture[]) => {
+      if (pictures.length === 0) return;
+      /**
+       * A new picture clears a previous *failure*: the author has answered the
+       * message by trying again, and leaving it up would have it describing an
+       * upload that is no longer the current one.
+       *
+       * Only a failure. Clearing unconditionally would blank the progress
+       * strip of an upload already running — a second picture dropped
+       * mid-batch — and the loop below only writes to it again when it reaches
+       * the next file, so the bar would vanish for the rest of the current
+       * one.
+       */
+      setUpload((current) => (current?.status === "error" ? null : current));
+      queueRef.current.push(...pictures);
+      void drain();
+    },
+    [drain],
+  );
+
+  useEffect(() => {
+    addPicturesRef.current = addPictures;
+  }, [addPictures]);
+
   return (
     <div className="rounded-panel border border-rule bg-paper">
       {editor ? (
-        <EntryEditorToolbar editor={editor} entries={entries} items={items} />
+        <EntryEditorToolbar
+          editor={editor}
+          entries={entries}
+          items={items}
+          busy={upload?.status === "uploading"}
+          onPickPicture={() => fileInputRef.current?.click()}
+        />
       ) : (
         // Same height as the real bar, so nothing jumps when the editor
         // finishes mounting.
@@ -354,6 +677,41 @@ export function EntryEditor({
           className="h-9 rounded-t-panel border-b border-rule bg-panel"
           aria-hidden="true"
         />
+      )}
+
+      {/*
+        The file picker itself (E5-T3, `YEO-43`).
+
+        There is no URL field anywhere in this component, which is the
+        acceptance criterion stated as an absence: the author picks a file, the
+        way they would in any other program. This input is the whole of that —
+        `display: none`, opened by the toolbar button, and never focusable in
+        its own right, because the button is the labelled control and a second
+        tab stop that looks like nothing would be a trap.
+      */}
+      {!acceptsPictures ? null : (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={IMAGE_ACCEPT}
+          multiple
+          tabIndex={-1}
+          aria-hidden="true"
+          className="hidden"
+          onChange={(event) => {
+            const files = picturesAmong([...(event.target.files ?? [])]);
+            // Cleared before anything is queued, so that choosing the same
+            // file twice in a row fires `change` the second time. Without it
+            // the second attempt is silent, which reads as the button being
+            // broken.
+            event.target.value = "";
+            addPictures(files.map((file) => ({ file, at: null })));
+          }}
+        />
+      )}
+
+      {upload === null ? null : (
+        <UploadStrip state={upload} onDismiss={() => setUpload(null)} />
       )}
 
       <EditorContent editor={editor} />
@@ -371,6 +729,80 @@ export function EntryEditor({
 }
 
 /**
+ * What is happening to a picture, between the toolbar and the writing surface
+ * (E5-T3, `YEO-43`).
+ *
+ * ## Why there is a bar at all
+ *
+ * The acceptance criterion is "progress indication for large files on slow
+ * connections", and the case it is written for is real: the cap is 4 MB, and
+ * a scanned photograph going up a rural connection is most of a minute in
+ * which nothing on screen has changed. That is indistinguishable from the
+ * button not having worked, and what an author does about it is press the
+ * button again.
+ *
+ * ## Where the percentage is, and where it is not
+ *
+ * The number lives in the `<progress>` element and the *words* live in a
+ * `role="status"` region beside it. The split is the whole accessibility
+ * design here: a live region whose text changed sixty times during one upload
+ * would have a screen reader reading percentages over the top of whatever
+ * else it was saying, so the text changes once per picture ("Adding picture 2
+ * of 4…") and the bar — which announces nothing on its own — carries the rest.
+ *
+ * An indeterminate bar when `percent` is `null`, which is `<progress>` with no
+ * `value`: the browser could not measure the request body, and a bar sitting
+ * confidently at 0% would be a worse answer than one that says only that
+ * something is happening.
+ */
+function UploadStrip({
+  state,
+  onDismiss,
+}: {
+  state: NonNullable<UploadState>;
+  onDismiss: () => void;
+}) {
+  if (state.status === "error") {
+    return (
+      <p
+        role="alert"
+        className="flex items-center gap-3 border-b border-rule bg-panel px-3 py-1.5 text-note text-ink"
+      >
+        <span>{state.message}</span>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-link hover:underline"
+        >
+          Dismiss
+        </button>
+      </p>
+    );
+  }
+
+  const { percent, position, total } = state;
+  const label =
+    total === 1 ? "Adding picture…" : `Adding picture ${position} of ${total}…`;
+
+  return (
+    <p className="flex items-center gap-2 border-b border-rule bg-panel px-3 py-1.5 text-note text-ink-muted">
+      {/*
+        Hidden from assistive technology on purpose: the sentence next to it
+        already says what is happening, and a labelled progress bar would have
+        it said twice.
+      */}
+      <progress
+        aria-hidden="true"
+        className="h-1 w-24"
+        max={100}
+        {...(percent === null ? {} : { value: percent })}
+      />
+      <span role="status">{label}</span>
+    </p>
+  );
+}
+
+/**
  * The toolbar is its own component because it is the only thing that needs to
  * re-render as the cursor moves. `useEditorState` re-renders whatever calls
  * it, so keeping it out of `EntryEditor` keeps the writing surface still while
@@ -380,11 +812,21 @@ function EntryEditorToolbar({
   editor,
   entries,
   items,
+  busy,
+  onPickPicture,
 }: {
   editor: Editor;
   entries: readonly TitledEntry[];
   /** The buttons this variant has. See `VARIANTS`. */
   items: readonly ToolbarItem[];
+  /**
+   * Whether a picture is being uploaded right now. The image button is the
+   * only control it disables — an author should still be able to write, and
+   * to bold what they have written, while a photograph goes up.
+   */
+  busy: boolean;
+  /** Open the file picker. See the input in `EntryEditor`. */
+  onPickPicture: () => void;
 }) {
   /**
    * The href the panel was opened on, or `null` when it is closed. Held as an
@@ -486,10 +928,14 @@ function EntryEditorToolbar({
         if (linkPanel === null) openLinkPanel();
         else setLinkPanel(null);
         return;
+      case "image":
+        // The whole of the button's job. Everything that happens next — the
+        // resize, the request, the insert — is `EntryEditor`'s, because it is
+        // the half that has to survive a drop and a paste as well.
+        onPickPicture();
+        return;
       // Rendered as a `<select>` below, and never routed here.
       case "heading":
-      // Disabled until E5-T3 gives it something to do.
-      case "image":
         return;
     }
   }
@@ -535,7 +981,10 @@ function EntryEditorToolbar({
               key={item.id}
               type="button"
               title={item.hint}
-              disabled={"disabled" in item && item.disabled}
+              // Only the image button, and only while one is going up: a
+              // second file picker opened over a running upload would queue
+              // work the strip beside it is already describing.
+              disabled={item.id === "image" && busy}
               aria-pressed={isPressed(item.id)}
               onClick={() => activate(item.id)}
               className={toolbarButtonClass(item.id, isPressed(item.id))}

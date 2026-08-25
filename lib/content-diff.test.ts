@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  contentBlockText,
   describeBlockKind,
   describeContentDiffSummary,
   diffContent,
@@ -481,5 +482,193 @@ describe("diffEntryContent", () => {
 describe("describeBlockKind", () => {
   it("names the hatnote in the interface", () => {
     expect(describeBlockKind("hatnote")).toBe("Hatnote");
+  });
+
+  it("names a photograph in the reader's word, not the tag's", () => {
+    expect(describeBlockKind("image")).toBe("Photograph");
+  });
+});
+
+/**
+ * Photographs in the diff (E5-T3, `YEO-43`).
+ *
+ * `img` reached `lib/sanitize-html.ts`'s allowlist with that ticket, and this
+ * module's own docblock states the obligation that follows: "if a tag is added
+ * there, it belongs in `BLOCK_TAGS` below too". A photograph is the first
+ * piece of content a reader sees that carries no text, so without a kind of
+ * its own every one of the assertions below would have read "no change" — for
+ * the one thing in an entry nobody can retype from memory.
+ */
+describe("photographs", () => {
+  const ROSE = "images/ab/8f14e45f-ea0f-4b76-9d7c-1a2b3c4d5e6f.jpg";
+  const WALTER = "images/cd/1b2c3d4e-5f60-4a71-8293-a4b5c6d7e8f9.jpg";
+
+  const img = (key: string, alt?: string) =>
+    `<img src="/api/images/${key.slice("images/".length)}"${
+      alt === undefined ? "" : ` alt="${alt}"`
+    }>`;
+
+  it("is a block of its own, carrying its alt text and its key", () => {
+    expect(
+      extractContentBlocks(`<p>Before.</p>${img(ROSE, "Rose at Southwold")}`),
+    ).toEqual([
+      { kind: "paragraph", text: "Before." },
+      { kind: "image", text: "Rose at Southwold", source: ROSE },
+    ]);
+  });
+
+  it("survives having no alt text, which an empty block would not", () => {
+    // `flush()` drops an empty block on purpose — right for TipTap's `<p></p>`
+    // and exactly wrong for a picture, which is why `img` does not go through
+    // it.
+    expect(extractContentBlocks(img(ROSE))).toEqual([
+      { kind: "image", text: "", source: ROSE },
+    ]);
+  });
+
+  it("does not swallow the text around it", () => {
+    expect(
+      extractContentBlocks(`<p>Before.</p>${img(ROSE)}<p>After.</p>`),
+    ).toEqual([
+      { kind: "paragraph", text: "Before." },
+      { kind: "image", text: "", source: ROSE },
+      { kind: "paragraph", text: "After." },
+    ]);
+  });
+
+  it("reports adding one as an addition", () => {
+    const rows = diffContent("<p>Rose.</p>", `<p>Rose.</p>${img(ROSE)}`);
+
+    expect(summariseContentDiff(rows)).toEqual({
+      unchanged: 1,
+      added: 1,
+      removed: 0,
+      moved: 0,
+    });
+  });
+
+  it("reports removing one as a removal", () => {
+    const rows = diffContent(`<p>Rose.</p>${img(ROSE)}`, "<p>Rose.</p>");
+
+    expect(summariseContentDiff(rows)).toEqual({
+      unchanged: 1,
+      added: 0,
+      removed: 1,
+      moved: 0,
+    });
+  });
+
+  it("reports swapping one for another, even when both are undescribed", () => {
+    // The case the `source` field exists for. Both blocks have the same kind
+    // and the same (empty) text, so an identity of kind-plus-text would call
+    // this unchanged and the history would show a photograph being replaced as
+    // nothing having happened.
+    const rows = diffContent(img(ROSE), img(WALTER));
+
+    expect(summariseContentDiff(rows)).toEqual({
+      unchanged: 0,
+      added: 1,
+      removed: 1,
+      moved: 0,
+    });
+    expect(hasContentChanges(rows)).toBe(true);
+  });
+
+  it("reports re-describing one as a change", () => {
+    // Same picture, new alt text. It is a change a reader using a screen
+    // reader hears, so it is a change.
+    const rows = diffContent(img(ROSE), img(ROSE, "Rose at Southwold, 1952"));
+
+    expect(hasContentChanges(rows)).toBe(true);
+  });
+
+  it("says nothing changed when nothing did", () => {
+    const rows = diffContent(
+      `<p>Rose.</p>${img(ROSE, "Rose")}`,
+      `<p>Rose.</p>${img(ROSE, "Rose")}`,
+    );
+
+    expect(hasContentChanges(rows)).toBe(false);
+  });
+
+  it("does not disturb the blocks around it, however it is nested", () => {
+    // A picture inside a bullet is reachable: the image node is a block and
+    // StarterKit's `listItem` holds `paragraph block*`. The `img` branch never
+    // touches `open`, so the list item closes exactly as it would have.
+    expect(
+      extractContentBlocks(
+        `<ul><li><p>Alice</p>${img(ROSE, "A")}</li><li><p>Brian</p></li></ul>`,
+      ),
+    ).toEqual([
+      { kind: "listItem", text: "Alice" },
+      { kind: "image", text: "A", source: ROSE },
+      { kind: "listItem", text: "Brian" },
+    ]);
+
+    // And between two headings, where a block that pushed itself onto `open`
+    // would have swallowed the second one.
+    expect(
+      extractContentBlocks(`<h2>Early life</h2>${img(ROSE)}<h3>School</h3>`),
+    ).toEqual([
+      { kind: "heading2", text: "Early life" },
+      { kind: "image", text: "", source: ROSE },
+      { kind: "heading3", text: "School" },
+    ]);
+  });
+
+  it("reads alt text the way it reads any other text", () => {
+    // Escapes decoded and whitespace collapsed, so a description that differs
+    // only in spacing is not a change.
+    expect(extractContentBlocks(img(ROSE, "Rose &amp; Walter"))).toEqual([
+      { kind: "image", text: "Rose & Walter", source: ROSE },
+    ]);
+    expect(extractContentBlocks(img(ROSE, "  Rose   at   sea  "))).toEqual([
+      { kind: "image", text: "Rose at sea", source: ROSE },
+    ]);
+  });
+
+  it("survives a stray closing tag, which carries no src", () => {
+    expect(extractContentBlocks("<p>a</p></img><p>b</p>")).toEqual([
+      { kind: "paragraph", text: "a" },
+      { kind: "paragraph", text: "b" },
+    ]);
+  });
+
+  it("ignores an img the sanitiser would have dropped anyway", () => {
+    // Unreachable from a stored body — `sanitizeHtml` runs first and discards
+    // the whole tag — so this is about the check being made rather than
+    // assumed.
+    expect(
+      extractContentBlocks(
+        '<p>Rose.</p><img src="https://evil.example/x.png">',
+      ),
+    ).toEqual([{ kind: "paragraph", text: "Rose." }]);
+  });
+});
+
+describe("contentBlockText", () => {
+  it("is the block's own text for everything that has some", () => {
+    expect(
+      contentBlockText({ kind: "paragraph", text: "Rose married Walter." }),
+    ).toBe("Rose married Walter.");
+  });
+
+  it("says a picture is there when nobody described it", () => {
+    // An unchanged row draws no kind label, so without this a picture that had
+    // never been described would render as a completely blank line — which
+    // reads as a bug rather than as a photograph.
+    expect(
+      contentBlockText({ kind: "image", text: "", source: "images/ab/x.jpg" }),
+    ).toBe("Photograph with no description");
+  });
+
+  it("prefers the description when there is one", () => {
+    expect(
+      contentBlockText({
+        kind: "image",
+        text: "Rose at Southwold",
+        source: "images/ab/x.jpg",
+      }),
+    ).toBe("Rose at Southwold");
   });
 });
