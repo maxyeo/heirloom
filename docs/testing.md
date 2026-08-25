@@ -229,6 +229,39 @@ that file asserts _which_ action each removal reaches and _what_ it sends —
 the one part of the wiring that could silently invert without any other test
 noticing.
 
+**The network is not a module boundary — it is the boundary itself.**
+`components/SearchBox.test.tsx` (E8-T3) replaces `globalThis.fetch` with a
+`vi.fn()`, and that is not the rule above being widened. There is no module to
+mock: the component calls the platform's `fetch`, and no arrangement of this
+suite could ever cross to the other side of it. Handing it a `fetch` that
+resolves a literal is the same act as handing `PersonRemoval` a stub server
+action — the seam is stubbed, and everything on this side of it is real. That
+file mocks nothing else: `lib/suggestion-state.ts`, `lib/search-shortcut.ts`
+and `components/surface-stack.ts` all run for real, which is what two of its
+tests are about.
+
+Two assertions there exist only because the UI is asynchronous, and nothing
+else in this suite does either. **That the previous request's `AbortSignal` was
+aborted** — otherwise every keystroke leaves a round trip running. And **that
+an `AbortError` produces no error state** — which is the bug this pattern
+almost always ships with, because every keystroke aborts the request before it
+and every abort rejects that request's promise, so an unguarded `catch` paints
+an error banner over results that are correct and already on screen.
+
+Fake timers are what make the debounce assertable (`vi.useFakeTimers()`, then
+advance past it), and the thing worth copying is the shape of the stub: it
+records each call's `signal` alongside a `respond`/`fail` pair, so a test can
+answer requests **out of order** on purpose. That is the only way to check the
+staleness rule, and the rule is where the real bug would be.
+
+**Two jsdom gaps this file ran into**, both of which would have made a test
+pass for the wrong reason rather than fail: jsdom implements no `CSS.escape`
+(use `getElementById`, which takes an id verbatim — `useId` produces ids
+holding characters a selector would have to escape), and it parses
+`contenteditable` without implementing `isContentEditable`, so an element that
+should read as a text editor reads as an ordinary div. The contenteditable test
+defines the property itself, and says why.
+
 **A form with more than one button needs the submitter asserted.**
 `components/UnionOrder.test.tsx` (E3-T7) is the case: one form carries an up
 and a down button for every union, and which one was pressed travels in that

@@ -99,8 +99,15 @@ export type PersonMatch = {
  * for a *search*, which implies seeing enough of the tail to judge whether
  * to narrow the query further. 20 is generously more than the picker's
  * budget while still being a page a reader can scan in one sitting.
+ *
+ * Exported so `app/search/page.tsx` can say "the first 20 people" rather than
+ * "20 people found" when the cap is what it is showing — and so that the
+ * agreement `lib/entry-search.ts`'s own `DEFAULT_LIMIT` promises ("two groups
+ * that quietly disagreed about how deep a result set goes would read as a
+ * defect in whichever one came up shorter") is checkable rather than
+ * coincidental.
  */
-const DEFAULT_LIMIT = 20;
+export const DEFAULT_LIMIT = 20;
 
 /**
  * The collator ties break on, built once — the same reasoning as

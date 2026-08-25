@@ -27,6 +27,13 @@ project.
 stop using the site and not tell you why. The editor is WYSIWYG with a small
 toolbar — bold, italic, heading, list, link, image. Nothing else.
 
+**One box, not two.** The author should never have to decide whether they are
+looking for a person or an entry before they start typing. A family wiki holds
+two kinds of thing and nobody thinks in those terms while trying to remember a
+name — so there is one search field, and the answer comes back in two labelled
+groups rather than behind two tabs. The same box is one keystroke away from
+every page.
+
 **It looks like Wikipedia.** Not "inspired by" — the entries use Wikipedia's
 visual language directly: the Vector 2022 skin, the serif headings with their
 bottom rule, the sans-serif body, the blue links and the red ones, the pinned
@@ -77,6 +84,8 @@ history with an expiry date.
 - Schema: individuals, unions, children, pages, revisions
 - Seed fixture built from a genuinely awkward real family
 - Read-only family tree with auto-layout, pan, zoom, and minimap
+- Search across entries and people from one box in the header, reachable with
+  ⌘K / Ctrl+K or `/` from anywhere, with results grouped under two headings
 
 **Next**
 
@@ -92,7 +101,6 @@ history with an expiry date.
   bring in, because retyping several hundred people by hand is how a project
   like this dies
 - GEDCOM export
-- Search across entries
 - "On this day" / recently changed, to give a reason to come back
 
 ## Non-goals
