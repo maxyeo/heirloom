@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { AccountMenu } from "@/components/AccountMenu";
+import { SearchBox } from "@/components/SearchBox";
 import { SidebarToggle } from "@/components/SidebarToggle";
 import { siteName } from "@/lib/site";
 
@@ -50,24 +51,29 @@ export function SiteHeader({
       </Link>
 
       {/*
-        The search slot. It was an inert `aria-hidden` box until E8-T2
-        (`YEO-56`), on the reasoning that a control which looks like search
-        and does nothing is a worse promise than one that is not announced at
-        all — which was right for exactly as long as there was nowhere for it
-        to go. `/search` now exists, so the same reasoning points the other
-        way: the honest thing is a link to it.
+        The search slot, and the end of a three-step arc worth recording
+        because each step was right at the time.
 
-        **E8-T3** still replaces this with the real box, typing in the header
-        with suggestions underneath. A link is the smallest thing that makes
-        search reachable in the meantime, and it keeps the proportions the
-        shell was designed with either way.
+        It was an inert `aria-hidden` box while `/search` did not exist, on
+        the reasoning that a control which looks like search and does nothing
+        is a worse promise than one that is not announced at all. E8-T2
+        (`YEO-56`) built the page, so the same reasoning pointed the other way
+        and it became a link. E8-T3 (`YEO-57`) built the endpoint behind it
+        (`app/api/search/route.ts`), so it is now the real box: one input over
+        both people and entries, suggestions grouped underneath, ⌘K or `/`
+        from anywhere.
+
+        Nothing was given up in the exchange. `SearchBox` is a `next/form`
+        wrapped around a real `<input name="q">`, so with JavaScript off — or
+        in the moment before hydration — typing and pressing Enter still lands
+        on `/search?q=…`, which is exactly what the link did. The proportions
+        are the ones the shell was designed with either way: `SearchBox` owns
+        the same `min-w-0 flex-1 sm:max-w-96` this slot always had.
+
+        `SiteHeader` itself stays a Server Component; `SearchBox` is the
+        client boundary, the same arrangement `RoutedArticleTabs` uses.
       */}
-      <Link
-        href="/search"
-        className="min-w-0 flex-1 truncate rounded-panel border border-rule-soft px-2 py-1 text-caption text-ink-muted hover:text-ink hover:no-underline sm:max-w-96"
-      >
-        Search {name}
-      </Link>
+      <SearchBox siteName={name} />
 
       <AccountMenu
         name={viewerName}

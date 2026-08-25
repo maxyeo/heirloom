@@ -38,6 +38,17 @@ second, coarser layer: every route is private by default, and the matcher
 enumerates the handful of public exceptions rather than the private ones. A new
 page is therefore protected the moment it exists.
 
+`app/api/search/route.ts` is the first route handler in this application that
+is not Auth.js's own, and it goes through the same single boundary by its
+401-returning flavour — `requireSessionOr401`, which had existed unused since
+E10-T2 for exactly this. It guards _before_ it reads the query, so that a
+caller with no session cannot probe what the corpus holds by watching which
+queries are rejected differently. Its response carries
+`Cache-Control: private, no-store`, which is a separate question from anything
+Next caches: a `GET /api/search?q=grandmother` left in a shared laptop's disk
+cache would be a family's names sitting outside the boundary, the same way
+`YEO-86` found image URLs to be.
+
 ### Access control
 
 Google sign-in establishes _identity_, not _authorisation_ — anyone with a
@@ -478,6 +489,56 @@ Scale is small: a family tree is hundreds of people at most, so the entire
 graph is loaded in one query and laid out client-side. No pagination, no
 virtualisation.
 
+### The one client-side read
+
+Everything above is rendered on the server. There is exactly one place in this
+application where the browser fetches data for itself, it was added by E8-T3
+(`YEO-57`), and it is worth writing down _why it is the only one_ so that the
+next person to want a second has the argument in front of them.
+
+The header's search box asks as you type. That cannot be a server action, for
+four reasons that all point the same way: actions are POST and the router
+**queues** them, so eight keystrokes become eight round trips that must each
+finish before the next starts; an action's transition cannot be cancelled,
+where a GET can be abandoned with `AbortController`; an action's reply is an
+RSC payload carrying whatever it revalidated, which is a router tree paid for
+on every keystroke to fetch ten rows; and a search is a _read_ of a URL, which
+is what a GET is for. So `app/api/search/route.ts` is the first route handler
+in this codebase that is not Auth.js's own.
+
+The pieces, and where each decision lives:
+
+- **`lib/search-endpoint.ts`** is the contract both ends import — the URL, the
+  parameter name, the limits, the payload shape, and the narrowing of what
+  comes back. One module, because a disagreement across a network boundary is
+  not a type error: it typechecks on both sides and is wrong in the middle.
+- **The handler calls the two backends E8-T1 and E8-T2 already built** —
+  `searchEntries` (`lib/pages.ts`, Postgres full-text) and `searchPeopleByName`
+  (`lib/people.ts`, ranked in TypeScript) — rather than querying around them.
+- **200ms debounce**, which is roughly one request per _word_ for a fluent
+  typist and still below the ~250ms at which an interface starts to feel like
+  it is thinking. It is not a nicety: `searchPeopleByName` reads the whole
+  `individuals` table per call, and this ticket put it on a per-keystroke path.
+- **A two-character floor, enforced at both ends.** The box declines to ask,
+  and the handler declines to answer. The client is not the only caller — this
+  is a GET any signed-in person can issue, with no debounce in front of it —
+  and a rule that exists to bound cost has to live where the cost is paid.
+- **Staleness is decided by the question, not by a counter.** The payload
+  echoes back the query it answers, and `lib/suggestion-state.ts` discards any
+  response that is not the question currently in the box. That is strictly
+  better than a sequence number, because typing `cat` → `cats` → `cat` leaves
+  the _first_ response a correct answer that a sequence guard would throw away
+  and then re-ask for.
+- **Five per group in the dropdown, twenty on `/search`**, and the difference
+  is disclosed rather than hidden: every answer ends with a row leading to the
+  full page. The handler asks each backend for six and truncates, which is how
+  it can tell "exactly five matched" from "five of forty".
+
+What deliberately did _not_ happen: no client-side cache, no shared query
+layer, no data-fetching library. One `fetch` in one component does not need
+one, and adding the abstraction here is how the next four reads get written on
+the client instead of the server.
+
 ## Deployment and migrations
 
 `vercel.json` disables git deployments for every branch except `main`, so a
@@ -655,6 +716,14 @@ grants write and delete on the store, and never appears in the repository.
 
 - **No RLS.** By design (see above), but it means a route handler that forgets
   `requireSession()` has nothing underneath it to fail safe.
+- **People search reads the whole table.** `searchPeopleByName` selects every
+  row of `individuals` and ranks it in TypeScript, because spelling tolerance
+  is not a predicate a B-tree can answer (`lib/people-search.ts`). Since E8-T3
+  that runs on a per-keystroke path rather than a per-page-load one; the 200ms
+  debounce and a ceiling of a few hundred people are what keep it fine. A tree
+  of thousands is what would change the answer, and the fix is named where the
+  query lives: a generated `tsvector` over the name and a `WHERE` clause ahead
+  of the ranking.
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.

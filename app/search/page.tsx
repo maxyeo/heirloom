@@ -3,7 +3,10 @@ import Form from "next/form";
 
 import { EntrySearchResults } from "@/components/EntrySearchResults";
 import { PersonSearchResults } from "@/components/PersonSearchResults";
+import { DEFAULT_LIMIT as ENTRY_LIMIT } from "@/lib/entry-search";
 import { searchEntries } from "@/lib/pages";
+import { DEFAULT_LIMIT as PERSON_LIMIT } from "@/lib/people-search";
+import { readSearchParam } from "@/lib/search-endpoint";
 import { searchPeopleByName } from "@/lib/people";
 import { requireSession } from "@/lib/session";
 
@@ -41,27 +44,26 @@ type SearchPageProps = {
 };
 
 /**
- * One search parameter, or nothing.
+ * How `?q=` is read is `lib/search-endpoint.ts`'s, not this file's, since
+ * E8-T3 (`YEO-57`).
  *
- * `?q=a&q=b` arrives as an array, and there is no defensible way to choose
- * between the two — see `app/wiki/[slug]/history/compare/page.tsx`'s own
- * `singleParam` for the fuller argument. Here the consequence of getting it
- * wrong would only be a confusing query rather than a wrong answer served
- * confidently, so this falls back to "no query" rather than a 404: a
- * hand-edited `/search?q=a&q=b` is not a broken link the way a compare page's
- * malformed `?from=&to=` is, it is simply not a query this route can honour.
+ * This route used to hold a private `singleParam` making the argument for
+ * itself: `?q=a&q=b` arrives as an array and there is no defensible way to
+ * choose between the two, so it falls back to "no query" rather than 404ing
+ * the way a compare page's malformed `?from=&to=` does. All of that still
+ * holds — it has simply moved somewhere both readers of the parameter can
+ * share it. The header's box (`components/SearchBox.tsx`) asks the same
+ * question of the same parameter, and two controls that disagreed about what
+ * a hand-edited URL meant would answer the same link two different ways
+ * depending on which one read it.
  */
-function singleParam(value: string | string[] | undefined): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
   // The only access boundary there is — no RLS underneath, one database role
   // for everyone. See `lib/session.ts`.
   await requireSession();
 
-  const query = singleParam((await searchParams).q) ?? "";
-  const trimmed = query.trim();
+  const trimmed = readSearchParam((await searchParams).q);
 
   // Two reads of two tables that have nothing to do with each other, so they
   // are issued together rather than one after the other: awaiting them in
@@ -107,7 +109,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           id="search-query"
           type="search"
           name="q"
-          defaultValue={query}
+          defaultValue={trimmed}
           placeholder="Search people and entries"
           autoComplete="off"
           className="block w-full max-w-96 rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink"
@@ -122,12 +124,25 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
       {/*
         Two groups, one per kind of thing the wiki holds, under one query —
-        the shape `app/search/page.tsx` was written to make room for when
-        E8-T2 (`YEO-56`) landed with only the first of them. E8-T3 (`YEO-57`)
-        still owns what remains: the header's search box becoming live, and
-        whatever ordering or interleaving one combined box wants. What is
-        settled here is that a search is one question with two kinds of
-        answer, not two search experiences.
+        the shape this page was written to make room for when E8-T2
+        (`YEO-56`) landed with only the first of them, and which E8-T3
+        (`YEO-57`) has now finished. What was settled here first is that a
+        search is one question with two kinds of answer, not two search
+        experiences.
+
+        E8-T3 built the second surface on that same shape rather than a
+        second experience: `components/SearchBox.tsx` in the header asks the
+        same question of the same two backends, groups the answer under these
+        same two headings, and shows five per group instead of twenty —
+        ending with a row that leads here for the rest. This page is where
+        the answer has room to breathe; the dropdown is where it is a glance.
+        The copy below is the long version, and the dropdown's is borrowed
+        from it rather than the other way round.
+
+        No interleaving. It was considered and declined: a single ranked list
+        would need a comparison between "how well does this name match" and
+        "what `ts_rank` said about this document", and those two numbers mean
+        nothing to each other. Two honest groups beat one invented ordering.
 
         People first because a family wiki is a family: the commonest thing
         to search for is a person, and an entry about them is very often the
@@ -148,9 +163,18 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         </p>
       ) : (
         <>
+          {/*
+            "The first 20" rather than "20 found" when the cap is what is
+            being shown. `searchPeopleByName` stops at `PERSON_LIMIT`, so at
+            exactly that many the number is the limit rather than the answer —
+            and a query matching fifty people saying "20 people found" is the
+            page stating a total it does not know. Below the cap the count is
+            a real total and says so.
+          */}
           <p className="text-caption text-ink-muted">
-            {people.length === 1 ? "1 person" : `${people.length} people`}{" "}
-            found.
+            {people.length === PERSON_LIMIT
+              ? `The first ${PERSON_LIMIT} people. Narrow the query to see fewer.`
+              : `${people.length === 1 ? "1 person" : `${people.length} people`} found.`}
           </p>
           <PersonSearchResults matches={people} />
         </>
@@ -170,9 +194,11 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         </p>
       ) : (
         <>
+          {/* The same, and the same limit — see `PERSON_LIMIT` above. */}
           <p className="text-caption text-ink-muted">
-            {entries.length === 1 ? "1 entry" : `${entries.length} entries`}{" "}
-            found.
+            {entries.length === ENTRY_LIMIT
+              ? `The first ${ENTRY_LIMIT} entries. Narrow the query to see fewer.`
+              : `${entries.length === 1 ? "1 entry" : `${entries.length} entries`} found.`}
           </p>
           <EntrySearchResults matches={entries} />
         </>
