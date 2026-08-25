@@ -104,16 +104,6 @@ import type { UnionFields } from "./union-input";
  * - `unions.sequence` has no GEDCOM equivalent whatsoever, as E6-T2 found. It
  *   is re-derived on import from family order and marriage dates.
  *
- * ## Pure, like everything else in this pipeline
- *
- * No `@/db`, no React, no npm package — `lib/gedcom.purity.test.ts` walks this
- * module's import closure and asserts it, for the reason it gives for the
- * other two: E7-T2 round-trips export through import with no database in
- * sight, and a serialiser that needed one could only be tested against one.
- * `lib/export-tree.ts` is the thin half that reads the rows.
- */
-
-/**
  * ## It writes what it is given, and does not validate
  *
  * The round trip closes for every tree this application can produce, which is
@@ -132,6 +122,14 @@ import type { UnionFields } from "./union-input";
  * saying so. Silently reversing the bounds or dropping the partner would be
  * this module inventing a recovery policy that the import side deliberately
  * does not have, and hiding a broken row rather than surfacing it.
+ *
+ * ## Pure, like everything else in this pipeline
+ *
+ * No `@/db`, no React, no npm package — `lib/gedcom.purity.test.ts` walks this
+ * module's import closure and asserts it, for the reason it gives for the
+ * other two: E7-T2 round-trips export through import with no database in
+ * sight, and a serialiser that needed one could only be tested against one.
+ * `lib/export-tree.ts` is the thin half that reads the rows.
  */
 
 /** An `individuals` row. A Drizzle row satisfies this as it comes back. */
