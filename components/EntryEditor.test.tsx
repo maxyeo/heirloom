@@ -12,7 +12,7 @@ import {
 } from "@/lib/editor-extensions";
 import { IMAGE_ACCEPT } from "@/lib/image-insert";
 import { headingNodePosition } from "@/lib/section-edit";
-import { render } from "@/test/render";
+import { render, unmount } from "@/test/render";
 
 /**
  * The first test in this project that needs a DOM, which docs/testing.md
@@ -1240,6 +1240,50 @@ describe("photographs", () => {
     await settle();
 
     expect(buttons.filter((button) => button.disabled)).toEqual([]);
+  });
+
+  it("abandons an upload when the editor goes away", async () => {
+    const host = render(<EntryEditor />);
+    const editor = editorOf(host);
+
+    act(() => {
+      drop(editor, [picture("Rose at Southwold.jpg")]);
+    });
+    const request = FakeXhr.instances[0];
+    expect(request.aborted).toBe(false);
+
+    // `unmount()` rather than leaving it to the teardown, because this
+    // assertion is *about* unmounting — docs/testing.md names that as what the
+    // helper is for.
+    await act(async () => {
+      unmount(host);
+      await Promise.resolve();
+    });
+    await settle();
+
+    // An author who navigates away mid-upload leaves nothing running behind
+    // them.
+    expect(request.aborted).toBe(true);
+  });
+
+  it("renders no failure for an abandoned upload", async () => {
+    // An abort is not a refusal. The catch branch returns before any state is
+    // written, which is also what keeps React from warning about a set on an
+    // unmounted component.
+    const host = render(<EntryEditor />);
+    const editor = editorOf(host);
+
+    act(() => {
+      drop(editor, [picture("Rose at Southwold.jpg")]);
+    });
+
+    await act(async () => {
+      FakeXhr.instances[0].abort();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("takes no pictures in the hatnote, which has nowhere to put one", () => {

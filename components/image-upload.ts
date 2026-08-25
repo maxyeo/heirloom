@@ -194,6 +194,18 @@ function post(
 
     const request = new XMLHttpRequest();
     request.open("POST", IMAGE_UPLOAD_ENDPOINT);
+
+    /**
+     * Detaching the abort listener when the request is over.
+     *
+     * Today the signal belongs to one editor and dies with it, so this frees
+     * nothing the unmount would not have freed anyway. It is here because the
+     * *next* caller is the thing that goes wrong: a longer-lived signal — one
+     * per page, say — would accumulate a listener per photograph ever
+     * uploaded, each holding its finished `XMLHttpRequest` alive.
+     */
+    const abortRequest = () => request.abort();
+    const detach = () => signal?.removeEventListener("abort", abortRequest);
     // Text rather than `json`, so that a body which is not JSON — the bare
     // `Unauthorized` of an expired session, an HTML error page from a proxy —
     // arrives as something to parse and fail on rather than as a silent
@@ -205,6 +217,8 @@ function post(
     });
 
     request.addEventListener("load", () => {
+      detach();
+
       let parsed: unknown;
       try {
         parsed = JSON.parse(request.responseText) as unknown;
@@ -235,6 +249,7 @@ function post(
     });
 
     request.addEventListener("error", () => {
+      detach();
       reject(
         new ImageUploadError(
           "The picture could not be sent. Check your connection and try again.",
@@ -243,6 +258,7 @@ function post(
     });
 
     request.addEventListener("timeout", () => {
+      detach();
       reject(
         new ImageUploadError("Sending the picture took too long. Try again."),
       );
@@ -253,6 +269,7 @@ function post(
     // Rejecting with the platform's own `AbortError` is what lets the caller
     // recognise it without this module inventing a second convention.
     request.addEventListener("abort", () => {
+      detach();
       reject(new DOMException("The upload was cancelled.", "AbortError"));
     });
 
@@ -261,7 +278,7 @@ function post(
         request.abort();
         return;
       }
-      signal.addEventListener("abort", () => request.abort(), { once: true });
+      signal.addEventListener("abort", abortRequest, { once: true });
     }
 
     request.send(form);
