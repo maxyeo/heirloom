@@ -3,6 +3,7 @@ import { getTableColumns } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { GedcomMapping } from "@/lib/gedcom-map";
 import { batchesOf } from "@/lib/import-batches";
+import { rowsFromMapping } from "@/lib/import-rows";
 
 /**
  * Mapped rows in, three tables written or nothing written (E6-T4, `YEO-49`).
@@ -137,29 +138,16 @@ export type ImportedCounts = {
 export async function importGedcom(
   mapping: GedcomMapping,
 ): Promise<ImportedCounts> {
-  const individuals = mapping.individuals.map((individual) => ({
-    id: individual.id,
-    ...individual.values,
-  }));
-
-  const unions = mapping.unions.map((union) => ({
-    id: union.id,
-    ...union.values,
-    /**
-     * `UnionFields.sequence` is `number | null` — null means "place this
-     * after the ones already recorded", which is a question for a form and
-     * not for an import — while `unions.sequence` is `not null`. `mapGedcom`
-     * always supplies a number (`deriveSequences` falls back to 0), so the
-     * null is unreachable from this caller; it is spelled out anyway because
-     * under all-or-nothing an unreachable null is not a null row, it is the
-     * whole file failing at the last statement.
-     */
-    sequence: union.values.sequence ?? 0,
-  }));
-
-  // Already exactly a `union_children` row — `MappedChild` was built to be
-  // one — so there is nothing to rename.
-  const unionChildren = mapping.unionChildren;
+  /**
+   * The rows themselves come from `lib/import-rows.ts`, and deliberately not
+   * from three `map` calls here. E7-T2 (`YEO-52`) round-trips an export
+   * through *this* import and compares the bytes, which it can only do if the
+   * part that decides what the rows are is reachable without a database. See
+   * that module's docblock; `lib/gedcom-round-trip.test.ts` asserts this call
+   * still exists, because a copy of it inlined here is how the tested
+   * pipeline and the real one quietly stop being the same pipeline.
+   */
+  const { individuals, unions, unionChildren } = rowsFromMapping(mapping);
 
   await db.transaction(async (tx) => {
     for (const batch of batchesOf(individuals, INDIVIDUAL_COLUMNS)) {

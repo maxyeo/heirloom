@@ -1,0 +1,105 @@
+﻿0 HEAD
+1 SOUR FamilyOrganiser
+2 NAME Family Organiser Deluxe
+2 VERS 7.2.1
+2 CORP Somebody Ltd.
+1 DEST ANY
+1 DATE 14 FEB 2011
+2 TIME 09:41:02
+1 FILE tremaine.ged
+1 GEDC
+2 VERS 5.5
+2 FORM LINEAGE-LINKED
+1 CHAR ANSI
+1 SUBM @SUB1@
+0 @SUB1@ SUBM
+1 NAME Not Recorded
+
+0 @I01@ INDI
+1 NAME  Ernest  Albert  /Tremaine/ Jr  
+2 GIVN Ernest Albert
+2 SURN Tremaine
+2 NSFX Jr
+1 SEX M
+1 BIRT
+2 DATE ABT. 1871
+2 PLAC Stoke   Newington,  Middlesex,   England 
+1 DEAT
+2 DATE 31 FEB 1943
+2 PLAC 
+1 RFN 4471
+1 _UID 8F3C1A2B4D5E6F70
+1 NOTE Emigrated 1889 and was back in Whitechapel by the 1901 census; the
+2 CONC  parish register for the intervening years is water-damaged.
+2 CONT Second-hand, from a letter.
+1 OBJE
+2 FILE portrait.jpg
+2 FORM jpeg
+1 FAMS @F01@
+1 CHAN
+2 DATE 2 JAN 2009
+0 @I02@ INDI
+1 NAME Bridget /O'Meara/
+1 SEX F
+1 BIRT
+2 DATE FROM 1874 TO 1876
+2 PLAC Ennis, Co. Clare
+1 DEAT Y
+1 FAMS @F01@
+1 FAMS @F02@
+0 @I03@ INDI
+1 NAME //
+1 SEX ?
+1 BIRT
+2 DATE UNKNOWN
+1 FAMC @F01@
+2 PEDI sealing
+0 @I04@ INDI
+1 NAME Winifred /Tremaine/
+1 NAME Winnie /Sharpe/
+1 SEX f
+1 BIRT
+2 DATE 1900
+1 CHR
+2 DATE 4 APR 1900
+1 FAMC @F01@
+2 PEDI adopted
+1 FAMC @F09@
+0 @I05@ INDI
+1 NAME Cornelius /Tremaine/
+1 SEX M
+1 BIRT
+2 DATE BET 1902 AND 1899
+1 FAMC @F01@
+0 @I06@ INDI
+1 NAME Patrick Joseph /O'Meara/
+1 SEX M
+1 BIRT
+2 DATE 1868
+1 FAMS @F02@
+0 @I07@ INDI
+1 NAME Ernest Albert /Tremaine/
+1 SEX M
+1 BIRT
+2 DATE ABT 1871
+0 @F01@ FAM
+1 HUSB @I01@
+1 WIFE @I02@
+1 CHIL @I03@
+1 CHIL @I04@
+1 CHIL @I05@
+1 CHIL @I04@
+1 CHIL @I99@
+1 MARR
+2 DATE 12 OCT 1893
+2 PLAC St   Mary's,  Islington
+1 _STAT Married
+0 @F02@ FAM
+1 HUSB @I06@
+1 WIFE @I02@
+1 CHIL @I02@
+1 DIV
+2 DATE 1893
+0 @F03@ FAM
+1 CHIL @I07@
+0 TRLR
