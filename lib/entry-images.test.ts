@@ -14,11 +14,11 @@ import { IMAGE_ROUTE } from "@/lib/storage-key";
  * misses a tag is a photograph that quietly is not in the backup — the
  * failure nobody notices until the restore.
  *
- * `img` is not yet in `lib/sanitize-html.ts`'s allowlist (E5-T3, `YEO-43`),
- * so no stored body contains one today and these are the only bodies the
- * scanner has ever seen. That is a reason for more cases here rather than
- * fewer: the day the allowlist widens, this code goes from unexercised to
- * load-bearing without anyone editing it.
+ * `img` reached `lib/sanitize-html.ts`'s allowlist with E5-T3 (`YEO-43`), and
+ * until then no stored body contained one, so these were the only bodies the
+ * scanner had ever seen. That was a reason for more cases here rather than
+ * fewer, and it paid: the code went from unexercised to load-bearing without
+ * anyone editing it.
  */
 
 const key = "images/ab/0e5b6c2f-1234-4a56-89ab-cdef01234567.jpg";

@@ -182,6 +182,40 @@ idempotent, so the second pass costs a parse and nothing else.
 This matters more here than it would elsewhere. With no RLS underneath and no
 CSP over the top, the allowlist is the whole defence.
 
+#### The one attribute whose _value_ is checked
+
+`img[src]` (E5-T3). An allowlist of tag and attribute names cannot say _which
+addresses_ a picture may come from, and for photographs that question is the
+whole of the criterion: an `<img>` is a fetch the reader's browser makes on
+behalf of whoever wrote the body. So `isStoredImageSrc` decides, and an `img`
+that fails it is dropped **whole** rather than stripped of its `src` — the
+difference between a foreign image disappearing and a permanently broken
+picture icon sitting in the entry.
+
+What it permits is this application's own image route and nothing else, which
+is the same shape [Links between entries](#links-between-entries) takes and is
+what [the storage seam](#the-storage-seam) means by _"the sanitiser allowlist
+never needs to name a storage host"_. An absolute URL is refused even when it
+names this host: a body that reaches out to the network at render time leaks
+the reader's address and `Referer` to whoever wrote it — an ordinary tracking
+pixel — and this wiki is behind an email allowlist precisely so that reading it
+is not observable from outside. A `data:` URI is refused too: megabytes of
+base64 copied into every revision, with no key for E5-T5 to sweep and nothing
+for the export to fetch.
+
+The check is `imageKeyFromHref`, which is also what `lib/entry-images.ts` asks
+to build the export and what E5-T5's orphan sweep will ask from the other side.
+All three agree about what "one of ours" means because there is one function
+that says.
+
+The coupling to the editor runs the same way. `EntryImage` in
+`lib/editor-extensions.ts` is a node of this repository's own rather than
+`@tiptap/extension-image`, and its parse rule is _the same predicate_ — so
+pasting a page full of images from the web drops them at the point of paste
+rather than showing them to the author and deleting them on save. The editor
+must not be able to emit anything the allowlist discards; that rule now covers
+values as well as tags.
+
 ### Links between entries
 
 A link from one entry to another is stored as a plain, **site-relative**
@@ -978,8 +1012,15 @@ grants write and delete on the store, and never appears in the repository.
   browser talking to the storage vendor directly — which would put its SDK in
   a client bundle and need a fourth function on the seam, both of which this
   repository fails the build over. A recent phone routinely produces larger
-  photographs than that, so the fix is for the editor's image button (`E5-T3`)
-  to downscale in a canvas before it posts.
+  photographs than that, so the editor's image button (`E5-T3`) downscales in
+  a canvas before it posts — `lib/image-insert.ts` decides when and to what,
+  `components/image-upload.ts` does it. Two things survive as limitations
+  rather than as bugs. **An animated GIF is never resized**, because a canvas
+  keeps one frame, so an oversized one is refused with a sentence rather than
+  silently turned into a still. And **a resize re-encodes as JPEG**, losing
+  transparency to a white background — the only format every browser's
+  `canvas.toBlob` is required to produce, and a trade only ever taken on a
+  file that would otherwise not upload at all.
 - **Orientation is respected, never repaired.** PNG, WebP and GIF keep
   whatever orientation tag they arrived with and nothing re-synthesises one,
   because nothing that produces those formats produces a rotated image.

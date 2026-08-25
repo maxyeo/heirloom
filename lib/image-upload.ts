@@ -1,3 +1,4 @@
+import { MAX_UPLOAD_BYTES } from "@/lib/image-endpoint";
 import {
   stripLocation,
   UnreadableImageError,
@@ -54,24 +55,23 @@ import { newImageKey } from "@/lib/storage-key";
  * reaches, with no message saying what the limit is.
  *
  * **What this means for a phone photograph**, said plainly because the next
- * ticket needs to know: a recent phone produces 3–12 MB images, so a
- * meaningful share of what a family actually wants to upload will be refused.
- * The fix is not a larger cap — there is no larger cap available — it is for
- * E5-T3's image button to downscale in a canvas before it posts. That has a
- * useful side effect worth recording: a canvas re-encode bakes the rotation
- * into the pixels and drops every metadata block, so for that path the work
- * below is belt and braces. For everything else — a `curl`, a future import,
- * a client that skips the resize — it is the only thing standing between a
- * home address and a storage host.
- */
-
-/**
- * The largest upload accepted, four mebibytes.
+ * ticket needed to know: a recent phone produces 3–12 MB images, so a
+ * meaningful share of what a family actually wants to upload would be
+ * refused. The fix is not a larger cap — there is no larger cap available —
+ * it is for E5-T3's image button to downscale in a canvas before it posts,
+ * which `lib/image-insert.ts` now does. That has a useful side effect worth
+ * recording: a canvas re-encode bakes the rotation into the pixels and drops
+ * every metadata block, so for that path the work below is belt and braces.
+ * For everything else — a `curl`, a future import, a browser whose canvas
+ * threw and fell back to posting the original — it is the only thing standing
+ * between a home address and a storage host.
  *
- * See the note above: the ceiling is the platform's 4.5 MB request body and
- * the headroom is multipart framing.
+ * {@link MAX_UPLOAD_BYTES} itself now lives in `lib/image-endpoint.ts`, with
+ * the rest of what the two ends of this wire have to agree about: the browser
+ * has to know the cap in order to resize under it, and it cannot import this
+ * module to learn it — `lib/image-metadata.ts` is a few hundred lines of Exif
+ * surgery with no business in a browser bundle.
  */
-export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 /**
  * The largest request body worth buffering.

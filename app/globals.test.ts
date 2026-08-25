@@ -132,6 +132,18 @@ describe("call sites", () => {
   const exempt = new Set([
     join("app", "globals.css"),
     join("app", "globals.test.ts"),
+    /**
+     * `DOWNSCALE_BACKGROUND` (E5-T3, `YEO-43`). Not a colour this application
+     * paints: it is what a transparent pixel becomes when the image button
+     * flattens an oversized PNG into a JPEG, which has no alpha channel.
+     *
+     * The value is baked into the bytes of a file that is then stored,
+     * exported and opened in programs that are not this one, so it cannot be
+     * a token — a token is a thing the stylesheet can change its mind about
+     * later, and this one is already in every photograph it touched. White
+     * rather than `--color-paper` for exactly that reason.
+     */
+    join("lib", "image-insert.ts"),
   ]);
 
   function sourceFiles(): string[] {

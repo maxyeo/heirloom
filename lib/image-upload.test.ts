@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  MAX_REQUEST_BYTES,
-  MAX_UPLOAD_BYTES,
-  prepareUpload,
-} from "@/lib/image-upload";
+import { MAX_UPLOAD_BYTES } from "@/lib/image-endpoint";
+import { MAX_REQUEST_BYTES, prepareUpload } from "@/lib/image-upload";
 import {
   app1Exif,
   contains,

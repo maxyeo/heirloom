@@ -27,15 +27,16 @@ import { imageKeyFromHref } from "@/lib/storage-key";
  * an entry, and the history would restore with holes in it. So the caller
  * scans both tables and unions the result; see `lib/export-full.ts`.
  *
- * ## This finds nothing today, and that is expected
+ * ## This found nothing when it was written, and that was expected
  *
- * `img` is deliberately absent from `lib/sanitize-html.ts`'s allowlist until
- * E5-T3 (`YEO-43`) enables the toolbar's image button, so no stored body
- * contains one yet. The scan is written against the reference shape
- * docs/architecture.md fixes rather than against today's emptiness: the
+ * `img` was deliberately absent from `lib/sanitize-html.ts`'s allowlist until
+ * E5-T3 (`YEO-43`) enabled the toolbar's image button, so no stored body
+ * contained one. The scan was written against the reference shape
+ * docs/architecture.md fixes rather than against that emptiness: the
  * alternative is an export that silently stops being a backup on the day
  * images start appearing in entries, which is exactly the kind of decay
- * nobody notices until the restore.
+ * nobody notices until the restore. That day has now been and gone without
+ * anything here changing, which is the whole of the argument.
  *
  * Nothing here imports `@/db`, so `npm test` drives it with no database — the
  * split `lib/export-tree.ts` describes, on the same line.
