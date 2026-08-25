@@ -146,6 +146,9 @@ export async function createPageIn(
       pageId: page.id,
       title,
       bodyHtml: "",
+      // A new entry has no hatnote, and stating that rather than defaulting it
+      // is what `writeRevision` requires the field for — see its docblock.
+      hatnote: "",
       editedBy: input.createdBy,
     });
 

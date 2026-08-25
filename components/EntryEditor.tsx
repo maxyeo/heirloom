@@ -1,7 +1,7 @@
 "use client";
 
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
-import type { Editor } from "@tiptap/react";
+import type { Editor, Extensions } from "@tiptap/react";
 import {
   useCallback,
   useEffect,
@@ -14,11 +14,14 @@ import {
 import {
   BLOCK_STYLES,
   EDITOR_INPUT_OPTIONS,
+  HATNOTE_TOOLBAR_ITEMS,
   HEADING_LEVELS,
   TOOLBAR_ITEMS,
   createEntryExtensions,
+  createHatnoteExtensions,
   normaliseLinkHref,
   type HeadingLevel,
+  type ToolbarItem,
   type ToolbarItemId,
 } from "@/lib/editor-extensions";
 import { entryHref, entrySlugFromHref, searchEntries } from "@/lib/entry-links";
@@ -78,6 +81,20 @@ import { headingNodePosition } from "@/lib/section-edit";
  *
  * Given no `entries`, the link panel is exactly what it was before E2-T5: a
  * single address field. Nothing here requires the list.
+ *
+ * ## The hatnote variant (E11-T9, `YEO-79`)
+ *
+ * `variant="hatnote"` is the same component with a smaller document model: one
+ * line, one toolbar button, no block structure. It is a variant rather than a
+ * second component because the part worth not duplicating is the link panel —
+ * the entry picker, the two modes, the "insert with its own text when there is
+ * no selection" rule — which is a great many decisions that would immediately
+ * begin to diverge in a copy. What the variant changes is *data*: which
+ * extensions, which toolbar items, which surface class. Nothing in `LinkPanel`
+ * knows there are two.
+ *
+ * See `VARIANTS` below for what each one is, and `lib/hatnote.ts` for why the
+ * hatnote's stored form has room for text and links and nothing else.
  */
 export interface EntryEditorProps {
   /** Existing body HTML to open with. Sanitised server-side before it gets here. */
@@ -114,7 +131,61 @@ export interface EntryEditorProps {
    * to the click that brought them here.
    */
   initialHeadingIndex?: number | null;
+  /**
+   * Which document this editor is editing: an entry body, or the one-line
+   * hatnote above it (E11-T9, `YEO-79`).
+   *
+   * Defaults to the body, so every call site that predates it means what it
+   * meant.
+   */
+  variant?: EditorVariant;
 }
+
+/** The two documents this component can edit. See `VARIANTS`. */
+export type EditorVariant = "body" | "hatnote";
+
+/**
+ * What each variant is, as data rather than as branches through the render.
+ *
+ * Collected here so that "what is different about a hatnote editor" is one
+ * short table to read rather than four `variant === "hatnote"` checks spread
+ * across a component. Anything not in this table is deliberately the same in
+ * both.
+ */
+const VARIANTS: Readonly<
+  Record<
+    EditorVariant,
+    {
+      /** The extension set — the tags this editor can produce at all. */
+      createExtensions: () => Extensions;
+      /** The buttons. */
+      items: readonly ToolbarItem[];
+      /** Classes on the writing surface itself. */
+      surfaceClass: string;
+      /** Whether Enter starts a new block, and what a screen reader is told. */
+      multiline: boolean;
+    }
+  >
+> = {
+  body: {
+    createExtensions: createEntryExtensions,
+    items: TOOLBAR_ITEMS,
+    // `wiki-body` is the article's own stylesheet, so a heading typed here
+    // gets the same serif and the same bottom rule it will have once saved.
+    // The focus ring is the global `:focus-visible` rule.
+    surfaceClass: "wiki-body min-h-80 px-4 py-3",
+    multiline: true,
+  },
+  hatnote: {
+    createExtensions: createHatnoteExtensions,
+    items: HATNOTE_TOOLBAR_ITEMS,
+    // `hatnote` alongside `wiki-body` for the reason `wiki-body` is on the
+    // body's surface: the field should look like the line it becomes, so an
+    // author sees the italic indent while typing rather than after saving.
+    surfaceClass: "wiki-body hatnote px-4 py-2",
+    multiline: false,
+  },
+};
 
 /**
  * The default for `entries`, hoisted rather than written as `= []` in the
@@ -131,8 +202,11 @@ export function EntryEditor({
   label = "Entry body",
   entries = NO_ENTRIES,
   initialHeadingIndex = null,
+  variant = "body",
 }: EntryEditorProps) {
   const bodyFieldRef = useRef<HTMLInputElement>(null);
+  const { createExtensions, items, surfaceClass, multiline } =
+    VARIANTS[variant];
 
   // `useEditor` builds the editor once and does not rebuild it when props
   // change, so reading `onChange` directly inside `onUpdate` would pin the
@@ -144,7 +218,7 @@ export function EntryEditor({
 
   // Built once and kept. Tiptap compares extension arrays by reference, so a
   // fresh array on every render makes it re-apply options it already has.
-  const [extensions] = useState(createEntryExtensions);
+  const [extensions] = useState(createExtensions);
 
   const editor = useEditor({
     ...EDITOR_INPUT_OPTIONS,
@@ -155,13 +229,27 @@ export function EntryEditor({
     immediatelyRender: false,
     editorProps: {
       attributes: {
-        // `wiki-body` is the article's own stylesheet, so a heading typed here
-        // gets the same serif and the same bottom rule it will have once
-        // saved. The focus ring is the global `:focus-visible` rule.
-        class: "wiki-body min-h-80 px-4 py-3",
+        class: surfaceClass,
         "aria-label": label,
-        "aria-multiline": "true",
+        "aria-multiline": String(multiline),
       },
+      /**
+       * A one-line field stays one line (E11-T9, `YEO-79`).
+       *
+       * `hardBreak` is already off in `HATNOTE_STARTER_KIT_OPTIONS`, so
+       * shift+Enter produces nothing; this stops plain Enter from splitting the
+       * paragraph. Both halves are needed. Without this one a second paragraph
+       * is perfectly typeable, survives until save, and is then flattened back
+       * onto one line by `normaliseHatnote` — content the author watched
+       * themselves write, silently rearranged afterwards. Refusing the
+       * keystroke is the honest version of the same rule.
+       *
+       * `undefined` for the body, so nothing about pressing Enter in an
+       * article changes.
+       */
+      handleKeyDown: multiline
+        ? undefined
+        : (_view, event) => event.key === "Enter",
     },
     onUpdate: ({ editor: updated }) => {
       const html = updated.getHTML();
@@ -232,7 +320,7 @@ export function EntryEditor({
   return (
     <div className="rounded-panel border border-rule bg-paper">
       {editor ? (
-        <EntryEditorToolbar editor={editor} entries={entries} />
+        <EntryEditorToolbar editor={editor} entries={entries} items={items} />
       ) : (
         // Same height as the real bar, so nothing jumps when the editor
         // finishes mounting.
@@ -265,9 +353,12 @@ export function EntryEditor({
 function EntryEditorToolbar({
   editor,
   entries,
+  items,
 }: {
   editor: Editor;
   entries: readonly TitledEntry[];
+  /** The buttons this variant has. See `VARIANTS`. */
+  items: readonly ToolbarItem[];
 }) {
   /**
    * The href the panel was opened on, or `null` when it is closed. Held as an
@@ -282,17 +373,33 @@ function EntryEditorToolbar({
    */
   const [linkPanel, setLinkPanel] = useState<{ href: string } | null>(null);
 
+  /**
+   * Which controls this toolbar has, as a set to ask.
+   *
+   * It guards the selector below rather than merely deciding what to render,
+   * and that is not tidiness: `isActive("bold")` *throws* when no Bold
+   * extension is registered — it resolves the name to a mark type and there is
+   * none — so a hatnote editor asking the body's questions would take the page
+   * down rather than render a smaller bar. Short-circuiting on this set is what
+   * makes the selector describe the editor it is actually looking at.
+   */
+  const present = useMemo(
+    () => new Set<ToolbarItemId>(items.map((item) => item.id)),
+    [items],
+  );
+
   const state = useEditorState({
     editor,
     selector: ({ editor: current }) => ({
-      bold: current.isActive("bold"),
-      italic: current.isActive("italic"),
-      bulletList: current.isActive("bulletList"),
-      link: current.isActive("link"),
-      blockStyle:
-        HEADING_LEVELS.find((level) =>
-          current.isActive("heading", { level }),
-        )?.toString() ?? "paragraph",
+      bold: present.has("bold") && current.isActive("bold"),
+      italic: present.has("italic") && current.isActive("italic"),
+      bulletList: present.has("bulletList") && current.isActive("bulletList"),
+      link: present.has("link") && current.isActive("link"),
+      blockStyle: present.has("heading")
+        ? (HEADING_LEVELS.find((level) =>
+            current.isActive("heading", { level }),
+          )?.toString() ?? "paragraph")
+        : "paragraph",
     }),
   });
 
@@ -381,7 +488,7 @@ function EntryEditorToolbar({
         aria-orientation="horizontal"
         className="flex flex-wrap items-center gap-1 rounded-t-panel border-b border-rule bg-panel px-2 py-1"
       >
-        {TOOLBAR_ITEMS.map((item) =>
+        {items.map((item) =>
           item.id === "heading" ? (
             <select
               key={item.id}

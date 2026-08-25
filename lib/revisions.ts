@@ -44,6 +44,15 @@ export type RevisionDetail = {
   pageId: string;
   title: string;
   bodyHtml: string;
+  /**
+   * The entry's hatnote at this revision (E11-T9, `YEO-79`), as stored.
+   *
+   * Selected alongside the body because both of this type's consumers need it
+   * for the same reason: a restore has to put the hatnote back, and a diff has
+   * to be able to report that it changed. A revision that carried the body and
+   * not the line above it would make restore quietly lossy.
+   */
+  hatnote: string;
   createdAt: Date;
   createdBy: string | null;
   /**
@@ -114,6 +123,7 @@ export async function getRevisionById(
       pageId: schema.revisions.pageId,
       title: schema.revisions.title,
       bodyHtml: schema.revisions.bodyHtml,
+      hatnote: schema.revisions.hatnote,
       createdAt: schema.revisions.createdAt,
       createdBy: schema.revisions.createdBy,
       restoredFromId: schema.revisions.restoredFromId,

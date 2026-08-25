@@ -55,6 +55,34 @@ export type ToolbarItem = (typeof TOOLBAR_ITEMS)[number];
 export type ToolbarItemId = ToolbarItem["id"];
 
 /**
+ * The hatnote field's toolbar (E11-T9, `YEO-79`): the Link button, and
+ * nothing else.
+ *
+ * ## Why this is a filter and not a list
+ *
+ * Because "the hatnote's Link button" and "the body's Link button" must be the
+ * *same control*. Writing a second `{ id: "link", … }` literal here would give
+ * the two fields their own labels and their own tooltips, and they would drift
+ * — one of them would gain the keyboard hint the other lost, and an author
+ * would meet two different buttons doing one thing. Deriving it means there is
+ * one description of what Link is, and this line only decides that a hatnote
+ * has it.
+ *
+ * ## Why exactly one control
+ *
+ * The acceptance criterion is "plain text plus links; not a full editor
+ * surface", and a toolbar is the most direct place to make that true: there is
+ * no bold button, no heading control and no list button, so there is nothing
+ * to press that `lib/hatnote.ts` would then have to flatten back out.
+ * `createHatnoteExtensions` below is the other half — it removes the keyboard
+ * shortcuts and paste handlers that would otherwise produce markup no button
+ * offers, which is the same argument every `false` in `STARTER_KIT_OPTIONS`
+ * makes for the body.
+ */
+export const HATNOTE_TOOLBAR_ITEMS: readonly ToolbarItem[] =
+  TOOLBAR_ITEMS.filter((item) => item.id === "link");
+
+/**
  * The heading control is a `<select>` rather than a button, because one
  * control has to reach three levels.
  *
@@ -229,6 +257,49 @@ export const STARTER_KIT_OPTIONS = {
  */
 export function createEntryExtensions(): Extensions {
   return [StarterKit.configure(STARTER_KIT_OPTIONS)];
+}
+
+/**
+ * How StarterKit is cut down to *one line of text and links* (E11-T9,
+ * `YEO-79`).
+ *
+ * Derived from `STARTER_KIT_OPTIONS` rather than written out, so the hatnote
+ * cannot fall behind a decision made for the body: the link configuration —
+ * the `null` attributes, `isAllowedUri`, the autolinker — is the identical
+ * object, and every extension the body has already switched off stays off
+ * without being named twice.
+ *
+ * What this adds is the narrowing. Bold, italic and the bullet list are gone
+ * because the hatnote has no buttons for them and `normaliseHatnote` would
+ * flatten them away on save — which the author would experience as the field
+ * eating their formatting, the exact failure `STARTER_KIT_OPTIONS`'s header
+ * warns about. `heading` goes for the same reason. `hardBreak` goes because
+ * this is one line: with it on, shift+Enter would put a `<br>` in a field
+ * whose stored form has no room for one.
+ *
+ * `undoRedo` stays on, for the reason it stays on for the body: ⌘Z is not a
+ * formatting decision.
+ */
+export const HATNOTE_STARTER_KIT_OPTIONS = {
+  ...STARTER_KIT_OPTIONS,
+  bold: false,
+  italic: false,
+  bulletList: false,
+  listItem: false,
+  heading: false,
+  hardBreak: false,
+} satisfies Partial<StarterKitOptions>;
+
+/**
+ * The hatnote field's extension set, as a fresh array per call.
+ *
+ * Fresh for the same reason `createEntryExtensions` is: an extension instance
+ * carries per-editor storage, and there are now genuinely two editors on the
+ * edit page — the body and the hatnote — so sharing one array would have them
+ * sharing that storage.
+ */
+export function createHatnoteExtensions(): Extensions {
+  return [StarterKit.configure(HATNOTE_STARTER_KIT_OPTIONS)];
 }
 
 /**

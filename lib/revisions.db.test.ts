@@ -175,6 +175,7 @@ describe("getRevisionById", () => {
       pageId: PAGE,
       title: "Rose Hale v2",
       bodyHtml: "<p>v2.</p>",
+      hatnote: "",
       createdAt: new Date("2024-06-01T00:00:00Z"),
       createdBy: AUTHOR,
       // Null, because this fixture row is an ordinary save rather than a

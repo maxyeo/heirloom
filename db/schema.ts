@@ -186,6 +186,47 @@ export const pages = pgTable(
     slug: text("slug").notNull().unique(),
     title: text("title").notNull(),
     bodyHtml: text("body_html").notNull().default(""),
+    /**
+     * The indented italic line above the lead paragraph (E11-T9, `YEO-79`).
+     *
+     * ## Why it is a column and not the first paragraph of the body
+     *
+     * Because it is not part of the article. A hatnote answers "am I reading
+     * about the right person" — it points *away* from the entry, and the
+     * reader who needs it has not started reading yet. Stored in `body_html`
+     * it would be indistinguishable from prose: the outline would treat it as
+     * content, `ts_headline` would offer it as the snippet that answers a
+     * search, and an author editing the lead could not move a paragraph
+     * without stepping over it. A column keeps "this is apparatus" a fact
+     * about the data rather than a convention about where in a string
+     * something sits.
+     *
+     * ## What is in it
+     *
+     * Text and `<a href>` anchors, and nothing else — the shape
+     * `normaliseHatnote` in `lib/hatnote.ts` produces and re-produces on
+     * every read. It is *not* a second HTML dialect: the value is output of
+     * `sanitizeHtml`, the same allowlist entry bodies go through, narrowed by
+     * a structural flatten between two passes of it rather than by a second
+     * allowlist. See that module for why the narrowing is a transform and not
+     * a policy.
+     *
+     * `not null default ''` rather than nullable, matching `body_html` above:
+     * "no hatnote" and "an empty hatnote" are the same state and deserve one
+     * representation, and every row written before this column existed
+     * already means the first of them.
+     *
+     * ## Why it is not in `search_vector`
+     *
+     * The generated column below indexes the title at weight `A` and the body
+     * at `B`, and it deliberately does not index this. A hatnote names *other*
+     * entries — "For other people named Rose Whitfield, see…" — so indexing it
+     * would make every same-named person's entry a match for every other's,
+     * ranked by text nobody wrote about the subject. The automatic half of the
+     * feature is derived from `individuals` at render time and is not stored
+     * here at all, so it could not be indexed even in principle.
+     */
+    hatnote: text("hatnote").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -271,6 +312,22 @@ export const revisions = pgTable(
       .references(() => pages.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     bodyHtml: text("body_html").notNull(),
+    /**
+     * The entry's hatnote at this revision (E11-T9, `YEO-79`).
+     *
+     * Here for the reason the table exists at all: docs/product.md's "Nothing
+     * is ever destroyed" is a promise about *authored* text, and a hatnote is
+     * authored. A version of this feature that stored the hatnote only on
+     * `pages` would have made one sentence of an entry the one thing a
+     * restore could not bring back, silently — the restore would succeed, the
+     * paragraphs would return, and the line above them would still be
+     * whatever the last save left.
+     *
+     * `not null default ''` so that every revision written before this column
+     * existed reads as the entry having had no hatnote then, which is exactly
+     * what was true.
+     */
+    hatnote: text("hatnote").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

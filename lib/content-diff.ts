@@ -3,6 +3,7 @@ import {
   decodeHtmlEscapes,
   HTML_TOKEN_PATTERN,
 } from "@/lib/html-text";
+import { hatnoteText, normaliseHatnote } from "@/lib/hatnote";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 
 /**
@@ -46,12 +47,23 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
  *
  * The heading levels are kept apart rather than folded into one `"heading"`
  * because promoting a section from `h3` to `h2` genuinely changes the article,
- * and a diff that reported "no changes" for it would be lying. The set is
- * exactly the block-level half of `ALLOWED_TAGS` in `lib/sanitize-html.ts` —
- * if a tag is added there, it belongs in `BLOCK_TAGS` below too.
+ * and a diff that reported "no changes" for it would be lying. All but the
+ * last are exactly the block-level half of `ALLOWED_TAGS` in
+ * `lib/sanitize-html.ts` — if a tag is added there, it belongs in `BLOCK_TAGS`
+ * below too.
+ *
+ * `hatnote` is the exception, and it is one because it is not in the body at
+ * all: it is `pages.hatnote` / `revisions.hatnote`, a column of its own
+ * (E11-T9, `YEO-79`). It gets a kind here rather than being folded into
+ * `paragraph` for the same reason `heading2` and `heading3` are kept apart —
+ * two blocks are "the same" only when kind *and* text match, so a distinct
+ * kind is what makes moving a sentence out of the hatnote and into the lead
+ * report as the edit it is. Without it, a hatnote-only save would write a
+ * revision and then diff as "No change to the rendered content", which is the
+ * worst of both answers.
  */
 export type ContentBlockKind =
-  "paragraph" | "heading2" | "heading3" | "heading4" | "listItem";
+  "paragraph" | "heading2" | "heading3" | "heading4" | "listItem" | "hatnote";
 
 /**
  * One block of rendered content: what kind of thing it is, and the text a
@@ -410,10 +422,57 @@ export function diffContent(
   beforeHtml: string | null | undefined,
   afterHtml: string | null | undefined,
 ): ContentDiffRow[] {
+  return diffEntryContent({ bodyHtml: beforeHtml }, { bodyHtml: afterHtml });
+}
+
+/** One side of a comparison: an entry's two content columns. */
+export type DiffableEntry = {
+  bodyHtml: string | null | undefined;
+  /** `pages.hatnote` / `revisions.hatnote`, as stored (E11-T9, `YEO-79`). */
+  hatnote?: string | null | undefined;
+};
+
+/**
+ * The hatnote as one block, or nothing at all when there is none.
+ *
+ * `normaliseHatnote` rather than `sanitizeHtml`, for the reason
+ * `extractContentBlocks` sanitises what it is handed rather than trusting it:
+ * a stored value can predate the narrowing. Text only, so re-pointing a link
+ * without changing a word reports as no change — exactly what this module
+ * already promises for a paragraph in the body.
+ */
+function hatnoteBlock(hatnote: string | null | undefined): ContentBlock[] {
+  const text = hatnoteText(normaliseHatnote(hatnote));
+  return text ? [{ kind: "hatnote", text }] : [];
+}
+
+/**
+ * Diff two revisions of an entry — the hatnote and the body together.
+ *
+ * The hatnote leads, because that is where it renders and a diff should read
+ * in the order the page does. From there on it is a block like any other:
+ * adding one is an addition, clearing one is a removal, and an unchanged
+ * hatnote contributes an unchanged row so the reader can see it stood still.
+ *
+ * `diffContent` above is this function with no hatnote on either side, kept
+ * because a caller comparing two bodies — `lib/content-diff.test.ts` does it
+ * throughout — should not have to name a column it is not asking about.
+ *
+ * @param before the older revision's content columns, as stored
+ * @param after the newer revision's content columns, as stored
+ * @returns one row per block, in the order they should be read
+ */
+export function diffEntryContent(
+  before: DiffableEntry,
+  after: DiffableEntry,
+): ContentDiffRow[] {
   return markMovedBlocks(
     diffByLongestCommonSubsequence(
-      extractContentBlocks(beforeHtml),
-      extractContentBlocks(afterHtml),
+      [
+        ...hatnoteBlock(before.hatnote),
+        ...extractContentBlocks(before.bodyHtml),
+      ],
+      [...hatnoteBlock(after.hatnote), ...extractContentBlocks(after.bodyHtml)],
     ),
   );
 }
@@ -513,6 +572,8 @@ export function describeBlockKind(kind: ContentBlockKind): string {
       return "Sub-subheading";
     case "listItem":
       return "List item";
+    case "hatnote":
+      return "Hatnote";
   }
 }
 

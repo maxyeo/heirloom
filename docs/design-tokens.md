@@ -103,6 +103,27 @@ Links follow from the same instinct: colour, no underline until hover. A page of
 underlined blue is unreadable, and the colour is signal enough once every link
 on the page has it.
 
+## `.hatnote`
+
+The indented italic line above the lead paragraph — MediaWiki's class name and
+MediaWiki's three declarations (`font-style: italic`, a `1.6em`
+`padding-inline-start`, a `0.5em` bottom margin), borrowed for the same reason
+the rest of the skin is: a reader who has met a hatnote on Wikipedia already
+knows the line is not the article and is there to send them elsewhere.
+
+It sits **outside** `.wiki-body`, deliberately. A hatnote is not article prose:
+it is stored in `pages.hatnote` rather than in the body, rendered above it, and
+never reaches the article's own stylesheet as content. The one place the two
+classes appear together is the edit form's hatnote field, where `wiki-body
+hatnote` on the writing surface is what makes the field look like the line it
+becomes.
+
+Two hatnotes can stack — the author's and the automatic "For other people named
+…" one. The margin is on the bottom rather than the top so that stacking spaces
+them evenly and leaves exactly one gap above the first paragraph. An entry with
+neither renders **no element at all**, which is asserted in
+`components/ArticleHatnote.test.tsx` rather than left to the eye.
+
 ## `.wiki-body`
 
 The article body — the equivalent of MediaWiki's `.mw-parser-output`. It carries

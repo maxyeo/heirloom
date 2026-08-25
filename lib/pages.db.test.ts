@@ -91,6 +91,9 @@ describe("getPageBySlug", () => {
       slug: SLUG,
       title: "Rose Hale",
       bodyHtml: BODY,
+      // Empty, because this fixture never set one — which is what the column's
+      // `default ''` means for every row that predates it (E11-T9, `YEO-79`).
+      hatnote: "",
     });
   });
 

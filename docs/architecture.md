@@ -225,6 +225,82 @@ Three consequences worth stating, because each is load-bearing:
   — go through it too, and collect their slugs into the same one query. What a
   red link _is_ has one description.
 
+### Hatnotes
+
+The indented italic line above the lead paragraph — _"For other people named
+Rose Whitfield, see …"_ — is E11-T9 (`YEO-79`), and it is the cheapest possible
+answer to "am I reading about the right person". Repeated names are the norm in
+families rather than the exception, so the doubt is common and it occurs
+exactly where this line sits.
+
+**It is a column, not the first paragraph of the body.** A hatnote points
+_away_ from the entry, which is what makes it apparatus rather than prose.
+Stored inside `body_html` it would be indistinguishable from content: the
+outline would treat it as a block, `ts_headline` would offer it as the snippet
+that answers a search, and an author could not edit the lead without stepping
+over it. `pages.hatnote` and `revisions.hatnote` keep "this is apparatus" a
+fact about the data. It is deliberately absent from `pages.search_vector` for
+the same reason — a hatnote names _other_ entries, so indexing it would make
+every same-named person a match for every other.
+
+**Text and links, enforced by the one allowlist.** The acceptance criterion is
+"plain text plus links; not a full editor surface", and the obvious
+implementation is a second `sanitize-html` options object with
+`allowedTags: ["a"]`. That is a second allowlist, and a second allowlist is a
+second thing to tighten — the failure being that a tag disallowed in a body
+goes on being allowed in the line above it. So `normaliseHatnote`
+(`lib/hatnote.ts`) runs `sanitizeHtml`, walks its output turning block tags
+into spaces and dropping every inline tag but `a`, and runs `sanitizeHtml`
+again. The narrowing is a **transform** rather than a policy: it can only
+remove from what the allowlist already permitted, and the second pass means the
+value is sanitiser output whatever it was given — the identical argument
+`lib/article-outline.ts` makes for its own two passes. It runs on write and
+again on read, like the body, for the reasons "Entry HTML" gives above.
+
+The editor side is the same subtraction: `createHatnoteExtensions` is the
+body's StarterKit configuration with bold, italic, lists, headings and
+`hardBreak` off, one toolbar button (the body's own Link control, derived
+rather than restated), and Enter refused. So the field cannot produce markup
+the stored form would have to flatten away — which is what "not a full editor
+surface" has to mean if it is to mean anything. **No `[[wiki syntax]]`**:
+`lib/entry-links.ts` rules it out on docs/product.md's No-Markdown principle,
+and a hatnote is not the place to reintroduce it.
+
+**Two hatnotes, and they compose by stacking.** The manual one is editorial and
+about this entry; the automatic one is a fact about `individuals`, derived at
+render time and stored nowhere. Both render, the author's first, each in its
+own `.hatnote`. Neither suppresses the other, and both directions of
+suppression are wrong: hiding the automatic note when an author wrote one hides
+a collision the author _cannot have known about_ — the namesake may have been
+added years later by somebody else — and hiding the author's note throws away a
+sentence somebody deliberately wrote. When the lookup finds nobody there is no
+automatic note; when there is neither, **no element is rendered at all**, which
+`components/ArticleHatnote.test.tsx` asserts, because an empty wrapper leaves a
+margin above the lead and nobody notices for months.
+
+**The collision lookup is one indexed query.** `findNamesakes`
+(`lib/namesakes.ts`) matches on `surname = ? AND given_name = ?`, which is
+exactly the pair `individuals_surname_idx` leads on, and it brings the entry
+addresses back through a `left join` onto `pages` rather than asking per name.
+The match is exact where people search is tolerant, and that is deliberate: a
+hatnote is a claim, and "for other people named Rose Whitfield" is false if the
+other person is a Rosa. Tolerance also could not be a `WHERE` predicate —
+`nameKey`'s substitutions run in TypeScript — so a tolerant version would have
+to read every individual on every entry render, which is the scan this avoids.
+The namesakes' slugs and the author's hatnote's links join the body's in the
+_one_ `findExistingSlugs` call the render already makes, so a hatnote costs the
+page no extra round trip and a namesake with no entry comes out as a red link
+inviting somebody to write one.
+
+**It is versioned.** `revisions.hatnote` exists because "Nothing is ever
+destroyed" (docs/product.md) is a promise about authored text. Without it,
+restore would put the paragraphs back and leave the line above them as the last
+save left it — succeeding, and being lossy, with nothing reporting it. The
+no-op rules in `savePage` and `restoreRevision` compare it too, so a
+hatnote-only edit is a change; and `diffEntryContent` gives it a block kind of
+its own, so that change is visible in a comparison rather than reported as "No
+change to the rendered content".
+
 ### Secrets
 
 `DATABASE_URL`, `AUTH_SECRET`, `AUTH_GOOGLE_SECRET`, and `STORAGE_TOKEN` live

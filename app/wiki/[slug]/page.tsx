@@ -3,13 +3,22 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { ArticleContents } from "@/components/ArticleContents";
+import { ArticleHatnote } from "@/components/ArticleHatnote";
 import { ArticleHeading } from "@/components/ArticleHeading";
 import { PersonInfobox } from "@/components/PersonInfobox";
 import { readArticleOutline } from "@/lib/article-outline";
 import { readEntryInfobox } from "@/lib/entry-infobox";
+import { getEntryPerson } from "@/lib/entry-person";
+import { normaliseHatnote } from "@/lib/hatnote";
+import { findNamesakes, NO_NAMESAKES } from "@/lib/namesakes";
 import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
+import { formatPersonName } from "@/lib/person-format";
 import { infoboxEntrySlugs } from "@/lib/person-infobox";
-import { resolveEntryLinks } from "@/lib/red-links";
+import {
+  entryLinkSlugs,
+  markMissingEntryLinks,
+  resolveEntryLinks,
+} from "@/lib/red-links";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { insertSectionEditLinks } from "@/lib/section-edit";
 import { requireSession } from "@/lib/session";
@@ -86,6 +95,20 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   const bodyHtml = sanitizeHtml(entry.bodyHtml);
 
   /**
+   * The author's hatnote (E11-T9, `YEO-79`), narrowed on the way out for the
+   * same reason and by the same rule as the body above: `lib/save-page.ts`
+   * normalised it on the way in, and normalising again is what stops a row
+   * written by `db:seed` or by hand in a SQL console from being trusted. It is
+   * `""` when the entry has none, and `""` is what makes the element vanish
+   * rather than merely empty — see `components/ArticleHatnote.tsx`.
+   *
+   * This is not a second sanitisation path: `normaliseHatnote` *is*
+   * `sanitizeHtml`, run twice with a structural flatten between the passes.
+   * See `lib/hatnote.ts`.
+   */
+  const hatnoteHtml = normaliseHatnote(entry.hatnote);
+
+  /**
    * The section structure, and the same body with an `id` on every heading —
    * derived here, never stored, so that renaming a heading cannot leave a
    * stale anchor behind. E11-T3 (`YEO-73`); E11-T4 (`YEO-74`) hangs its
@@ -97,8 +120,19 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   const outline = readArticleOutline(bodyHtml);
 
   /**
-   * The person infobox (E11-T5), or null when nobody is linked to this entry
-   * — places, heirlooms and stories render no box and leave no gap.
+   * Who this entry is about, if anybody (E2-T3) — read **once**, here, and
+   * handed to everything that needs it.
+   *
+   * It used to be read inside `readEntryInfobox`. E11-T9 (`YEO-79`) moved it
+   * out, because the automatic hatnote asks the same question and a second
+   * call would be a second scan of `individuals` to re-derive a row this
+   * render already has. `getEntryPerson` also owns the tie-break for the case
+   * where two rows claim one entry, and one caller means one answer.
+   *
+   * ## The infobox (E11-T5)
+   *
+   * Null when nobody is linked to this entry — places, heirlooms and stories
+   * render no box and leave no gap.
    *
    * Every fact in it is derived from `individuals` / `unions` /
    * `union_children` at this moment; none of it is stored, and none of it is
@@ -109,7 +143,26 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    * `entry.id`: there is no query to start until the slug has resolved to a
    * row.
    */
-  const infobox = await readEntryInfobox(entry.id);
+  const subject = await getEntryPerson(entry.id);
+  const infobox = await readEntryInfobox(subject);
+
+  /**
+   * Who else in the tree is called this (E11-T9, `YEO-79`) — the automatic
+   * half of the hatnote, and the answer to "am I reading about the right
+   * Thomas".
+   *
+   * One query, and one that `individuals_surname_idx` serves: the predicate is
+   * the exact `(surname, given_name)` pair the index leads on, and the entry
+   * addresses come back through a `left join` rather than through a lookup per
+   * name. `lib/namesakes.ts` argues both, and why the match is exact when
+   * people search is not.
+   *
+   * Skipped entirely for an entry that is not about a person, which is most of
+   * them — a place, an heirloom, a story has no name to collide.
+   */
+  const namesakes = subject
+    ? await findNamesakes(subject, entry.id)
+    : NO_NAMESAKES;
 
   /**
    * The section `[edit]` links (E11-T4): one inside every heading, pointing at
@@ -148,12 +201,36 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   const { html: articleHtml, existingSlugs } = await resolveEntryLinks(
     bodyWithEditLinks,
     findExistingSlugs,
-    // The infobox links to entries too (E11-T5), and its slugs join the body's
-    // in *this* question rather than asking a second one. `entryLinkProps`
-    // then decides blue or red for the prose and the box from one set, so the
-    // two cannot disagree about whether an entry exists.
-    infoboxEntrySlugs(infobox),
+    [
+      // The infobox links to entries too (E11-T5), and its slugs join the
+      // body's in *this* question rather than asking a second one.
+      // `entryLinkProps` then decides blue or red for the prose and the box
+      // from one set, so the two cannot disagree about whether an entry
+      // exists.
+      ...infoboxEntrySlugs(infobox),
+      // And so does the hatnote, on both of its halves (E11-T9): the links
+      // the author wrote into it, and the namesakes the lookup above found.
+      // Same argument, same one query — a page that resolved its hatnote
+      // separately would be a second round trip to answer a question already
+      // being asked.
+      ...entryLinkSlugs(hatnoteHtml),
+      ...namesakes.people.flatMap((person) =>
+        person.slug === null ? [] : [person.slug],
+      ),
+    ],
   );
+
+  /**
+   * The author's hatnote, with the links that lead nowhere painted red — the
+   * same treatment the body gets, applied synchronously against the set the
+   * one query above already returned. No `await`, so there is nowhere for a
+   * per-link query to hide; see `markMissingEntryLinks`.
+   *
+   * The automatic half needs no equivalent: it renders as React elements
+   * through `entryLinkProps`, which is the same decision expressed the other
+   * way round (`components/ArticleHatnote.tsx`).
+   */
+  const hatnoteWithLinks = markMissingEntryLinks(hatnoteHtml, existingSlugs);
 
   return (
     // `max-w-content` is Vector 2022's 46em measure. The padding is the mobile
@@ -174,6 +251,28 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
         {/* The title and "From Heirloom, the family wiki" under it, with the
             rule under the pair — E11-T2. */}
         <ArticleHeading title={entry.title} />
+
+        {/*
+          The hatnote (E11-T9): the indented italic line that says which Rose
+          this is. Above the infobox in source order — which is where Wikipedia
+          puts it, and it is also the order it should be read in, since the box
+          floats and this line is the first thing after the title.
+
+          Renders *nothing at all* when the entry has no hatnote and shares its
+          subject's name with nobody: no wrapper, no margin, no whitespace
+          above the lead.
+        */}
+        <ArticleHatnote
+          hatnoteHtml={hatnoteWithLinks}
+          subjectName={
+            subject
+              ? formatPersonName(subject.givenName, subject.surname)
+              : null
+          }
+          namesakes={namesakes.people}
+          extraNamesakes={namesakes.extra}
+          existingSlugs={existingSlugs}
+        />
 
         {/*
           No Edit / View history links here any more. E1-T5 and E1-T8 each left

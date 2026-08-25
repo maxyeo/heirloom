@@ -42,6 +42,12 @@ export interface EntryEditFormProps {
   /** The stored body, already sanitised on the way out of the database. */
   initialHtml: string;
   /**
+   * The stored hatnote (E11-T9, `YEO-79`), already through
+   * `normaliseHatnote` on the way out of the database — so text and links,
+   * and `""` for an entry that has none, which is most of them.
+   */
+  initialHatnote: string;
+  /**
    * Every entry that exists, for the editor's link button (E2-T5, `YEO-28`).
    *
    * Passed straight through. This form holds no opinion about linking; it is
@@ -66,11 +72,13 @@ export function EntryEditForm({
   slug,
   title: storedTitle,
   initialHtml,
+  initialHatnote,
   entries,
   initialHeadingIndex,
 }: EntryEditFormProps) {
   const router = useRouter();
   const titleId = useId();
+  const hatnoteHintId = useId();
   const errorId = useId();
 
   const [title, setTitle] = useState(storedTitle);
@@ -83,6 +91,14 @@ export function EntryEditForm({
     bodyHtml.current = html;
   }, []);
 
+  // And the hatnote, held the same way and for the same reason: it is a second
+  // editor, and putting its HTML in state would re-render the *body* editor's
+  // container on every keystroke in the line above it.
+  const hatnote = useRef(initialHatnote);
+  const onHatnoteChange = useCallback((html: string) => {
+    hatnote.current = html;
+  }, []);
+
   function save(): void {
     setError(null);
 
@@ -91,6 +107,7 @@ export function EntryEditForm({
         slug,
         title,
         bodyHtml: bodyHtml.current,
+        hatnote: hatnote.current,
       });
 
       switch (result.status) {
@@ -134,6 +151,34 @@ export function EntryEditForm({
         aria-describedby={error === null ? undefined : errorId}
         className="mt-1 mb-4 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 font-serif text-h2 text-ink"
       />
+
+      {/*
+        The hatnote (E11-T9), above the body because that is where it renders.
+
+        Labelled in the author's words rather than in Wikipedia's: "hatnote" is
+        a term this project borrows in its class names and its docs, and
+        docs/product.md is explicit that the primary author is not a developer.
+        The hint says what the line does and — the part nobody would guess —
+        that the same line appears by itself when two people share a name, so
+        an author does not write one by hand for a job already done.
+      */}
+      <label className="block text-caption text-ink-muted">
+        Note above the entry (optional)
+      </label>
+      <p id={hatnoteHintId} className="mt-0.5 mb-1 text-note text-ink-muted">
+        One line, shown in italics above the first paragraph, for pointing a
+        reader somewhere else. Entries about people who share a name already get
+        one of these on their own.
+      </p>
+      <div className="mb-4">
+        <EntryEditor
+          variant="hatnote"
+          label="Note above the entry"
+          initialHtml={initialHatnote}
+          onChange={onHatnoteChange}
+          entries={entries}
+        />
+      </div>
 
       <EntryEditor
         initialHtml={initialHtml}

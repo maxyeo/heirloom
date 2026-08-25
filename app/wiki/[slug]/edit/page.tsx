@@ -4,6 +4,7 @@ import { cache } from "react";
 
 import { EntryEditForm } from "@/components/EntryEditForm";
 import { readArticleOutline } from "@/lib/article-outline";
+import { normaliseHatnote } from "@/lib/hatnote";
 import { getPageBySlug, listPages } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import {
@@ -107,6 +108,17 @@ export default async function EntryEditPage({
   const initialHtml = sanitizeHtml(entry.bodyHtml);
 
   /**
+   * And the hatnote (E11-T9, `YEO-79`), narrowed on the way out for exactly
+   * the reason the body is sanitised on the way out: this value becomes an
+   * editor's starting document, so it is markup heading for a browser, and a
+   * row written by `db:seed` or by hand has been through nothing. Handing the
+   * field the same value the article renders is also what makes the round trip
+   * closed — an author who opens the editor and saves without typing writes
+   * back what was already there, and `savePage` correctly reports no change.
+   */
+  const initialHatnote = normaliseHatnote(entry.hatnote);
+
+  /**
    * Which heading the author pressed `[edit]` on, as a position in the
    * document (E11-T4, `YEO-74`).
    *
@@ -139,6 +151,7 @@ export default async function EntryEditPage({
         title={entry.title}
         entries={entries}
         initialHtml={initialHtml}
+        initialHatnote={initialHatnote}
         initialHeadingIndex={headingIndex}
       />
     </main>

@@ -7,7 +7,7 @@ import {
   describeBlockKind,
   describeContentDiffSummary,
   describeDiffStatus,
-  diffContent,
+  diffEntryContent,
   hasContentChanges,
   summariseContentDiff,
   type ContentBlockKind,
@@ -156,6 +156,11 @@ const BLOCK_TEXT_CLASS: Readonly<Record<ContentBlockKind, string>> = {
   // Indented, with the marker drawn in below — a bullet is how a reader knows
   // a line belongs to a list, and there is no `<ul>` here to supply one.
   listItem: "ps-4",
+  // The line above the lead (E11-T9, `YEO-79`), drawn as it is drawn on the
+  // article: indented and italic. `.hatnote` itself is not reused, because the
+  // stylesheet's rule carries a bottom margin meant for sitting above a
+  // paragraph, and in here every row supplies its own spacing.
+  hatnote: "ps-4 italic",
 };
 
 /**
@@ -228,7 +233,7 @@ export default async function CompareRevisionsPage({
   const { page, older, newer } = loaded;
 
   const historyHref = `/wiki/${encodeURIComponent(slug)}/history`;
-  const rows = diffContent(older.bodyHtml, newer.bodyHtml);
+  const rows = diffEntryContent(older, newer);
   const changed = hasContentChanges(rows);
   // The title is stored on the revision alongside the body, so renaming an
   // entry is a change between two revisions even when not one word of the
