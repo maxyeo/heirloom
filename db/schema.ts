@@ -176,7 +176,8 @@ export const pages = pgTable(
      * discarded, and what lands in the vector is the words between them. That
      * is the acceptance criterion ("indexes the text content, not the HTML
      * tags") met by the parser rather than by a `regexp_replace` this schema
-     * would then have to keep in step with whatever `lib/sanitize.ts` allows.
+     * would then have to keep in step with whatever `lib/sanitize-html.ts`
+     * allows.
      * It also means a link's `href` is not searchable text, which is right:
      * an author looking for "example.com" is looking for it in prose.
      *
@@ -194,6 +195,13 @@ export const pages = pgTable(
      * column nullable would have to change this expression with it.
      */
     searchVector: tsvector("search_vector").generatedAlwaysAs(
+      // `sql.raw` because a column's generation expression is DDL: this string
+      // is what drizzle-kit writes into the migration, and a bound parameter
+      // has no meaning in a `CREATE TABLE`. It is safe for the reason raw SQL
+      // usually is not — `SEARCH_TEXT_CONFIG` is a constant declared just
+      // above, not a value anything outside this file can reach. Every place
+      // the *query* side names the configuration binds it instead, and casts
+      // it to `regconfig`; see `searchEntries` in `lib/pages.ts`.
       sql`setweight(to_tsvector('${sql.raw(SEARCH_TEXT_CONFIG)}', "title"), 'A') || setweight(to_tsvector('${sql.raw(SEARCH_TEXT_CONFIG)}', "body_html"), 'B')`,
     ),
   },
