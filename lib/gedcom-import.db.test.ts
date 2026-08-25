@@ -234,6 +234,59 @@ describe("importGedcom", () => {
     expect(await countLedgerRows(digest)).toBe(1);
   });
 
+  it("refuses one of two imports racing on the same digest, not both", async () => {
+    /**
+     * The claim the whole ticket rests on, tested rather than argued.
+     *
+     * The test above proves the guard against a *sequential* second call,
+     * which is the retried request and the back button. It cannot see the
+     * case the ticket actually names first — two tabs in flight at once —
+     * because by the time the second call starts, the first has committed and
+     * any `select`-then-`insert` would have caught it too.
+     *
+     * This runs them at once, on two pooled connections, with neither having
+     * committed when the other begins. That is the window a check in
+     * application code cannot close and the unique index does: the loser
+     * blocks on the index until the winner resolves, then finds its
+     * `onConflictDoNothing` inserted nothing and refuses.
+     *
+     * Deterministic despite being a race, which is what keeps it out of
+     * `YEO-90`'s flake territory: the two outcomes are decided by Postgres
+     * rather than by timing, exactly one insert can satisfy the constraint,
+     * and neither call holds a lock the other needs before that point — so
+     * there is no ordering in which both succeed, both fail, or either
+     * deadlocks. Which of the two wins is genuinely arbitrary, so nothing
+     * below asserts that it was the first.
+     */
+    const digest = `${PREFIX}-race`;
+
+    const outcomes = await Promise.all([
+      importGedcom(fixtureMapping(), provenanceFor(digest)),
+      importGedcom(fixtureMapping(), provenanceFor(digest)),
+    ]);
+
+    const statuses = outcomes.map((outcome) => outcome.status).sort();
+    expect(statuses).toEqual(["already-imported", "imported"]);
+
+    // One tree, not two, and not none. The refused half rolled back whole —
+    // including its ledger row, which is what stops a losing import from
+    // burning the digest for the winner.
+    expect(await countFixturePeople()).toBe(MAX_ROWS_PER_STATEMENT + 1);
+    expect(await countLedgerRows(digest)).toBe(1);
+
+    // And the rows that landed all belong to the import that won, so
+    // provenance survives the race rather than being split across two ids.
+    const winner = outcomes.find((outcome) => outcome.status === "imported");
+    if (winner === undefined || winner.status !== "imported") {
+      throw new Error("expected exactly one import to have been written");
+    }
+    const tagged = await db
+      .select({ importId: schema.individuals.importId })
+      .from(schema.individuals)
+      .where(like(schema.individuals.givenName, `${PREFIX}%`));
+    expect(tagged.every((row) => row.importId === winner.importId)).toBe(true);
+  });
+
   it("still imports a different digest of what is otherwise the same file", async () => {
     // The guard is keyed on the *bytes*, not on the shape of the mapping — two
     // calls that would write identical rows are not "the same import" unless
