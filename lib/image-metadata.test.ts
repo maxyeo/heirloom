@@ -415,6 +415,77 @@ describe("an Exif block with no location in it", () => {
   });
 });
 
+/**
+ * An Exif block whose directories fan out: one entry-rich parent pointing at
+ * many small children, none of which repeats an offset and none of which
+ * nests more than one deep.
+ *
+ * This is the shape that gets past a depth bound and a visited-offset set
+ * while still asking for entries × entries of work, and it is why the walk
+ * carries a budget rather than only those two guards. Every child here is
+ * individually unremarkable; what makes the block hostile is the sum.
+ */
+function fanOutExif(
+  children: number,
+  entriesEach: number,
+  size: number,
+): Uint8Array<ArrayBuffer> {
+  const block = new Uint8Array(size);
+  const view = new DataView(block.buffer);
+  block[0] = 0x49;
+  block[1] = 0x49;
+  view.setUint16(2, 42, true);
+  view.setUint32(4, 8, true);
+  view.setUint16(8, children, true);
+
+  const base = 8 + 2 + children * 12 + 4;
+  // The children overlap by two bytes each, so one run of counts serves them
+  // all — which is what keeps the file small while the work stays quadratic.
+  for (let at = 0; at < children * 2; at += 2) {
+    view.setUint16(base + at, entriesEach, true);
+  }
+  for (let index = 0; index < children; index += 1) {
+    const entry = 10 + index * 12;
+    view.setUint16(entry, TAG.exifIfd, true);
+    view.setUint16(entry + 2, 4, true);
+    view.setUint32(entry + 4, 1, true);
+    view.setUint32(entry + 8, base + index * 2, true);
+  }
+  return block;
+}
+
+describe("an Exif block that asks for more work than it is worth", () => {
+  it("is dropped, and the budget for it is shared across directories", () => {
+    // 100 children of 50 entries each. No directory is remarkable on its own
+    // and nothing recurses past depth one, so a per-directory limit would
+    // wave every part of this through and pay the whole cost.
+    const scrubbed = stripLocation(
+      jpeg([app1Exif(fanOutExif(100, 50, 4096))]),
+      "image/jpeg",
+    );
+    expect(exifOf(scrubbed)).toBeNull();
+  });
+
+  it("still scrubs a block far larger than any camera writes", () => {
+    // The other half of the bound: generous enough that a real file, even an
+    // unusually chatty one, is nowhere near it.
+    const crowded = tiff({
+      ifd0: [
+        shortField(TAG.orientation, 6),
+        ...Array.from({ length: 300 }, (_, index) =>
+          shortField(0x0200 + index, index),
+        ),
+      ],
+      gps: gpsFields(),
+    });
+    const scrubbed = stripLocation(jpeg([app1Exif(crowded)]), "image/jpeg");
+
+    expect(contains(crowded, GPS_DATE_STAMP)).toBe(true);
+    expect(contains(scrubbed, GPS_DATE_STAMP)).toBe(false);
+    expect(orientationOf(exifOf(scrubbed)!)).toBe(6);
+  });
+});
+
 describe("a second directory in the chain", () => {
   const original = jpeg([
     app1Exif(

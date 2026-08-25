@@ -144,13 +144,6 @@ export class UnreadableImageError extends Error {
     this.name = "UnreadableImageError";
   }
 }
-
-const ascii = (bytes: Uint8Array, at: number, length: number): string =>
-  String.fromCharCode(...bytes.subarray(at, at + length));
-
-const startsWith = (bytes: Uint8Array, at: number, text: string): boolean =>
-  bytes.length >= at + text.length && ascii(bytes, at, text.length) === text;
-
 /**
  * The three tags this scrub reacts to.
  *
@@ -192,10 +185,74 @@ const TYPE_SIZES: Readonly<Record<number, number>> = {
  * `IFD0 → IFD1` is the usual chain and `IFD0 → Exif IFD` the usual nesting,
  * so real files reach two. The bound is here because every step is an offset
  * *read out of the file*: a damaged or hostile one can point anywhere,
- * including back at itself. Visited offsets are tracked as well, which
- * catches the tight cycle; this catches the long walk that never repeats.
+ * including back at itself.
  */
 const MAX_DEPTH = 8;
+
+/**
+ * How many directory entries one Exif block may spend before it is treated as
+ * hostile and dropped.
+ *
+ * This is the bound that actually matters, and depth is not a substitute for
+ * it. A directory holds up to 65,535 entries and every one of them may point
+ * at a *different* child directory, so a block one level deep can still ask
+ * for entries × entries of work — and the two obvious guards both wave it
+ * through: nothing recurses past depth one, and no offset is ever revisited,
+ * because the children are genuinely distinct. Overlapping them inside one
+ * block makes the file small while the work stays quadratic.
+ *
+ * JPEG is accidentally safe from this — an `APP1` segment carries a 16-bit
+ * length, so its Exif block cannot exceed about 64 KB — and PNG and WebP are
+ * not: their chunk lengths are 32-bit, so the hostile block can be as large
+ * as the upload cap allows. That asymmetry is exactly the kind of thing a
+ * bound stated in the wrong unit misses.
+ *
+ * The budget is spent across the *whole* walk rather than reset per
+ * directory, which is what makes fan-out cost something. Real files are three
+ * or four directories of a few dozen entries each, so this leaves around two
+ * orders of magnitude of headroom; a file that exceeds it is not one this
+ * code is going to understand anyway, and the answer to not understanding a
+ * block is to drop it.
+ */
+const MAX_ENTRIES = 4096;
+
+/**
+ * One walk of one Exif block: the bytes, how to read them, and what it has
+ * spent so far.
+ *
+ * Carried as a value rather than as five parameters threaded through four
+ * functions, because `seen` and `entries` are *shared mutable* state — the
+ * whole point of both is that a nested call spends the same budget the caller
+ * was spending. Passing them positionally invites the version of this where
+ * one call site forgets and a guard silently stops applying below it.
+ */
+interface Walk {
+  bytes: Uint8Array;
+  view: DataView;
+  little: boolean;
+  /** Directory offsets already walked, so a cycle is not walked twice. */
+  seen: Set<number>;
+  /** Entries left in {@link MAX_ENTRIES}. Negative means the walk is over. */
+  entries: number;
+}
+
+/**
+ * Charge `count` entries to the walk, and say whether it could afford them.
+ *
+ * The directory itself costs one on top of its entries, so a fan-out of empty
+ * directories is bounded too — otherwise 65,535 children of zero entries each
+ * would be free.
+ */
+function afford(walk: Walk, count: number): boolean {
+  walk.entries -= count + 1;
+  return walk.entries >= 0;
+}
+
+const ascii = (bytes: Uint8Array, at: number, length: number): string =>
+  String.fromCharCode(...bytes.subarray(at, at + length));
+
+const startsWith = (bytes: Uint8Array, at: number, text: string): boolean =>
+  bytes.length >= at + text.length && ascii(bytes, at, text.length) === text;
 
 /**
  * The bytes an entry's value occupies outside the entry, or null if it has
@@ -206,19 +263,17 @@ const MAX_DEPTH = 8;
  * one is two different operations wearing one name.
  */
 function externalValue(
-  view: DataView,
+  walk: Walk,
   entry: number,
-  little: boolean,
-  limit: number,
 ): { at: number; length: number } | null | false {
-  const size = TYPE_SIZES[view.getUint16(entry + 2, little)];
+  const size = TYPE_SIZES[walk.view.getUint16(entry + 2, walk.little)];
   if (size === undefined) return false;
 
-  const length = size * view.getUint32(entry + 4, little);
+  const length = size * walk.view.getUint32(entry + 4, walk.little);
   if (length <= 4) return null;
 
-  const at = view.getUint32(entry + 8, little);
-  if (at + length > limit) return false;
+  const at = walk.view.getUint32(entry + 8, walk.little);
+  if (at + length > walk.bytes.length) return false;
   return { at, length };
 }
 
@@ -230,24 +285,17 @@ function externalValue(
  * case, so a half-erased one never ships, and the partial work is not worth
  * a second pass to avoid.
  */
-function eraseGpsIfd(
-  bytes: Uint8Array,
-  view: DataView,
-  offset: number,
-  little: boolean,
-): boolean {
+function eraseGpsIfd(walk: Walk, offset: number): boolean {
+  const { bytes, view, little } = walk;
   if (offset + 2 > bytes.length) return false;
   const count = view.getUint16(offset, little);
+  if (!afford(walk, count)) return false;
+
   const end = offset + 2 + count * 12 + 4;
   if (end > bytes.length) return false;
 
   for (let index = 0; index < count; index += 1) {
-    const value = externalValue(
-      view,
-      offset + 2 + index * 12,
-      little,
-      bytes.length,
-    );
+    const value = externalValue(walk, offset + 2 + index * 12);
     if (value === false) return false;
     if (value) bytes.fill(0, value.at, value.at + value.length);
   }
@@ -266,18 +314,16 @@ function eraseGpsIfd(
  * they belonged to this directory, so nothing else can be relying on them.
  */
 function removeEntry(
-  bytes: Uint8Array,
-  view: DataView,
+  walk: Walk,
   offset: number,
   index: number,
   count: number,
-  little: boolean,
 ): void {
   const first = offset + 2;
   const end = first + count * 12 + 4;
-  bytes.copyWithin(first + index * 12, first + (index + 1) * 12, end);
-  bytes.fill(0, end - 12, end);
-  view.setUint16(offset, count - 1, little);
+  walk.bytes.copyWithin(first + index * 12, first + (index + 1) * 12, end);
+  walk.bytes.fill(0, end - 12, end);
+  walk.view.setUint16(offset, count - 1, walk.little);
 }
 
 /**
@@ -289,20 +335,15 @@ function removeEntry(
  * GPS pointer sitting immediately after the first — which is not a shape any
  * camera produces and is exactly the shape somebody would produce on purpose.
  */
-function scrubDirectory(
-  bytes: Uint8Array,
-  view: DataView,
-  offset: number,
-  little: boolean,
-  seen: Set<number>,
-  depth: number,
-): boolean {
-  if (depth >= MAX_DEPTH || seen.has(offset)) return false;
-  seen.add(offset);
+function scrubDirectory(walk: Walk, offset: number, depth: number): boolean {
+  const { view, little } = walk;
+  if (depth >= MAX_DEPTH || walk.seen.has(offset)) return false;
+  walk.seen.add(offset);
 
-  if (offset + 2 > bytes.length) return false;
+  if (offset + 2 > walk.bytes.length) return false;
   let count = view.getUint16(offset, little);
-  if (offset + 2 + count * 12 + 4 > bytes.length) return false;
+  if (!afford(walk, count)) return false;
+  if (offset + 2 + count * 12 + 4 > walk.bytes.length) return false;
 
   for (let index = 0; index < count;) {
     const entry = offset + 2 + index * 12;
@@ -324,8 +365,8 @@ function scrubDirectory(
     if (tag === TAG_GPS_IFD) {
       const target = pointer();
       if (target === null) return false;
-      if (!eraseGpsIfd(bytes, view, target, little)) return false;
-      removeEntry(bytes, view, offset, index, count, little);
+      if (!eraseGpsIfd(walk, target)) return false;
+      removeEntry(walk, offset, index, count);
       count -= 1;
       continue;
     }
@@ -341,10 +382,10 @@ function scrubDirectory(
        * reads, from the one field in the block that no reader can interpret
        * without knowing which camera wrote it.
        */
-      const value = externalValue(view, entry, little, bytes.length);
+      const value = externalValue(walk, entry);
       if (value === false) return false;
-      if (value) bytes.fill(0, value.at, value.at + value.length);
-      removeEntry(bytes, view, offset, index, count, little);
+      if (value) walk.bytes.fill(0, value.at, value.at + value.length);
+      removeEntry(walk, offset, index, count);
       count -= 1;
       continue;
     }
@@ -352,9 +393,7 @@ function scrubDirectory(
     if (tag === TAG_EXIF_IFD) {
       const target = pointer();
       if (target === null) return false;
-      if (!scrubDirectory(bytes, view, target, little, seen, depth + 1)) {
-        return false;
-      }
+      if (!scrubDirectory(walk, target, depth + 1)) return false;
     }
 
     index += 1;
@@ -365,7 +404,7 @@ function scrubDirectory(
   // have moved.
   const next = view.getUint32(offset + 2 + count * 12, little);
   if (next === 0) return true;
-  return scrubDirectory(bytes, view, next, little, seen, depth + 1);
+  return scrubDirectory(walk, next, depth + 1);
 }
 
 /**
@@ -399,7 +438,11 @@ function scrubExif(bytes: Uint8Array): boolean {
   // all. Nothing to erase, and nothing wrong with it.
   if (first === 0) return true;
 
-  return scrubDirectory(bytes, view, first, little, new Set(), 0);
+  return scrubDirectory(
+    { bytes, view, little, seen: new Set(), entries: MAX_ENTRIES },
+    first,
+    0,
+  );
 }
 
 /**
@@ -417,8 +460,9 @@ function crc32(bytes: Uint8Array): number {
     crcTable = new Uint32Array(256);
     for (let n = 0; n < 256; n += 1) {
       let c = n;
-      for (let k = 0; k < 8; k += 1)
+      for (let k = 0; k < 8; k += 1) {
         c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      }
       crcTable[n] = c >>> 0;
     }
   }
@@ -619,10 +663,12 @@ function stripWebp(bytes: ImageBytes): ImageBytes {
 /**
  * Return `bytes` with its location metadata removed.
  *
- * The input is copied first and every scrub happens on the copy: callers hold
- * the body of a request, and a function that quietly rewrote a buffer its
- * caller still had a reference to would be a trap in a file about not
- * surprising anyone.
+ * Nothing is ever scrubbed in place in the caller's buffer: every format that
+ * has work to do copies first, because callers hold the body of a request and
+ * a function that quietly rewrote a buffer its caller still had a reference to
+ * would be a trap in a file about not surprising anyone. GIF has no work to
+ * do, so it is returned as it came — the one case where the result and the
+ * argument are the same object, and the one case where that cannot matter.
  *
  * @throws {UnreadableImageError} if the container cannot be walked.
  */
