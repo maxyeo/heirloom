@@ -585,6 +585,59 @@ describe("validateIndividual", () => {
       });
     });
   });
+
+  /**
+   * The two portrait keys (E5-T4, `YEO-44`). Nobody types these — they arrive
+   * from the upload endpoint through a hidden input — so what is checked here
+   * is the same three-way contract `lib/portrait.ts`'s `readPortraitKey`
+   * promises: a good key survives, a bad one is an issue, and the
+   * thumbnail-with-no-portrait state is normalised away exactly as a date
+   * qualifier with no date is.
+   */
+  describe("the portrait", () => {
+    const KEY = "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg";
+    const THUMB = "images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp";
+
+    it("survives a good portrait key pair unchanged", () => {
+      const fields = expectValid({
+        ...MINIMAL,
+        portraitKey: KEY,
+        portraitThumbKey: THUMB,
+      });
+
+      expect(fields.portraitKey).toBe(KEY);
+      expect(fields.portraitThumbKey).toBe(THUMB);
+    });
+
+    it("reports a bad key as an issue on the field it arrived on", () => {
+      expect(
+        expectInvalid({ ...MINIMAL, portraitKey: "not-an-image-key" }),
+      ).toEqual(["portraitKey"]);
+      expect(
+        expectInvalid({ ...MINIMAL, portraitThumbKey: "not-an-image-key" }),
+      ).toEqual(["portraitThumbKey"]);
+    });
+
+    it("normalises a thumbnail with no portrait beside it to null, both fields", () => {
+      // A thumbnail of nothing is a second way of saying "no portrait", and
+      // one that would leave a file referenced by a column nothing renders.
+      const fields = expectValid({ ...MINIMAL, portraitThumbKey: THUMB });
+
+      expect(fields.portraitKey).toBeNull();
+      expect(fields.portraitThumbKey).toBeNull();
+    });
+
+    it("treats a blank string as no portrait, for both fields", () => {
+      const fields = expectValid({
+        ...MINIMAL,
+        portraitKey: "",
+        portraitThumbKey: "",
+      });
+
+      expect(fields.portraitKey).toBeNull();
+      expect(fields.portraitThumbKey).toBeNull();
+    });
+  });
 });
 
 describe("fieldErrorsFrom", () => {
@@ -646,6 +699,27 @@ describe("individualInputFromFormData", () => {
       portraitKey: null,
       portraitThumbKey: null,
     });
+  });
+
+  it("reads both portrait fields (E5-T4, YEO-44)", () => {
+    const form = new FormData();
+    form.set("givenName", "Ada");
+    form.set(
+      "portraitKey",
+      "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg",
+    );
+    form.set(
+      "portraitThumbKey",
+      "images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp",
+    );
+
+    const fields = expectValid(individualInputFromFormData(form));
+    expect(fields.portraitKey).toBe(
+      "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg",
+    );
+    expect(fields.portraitThumbKey).toBe(
+      "images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp",
+    );
   });
 
   it("reads a range's upper bound and its precision (YEO-88)", () => {

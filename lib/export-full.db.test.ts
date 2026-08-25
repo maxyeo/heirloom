@@ -36,10 +36,20 @@ const OTHER_PAGE = "00000000-0000-4000-8000-0000000054a2";
 const OLD_REVISION = "00000000-0000-4000-8000-0000000054b1";
 const NEW_REVISION = "00000000-0000-4000-8000-0000000054b2";
 const PERSON = "00000000-0000-4000-8000-0000000054c1";
+const PORTRAIT_PERSON = "00000000-0000-4000-8000-0000000054c2";
 
 /** Two photographs: one still in the entry, one only in its history. */
 const CURRENT_IMAGE = "images/ab/0e5b6c2f-1234-4a56-89ab-cdef54000001.jpg";
 const REMOVED_IMAGE = "images/cd/0e5b6c2f-1234-4a56-89ab-cdef54000002.jpg";
+
+/**
+ * A person's own portrait and its thumbnail (E5-T4, `YEO-44`) — a column
+ * reference rather than one parsed out of a body, and the regression guard
+ * for "the full backup silently stops being a backup for portraits".
+ */
+const PORTRAIT_IMAGE = "images/ef/0e5b6c2f-1234-4a56-89ab-cdef54000003.jpg";
+const PORTRAIT_THUMB_IMAGE =
+  "images/3a/0e5b6c2f-1234-4a56-89ab-cdef54000004.webp";
 
 function imgTag(key: string): string {
   return `<img src="${IMAGE_ROUTE}/${key.slice("images/".length)}">`;
@@ -52,7 +62,7 @@ async function removeFixture() {
   // explicitly; revisions cascade with their page.
   await db
     .delete(schema.individuals)
-    .where(inArray(schema.individuals.id, [PERSON]));
+    .where(inArray(schema.individuals.id, [PERSON, PORTRAIT_PERSON]));
   await db
     .delete(schema.pages)
     .where(inArray(schema.pages.id, [PAGE, OTHER_PAGE]));
@@ -103,9 +113,16 @@ beforeAll(async () => {
     },
   ]);
 
-  await db
-    .insert(schema.individuals)
-    .values([{ id: PERSON, pageId: PAGE, givenName: "Rose", surname: "Hall" }]);
+  await db.insert(schema.individuals).values([
+    { id: PERSON, pageId: PAGE, givenName: "Rose", surname: "Hall" },
+    {
+      id: PORTRAIT_PERSON,
+      givenName: "Walter",
+      surname: "Portrait",
+      portraitKey: PORTRAIT_IMAGE,
+      portraitThumbKey: PORTRAIT_THUMB_IMAGE,
+    },
+  ]);
 });
 
 afterAll(removeFixture);
@@ -225,6 +242,20 @@ describe("the photographs it looks for", () => {
     expect(current[0].url).toBe(
       `${IMAGE_ROUTE}/ab/0e5b6c2f-1234-4a56-89ab-cdef54000001.jpg`,
     );
+  });
+
+  /**
+   * The regression this file exists to guard: a full backup that carried
+   * portraits but left every thumbnail behind would restore a tree that
+   * fetches full-resolution photographs to draw hundreds of nodes at once —
+   * the exact cost E5-T4 exists to avoid, reintroduced by the recovery.
+   */
+  it("includes both of an individual's portrait keys, not just the original", async () => {
+    const { images } = await readFullExport(NOON);
+    const keys = images.map((image) => image.key);
+
+    expect(keys).toContain(PORTRAIT_IMAGE);
+    expect(keys).toContain(PORTRAIT_THUMB_IMAGE);
   });
 });
 

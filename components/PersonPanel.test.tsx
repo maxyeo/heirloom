@@ -81,6 +81,40 @@ describe("what the panel shows", () => {
   });
 
   /**
+   * The portrait (E5-T4, `YEO-44`), and the one asymmetry with the tree node
+   * worth pinning: the panel renders **no placeholder** when there is none,
+   * unlike the canvas, which always reserves the box. `PersonPanel`'s own
+   * docblock explains why — a large empty silhouette on the majority of
+   * people with no photograph would be noise this read-only panel could do
+   * nothing about.
+   */
+  it("shows the portrait with the person's name in the alt text when there is one", () => {
+    const host = render(
+      <PersonPanel
+        detail={detail({ portraitSrc: "/api/images/ab/x.jpg" })}
+        onSelectPerson={noop}
+        onClose={noop}
+      />,
+    );
+
+    const img = host.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("alt")).toBe("Portrait of Rose Hale");
+  });
+
+  it("renders no img at all when there is no portrait", () => {
+    const host = render(
+      <PersonPanel
+        detail={detail({ portraitSrc: null })}
+        onSelectPerson={noop}
+        onClose={noop}
+      />,
+    );
+
+    expect(host.querySelector("img")).toBeNull();
+  });
+
+  /**
    * Both sides of the one branch this panel takes on a person's `sex`
    * (`YEO-85`).
    *

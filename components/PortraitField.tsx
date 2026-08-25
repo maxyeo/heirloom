@@ -276,7 +276,7 @@ export function PortraitField({
    * check and the freshly signed URL. A `URL.createObjectURL` of the chosen
    * file would look right and prove nothing.
    */
-  const previewSrc = portraitKey === "" ? null : portraitSrc(portraitKey);
+  const previewSrc = portraitSrc(portraitKey === "" ? null : portraitKey);
 
   const clear = () => {
     onChange("portraitKey", "");

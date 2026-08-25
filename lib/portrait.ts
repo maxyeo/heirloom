@@ -127,14 +127,34 @@ export function readPortraitKey(value: unknown): string | null | undefined {
 }
 
 /**
- * The `src` an `<img>` should carry for the image stored under `key`.
+ * The `src` an `<img>` should carry for the portrait stored under `key`, or
+ * `null` when there is no portrait to show.
  *
- * A thin alias for `imagePath`, and it exists so that every portrait in the
- * application names one function rather than three components each
- * remembering that the route drops the `images/` prefix. The URL it resolves
- * to is minted per request and expires; this path does not.
+ * It exists so that every portrait in the application names one function
+ * rather than three components each remembering that the route drops the
+ * `images/` prefix. The path it returns is durable; the signed URL it
+ * redirects to is minted per request and expires.
+ *
+ * **Total, and that is the point.** `imagePath` throws for a key outside the
+ * image namespace, which is right for a caller that just minted one — a
+ * failure there is a bug and deserves a stack trace. It is wrong here. This
+ * function is called once per person while the tree lays itself out, on
+ * values read straight out of the database, so a single row holding a key
+ * that never went through `newImageKey` — a hand-edited cell, a restore from
+ * somewhere else, an import written by a future path — would throw during
+ * layout and blank the entire canvas. One bad row must cost one placeholder,
+ * not the family.
+ *
+ * That is the same reasoning, and the same answer, that `imageKeyFromHref`
+ * gives for reading a key back out of stored HTML.
+ *
+ * Taking a nullable key rather than a bare one is what keeps that honest at
+ * the call sites: "this person has no portrait" and "this person's portrait
+ * key is not usable" are the same thing to a component, and both callers
+ * already had a null branch to put it in.
  */
-export function portraitSrc(key: string): string {
+export function portraitSrc(key: string | null): string | null {
+  if (key === null || !isPortraitKey(key)) return null;
   return imagePath(key);
 }
 

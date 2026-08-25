@@ -197,19 +197,40 @@ for exactly this shape of work — and the cost of exhausting that pool is the
 whole site, in exchange for protection against a family wiki's rows changing
 during a few milliseconds of `select`s.
 
-**The photographs are found by asking the entries, not the store.**
+**The photographs are found by asking the rows, not the store.**
 `lib/storage.ts` exports exactly `put`, `get` and `delete`, and
 [the storage seam](architecture.md#the-storage-seam) is explicit that adding a
 `list` would narrow the set of hosts that can implement it. So the archive
-carries the images that some body — current or historical — refers to. Both
-`pages` and `revisions` are scanned, because revisions are append-only and a
-photograph taken out of an entry last year is still in the version that had
-it.
+carries the images something in the database still refers to, and since
+`E5-T4` there are **two** kinds of reference:
 
-One consequence of that is worth stating plainly rather than discovering:
-**today the archive contains no images at all**, because `img` is not yet in
-[the sanitiser's allowlist](architecture.md#entry-html) — E5-T3 enables the
-editor's image button and widens it. The scan is written against the reference
-shape the architecture fixes rather than against today's emptiness, so the
-export starts carrying photographs on the day entries start having them,
-rather than quietly not doing so until somebody checks.
+- **Entry bodies**, where a reference is an `<img src>` inside authored HTML
+  and has to be parsed back out (`lib/entry-images.ts`). Both `pages` and
+  `revisions` are scanned, because revisions are append-only and a photograph
+  taken out of an entry last year is still in the version that had it.
+- **Portrait columns** on `individuals`, where there is nothing to parse —
+  `portrait_key` and `portrait_thumb_key` _are_ keys. Both are collected, not
+  just the original: an archive that restored the portraits and left every
+  thumbnail behind would come back with a tree that fetches several hundred
+  full-resolution photographs to draw itself.
+
+That second kind is the one that would have gone missing quietly. The scan
+covered `pages` and `revisions` only, so a portrait — which appears in no
+body — would have been in the manifest's `counts` for nothing and absent from
+the archive, and the backup would have stopped being a backup for the
+photographs a family is most likely to care about. It is the same decay
+`lib/entry-images.ts` was written to prevent, arriving through the one door
+that file does not watch.
+
+E5-T5's orphan sweep asks this question in reverse — "referenced by no row" —
+and it has to consult both sources for the same reason. A sweep that knew only
+about bodies would delete every portrait in the wiki.
+
+One consequence of the entry-body half is worth stating plainly rather than
+discovering: **an archive can still contain no images from entries**, because
+`img` reaches the body only once E5-T3 widens
+[the sanitiser's allowlist](architecture.md#entry-html). The scan is written
+against the reference shape the architecture fixes rather than against
+today's emptiness, so the export starts carrying photographs on the day
+entries start having them, rather than quietly not doing so until somebody
+checks.

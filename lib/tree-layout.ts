@@ -172,7 +172,7 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
         lifespan,
         sex: person.sex,
         pageId: person.pageId,
-        portraitSrc: portrait === null ? null : portraitSrc(portrait),
+        portraitSrc: portraitSrc(portrait),
       },
       // Nodes are focusable by default, so a keyboard reaches every person
       // without help — but only the wrapper div is in the tab order, and it

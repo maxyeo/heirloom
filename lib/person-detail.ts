@@ -237,8 +237,7 @@ export function derivePersonDetail(
     birth: toLifeEvent(formatQualifiedDate(birthOf(person)), person.birthPlace),
     death: toLifeEvent(formatQualifiedDate(deathOf(person)), person.deathPlace),
     notes: person.notes,
-    portraitSrc:
-      person.portraitKey === null ? null : portraitSrc(person.portraitKey),
+    portraitSrc: portraitSrc(person.portraitKey),
     pageId: person.pageId,
     spouses,
     children,

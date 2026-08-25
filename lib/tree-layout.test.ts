@@ -479,7 +479,9 @@ describe("layout stability with and without portraits", () => {
     const only = {
       ...graph,
       people: graph.people.map((p) =>
-        p.id === "rose" ? { ...p, portraitKey: KEY, portraitThumbKey: null } : p,
+        p.id === "rose"
+          ? { ...p, portraitKey: KEY, portraitThumbKey: null }
+          : p,
       ),
     };
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { derivePersonDetail } from "@/lib/person-detail";
+import { portraitSrc } from "@/lib/portrait";
 // `import type` matters: lib/family-graph.ts imports @/db, and taking only the
 // type erases the import entirely, which is what keeps this file runnable with
 // no database and therefore runnable in CI. See docs/testing.md.
@@ -235,6 +236,42 @@ describe("the person's own record", () => {
     // Not defensive: E2-T4 opens this panel from `?person=<id>`, where the id
     // is whatever was pasted into the address bar.
     expect(derivePersonDetail(seedGraph(), "nobody")).toBeNull();
+  });
+
+  /**
+   * The panel's portrait is the **full-resolution** image, never the
+   * thumbnail (E5-T4, `YEO-44`) — deliberately the opposite of the tree
+   * node, which loads the thumbnail because a canvas draws hundreds at once.
+   * The panel is the one place somebody has asked to look at a particular
+   * person, and there is exactly one image on screen.
+   */
+  it("resolves portraitSrc to the full portrait, not the thumbnail", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person({
+          id: "ivy",
+          givenName: "Ivy",
+          portraitKey: "images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg",
+          portraitThumbKey:
+            "images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp",
+        }),
+      ],
+      unions: [],
+      childLinks: [],
+    };
+
+    const detail = derivePersonDetail(graph, "ivy");
+
+    expect(detail?.portraitSrc).toBe(
+      portraitSrc("images/ab/1e5b6c2f-1234-4a56-89ab-cdef01234567.jpg"),
+    );
+    expect(detail?.portraitSrc).not.toBe(
+      portraitSrc("images/cd/2f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b81.webp"),
+    );
+  });
+
+  it("is null when there is no portrait", () => {
+    expect(detailFor("walter").portraitSrc).toBeNull();
   });
 });
 
