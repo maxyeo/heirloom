@@ -239,8 +239,22 @@ async function readSchema(): Promise<ExportSchema | null> {
  * vendor call: that URL is exactly what the seam hands back for a caller to
  * fetch (`lib/storage.ts`), and reaching for an SDK here is what
  * `lib/storage.call-sites.test.ts` exists to catch.
+ *
+ * ## The refused response is cancelled, not dropped
+ *
+ * An error response has a body too — a blob store answers a `403` with a
+ * paragraph of XML — and on Node's `fetch` a body that is never read holds
+ * its socket out of the connection pool until a finaliser gets to it. One of
+ * those is nothing; one per referenced photograph, on an export that runs
+ * into an expired credential, is a connection leak that scales with the size
+ * of the family album. `bodyChunks` in `lib/zip-stream.ts` takes the same
+ * care for the same reason, and this is the path that skips it.
+ *
+ * Exported for `lib/export-full.test.ts`: every branch here is a failure the
+ * archive has to survive, and none of them can be reached from a test that
+ * has a working image store.
  */
-async function openImage(key: string): Promise<OpenedImage> {
+export async function openImage(key: string): Promise<OpenedImage> {
   let url: string;
   try {
     const stored = await storage.get(key);
@@ -260,6 +274,10 @@ async function openImage(key: string): Promise<OpenedImage> {
 
   const response = await fetch(url);
   if (!response.ok || response.body === null) {
+    // Cancelling releases the connection. Its own failure is ignored: the
+    // answer to this call is already decided, and a store that cannot even
+    // be hung up on has nothing further to tell us.
+    await response.body?.cancel().catch(() => {});
     return {
       found: false,
       reason: `The image store answered ${response.status} for this file.`,

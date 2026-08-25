@@ -122,15 +122,25 @@ const UINT32_MAX = 0xffffffff;
 const UINT16_MAX = 0xffff;
 
 /**
- * The largest a single member may be: 4 GiB − 1, the most a data descriptor
- * written in the 32-bit form can describe.
+ * The largest a single member may be.
+ *
+ * One byte **below** 4 GiB − 1, and the missing byte is the whole point.
+ * `0xffffffff` is not just the largest value a 32-bit size field can hold, it
+ * is also that field's *sentinel*: a reader that finds it there is told the
+ * real size is in a ZIP64 extra field. A member of exactly that many bytes
+ * would therefore have to be described in ZIP64 — and it cannot be, because
+ * its data descriptor was written in the 32-bit form immediately after its
+ * bytes, long before the table of contents. Excluding the value removes the
+ * case rather than mis-encoding it.
  *
  * Enforced rather than assumed. Exceeding it would produce an archive that
  * looks valid and unpacks a truncated file, which is the precise failure this
  * ticket exists to rule out — *a backup nobody can restore is a file, not a
- * backup*.
+ * backup*. Nothing this application produces comes near it: an image is
+ * capped at 4 MB on upload (`lib/image-upload.ts`) and the other members are
+ * a wiki's text.
  */
-export const MAX_MEMBER_BYTES = UINT32_MAX;
+export const MAX_MEMBER_BYTES = UINT32_MAX - 1;
 
 /** Bytes a member can be given as, when it is not produced incrementally. */
 type ZipBodyChunk = string | Uint8Array;
@@ -237,7 +247,7 @@ export function assertMemberFits(name: string, size: number): void {
 }
 
 /** What the central directory has to remember about a member already written. */
-type CentralEntry = {
+export type CentralEntry = {
   name: Uint8Array;
   crc: number;
   size: number;
@@ -499,43 +509,62 @@ export async function* zipChunks(
   yield* endOfCentralDirectory(central.length, directorySize, directoryOffset);
 }
 
-/** One member's entry in the table of contents, with ZIP64 if it needs it. */
-function centralHeader(
+/**
+ * One member's entry in the table of contents, with ZIP64 if it needs it.
+ *
+ * ## Only the offset can ever need it
+ *
+ * A member's *size* cannot: {@link MAX_MEMBER_BYTES} keeps it strictly below
+ * the 32-bit sentinel, because a size that needed ZIP64 would have needed it
+ * in a data descriptor written long before this point. A member's *offset*
+ * can and does — it is the total bytes written so far, so a few thousand
+ * photographs are enough to pass 4 GiB, which is a real archive rather than a
+ * hypothetical one.
+ *
+ * So the ZIP64 extra field this writes carries exactly one value. The spec
+ * fixes the order of the fields it *could* carry — uncompressed size,
+ * compressed size, then offset — and a value is present only when the 32-bit
+ * slot standing in for it holds the sentinel, so an extra field holding just
+ * the offset is well-formed and is what a reader expects when only the offset
+ * slot is `0xffffffff`.
+ *
+ * Exported for `lib/zip-stream.test.ts`. The ZIP64 branch is reachable only
+ * by an archive over 4 GiB, and a test that produced one to check a field
+ * offset would cost minutes of CI for every run to exercise sixteen bytes —
+ * so the record is checked directly, decoded against the spec. That is the
+ * same bargain `assertMemberFits` makes, one layer down.
+ */
+export function centralHeader(
   entry: CentralEntry,
   time: number,
   date: number,
 ): Uint8Array {
-  // The order the ZIP64 extra field states its values in is fixed by the
-  // spec — uncompressed size, compressed size, offset — and a field is
-  // present only when the 32-bit slot it stands in for holds the sentinel.
-  const sizeOverflows = entry.size > UINT32_MAX;
-  const offsetOverflows = entry.offset > UINT32_MAX;
-  const extra: number[] = [];
-  if (sizeOverflows) extra.push(entry.size, entry.size);
-  if (offsetOverflows) extra.push(entry.offset);
+  // `>=`, not `>`: the sentinel is a value the offset can legitimately take,
+  // and writing it literally would tell a reader to look for a ZIP64 field
+  // that is not there.
+  const offsetOverflows = entry.offset >= UINT32_MAX;
 
-  const extraBytes =
-    extra.length === 0
-      ? new Uint8Array(0)
-      : (() => {
-          const field = record(4 + extra.length * 8)
-            .u16(ZIP64_EXTRA_FIELD_ID)
-            .u16(extra.length * 8);
-          for (const value of extra) field.u64(value);
-          return field.done();
-        })();
+  const extraBytes = offsetOverflows
+    ? record(4 + 8)
+        .u16(ZIP64_EXTRA_FIELD_ID)
+        .u16(8)
+        .u64(entry.offset)
+        .done()
+    : new Uint8Array(0);
 
   const header = record(46)
     .u32(CENTRAL_HEADER_SIGNATURE)
     .u16(VERSION_MADE_BY)
-    .u16(extraBytes.length > 0 ? VERSION_ZIP64 : VERSION_STORED)
+    .u16(offsetOverflows ? VERSION_ZIP64 : VERSION_STORED)
     .u16(FLAGS)
     .u16(METHOD_STORED)
     .u16(time)
     .u16(date)
     .u32(entry.crc)
-    .u32(sizeOverflows ? UINT32_MAX : entry.size)
-    .u32(sizeOverflows ? UINT32_MAX : entry.size)
+    // Stored, so the compressed and uncompressed sizes are the same number,
+    // and neither can reach the sentinel — see MAX_MEMBER_BYTES.
+    .u32(entry.size)
+    .u32(entry.size)
     .u16(entry.name.length)
     .u16(extraBytes.length)
     // No comment, one disk, no internal attributes worth stating.
@@ -565,13 +594,17 @@ function centralHeader(
  * backwards for `PK\x05\x06`, and an archive without one is not a ZIP file to
  * anything.
  */
-function* endOfCentralDirectory(
+export function* endOfCentralDirectory(
   count: number,
   size: number,
   offset: number,
 ): Generator<Uint8Array> {
+  // `>=` on all three, for the reason `centralHeader` gives: each of these
+  // maximum values is also the sentinel that sends a reader to the 64-bit
+  // record, so a real total that happens to equal one has to be written
+  // there rather than in the slot it fills exactly.
   const needsZip64 =
-    count > UINT16_MAX || size > UINT32_MAX || offset > UINT32_MAX;
+    count >= UINT16_MAX || size >= UINT32_MAX || offset >= UINT32_MAX;
 
   if (needsZip64) {
     const zip64Offset = offset + size;
