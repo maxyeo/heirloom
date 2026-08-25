@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * The GEDCOM parser imports nothing (E6-T1, `YEO-46`).
+ * The GEDCOM parser and mapper import nothing (E6-T1 `YEO-46`, E6-T2
+ * `YEO-47`).
  *
  * ## Why this is a test and not a sentence in a docblock
  *
@@ -24,9 +25,9 @@ import { describe, expect, it } from "vitest";
  *
  * ## Why the assertion is "nothing" rather than "not the database"
  *
- * Because it is the stronger statement and it is currently true. These five
- * modules reach nothing outside themselves — no `@/db`, but also no React, no
- * `next/*`, no Auth.js, and no npm package at all. Asserting the empty set
+ * Because it is the stronger statement and it is currently true. Both
+ * closures reach nothing outside themselves — no `@/db`, but also no React,
+ * no `next/*`, no Auth.js, and no npm package at all. Asserting the empty set
  * means the test fails on the *first* import added, whoever adds it and
  * whatever it is, rather than on a blocklist somebody has to have thought to
  * extend.
@@ -42,8 +43,21 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-/** The public entry point. Everything it reaches is in scope. */
-const ENTRY = join("lib", "gedcom.ts");
+/**
+ * The public entry points. Everything either one reaches is in scope.
+ *
+ * Two of them since E6-T2 (`YEO-47`). `lib/gedcom-map.ts` turns the parsed
+ * file into `individuals` / `unions` / `union_children` rows, and it is under
+ * exactly the same rule for exactly the same reason: E6-T3's preview has to
+ * be able to say what an import *would* do, which is only possible while
+ * deciding what to write and writing it are separate operations. The mapper
+ * is the half that decides, so a `@/db` import in it would be the same defect
+ * as one in the parser, arriving one module further along.
+ */
+const ENTRIES = {
+  parser: join("lib", "gedcom.ts"),
+  mapper: join("lib", "gedcom-map.ts"),
+} as const;
 
 /**
  * Packages the parser may import.
@@ -81,11 +95,11 @@ function resolveLocal(fromFile: string, specifier: string): string | null {
   return null;
 }
 
-/** Every module reachable from the entry point, and every package they name. */
-function closure(): { files: string[]; packages: string[] } {
+/** Every module reachable from an entry point, and every package they name. */
+function closure(entry: string): { files: string[]; packages: string[] } {
   const files: string[] = [];
   const packages = new Set<string>();
-  const queue = [ENTRY];
+  const queue = [entry];
 
   while (queue.length > 0) {
     const file = queue.shift() as string;
@@ -103,7 +117,7 @@ function closure(): { files: string[]; packages: string[] } {
 }
 
 describe("the parser's import closure", () => {
-  const { files, packages } = closure();
+  const { files, packages } = closure(ENTRIES.parser);
 
   it("is the modules it is supposed to be", () => {
     // Named rather than counted, so that a module joining the closure is a
@@ -141,5 +155,54 @@ describe("the parser's import closure", () => {
     // closure on purpose, and its own docblock names this ticket as the
     // caller it was written for.
     expect(files).toContain(join("lib", "parse-date.ts"));
+  });
+});
+
+describe("the mapper's import closure", () => {
+  const { files, packages } = closure(ENTRIES.mapper);
+
+  it("is the modules it is supposed to be", () => {
+    // The parser's closure plus the three validation modules E3-T1 owns, and
+    // nothing else. `lib/child-input.ts` and `lib/union-input.ts` are here
+    // because the mapping writes *through* them rather than around them, and
+    // `lib/row-id.ts` arrives with them — it is the check that makes a minted
+    // id acceptable to `validateUnion` in the first place.
+    expect(files.sort()).toEqual(
+      [
+        join("lib", "ansel.ts"),
+        join("lib", "child-input.ts"),
+        join("lib", "field-input.ts"),
+        join("lib", "gedcom-encoding.ts"),
+        join("lib", "gedcom-lines.ts"),
+        join("lib", "gedcom-map.ts"),
+        join("lib", "gedcom-report.ts"),
+        join("lib", "gedcom.ts"),
+        join("lib", "individual-input.ts"),
+        join("lib", "parse-date.ts"),
+        join("lib", "row-id.ts"),
+        join("lib", "union-input.ts"),
+      ].sort(),
+    );
+  });
+
+  it("imports no package at all", () => {
+    expect(packages.filter((name) => !ALLOWED.has(name))).toEqual([]);
+  });
+
+  it("never reaches the database", () => {
+    for (const file of files) {
+      expect(read(file)).not.toContain('from "@/db');
+      expect(read(file)).not.toContain('from "./db');
+      expect(read(file)).not.toContain("drizzle-orm");
+    }
+  });
+
+  it("writes through E3-T1's validation layer rather than around it", () => {
+    // Stated as membership of the closure, because the alternative failure is
+    // silent: a mapping that assembled rows itself would still typecheck, and
+    // would simply stop enforcing whatever `validateIndividual` learns next.
+    expect(files).toContain(join("lib", "individual-input.ts"));
+    expect(files).toContain(join("lib", "union-input.ts"));
+    expect(files).toContain(join("lib", "child-input.ts"));
   });
 });

@@ -42,6 +42,28 @@ function clean(file: GedcomFile): GedcomFile {
   return file;
 }
 
+/**
+ * `family.ged`, with its one issue pinned.
+ *
+ * The fixture is deliberately not `clean()`: Ada's birth is `EST 1918`, and
+ * E6-T2 (`YEO-47`) made that say so on the report rather than become `about`
+ * in silence. Asserting the whole list here does the job `clean()` does
+ * everywhere else — a regression cannot hide behind an issue nobody looked at.
+ */
+function familyFile(): GedcomFile {
+  const file = parseGedcom(fixture("family.ged"));
+
+  expect(file.issues).toEqual([
+    {
+      kind: "narrowed",
+      line: 38,
+      message: expect.stringContaining("EST 1918"),
+    },
+  ]);
+
+  return file;
+}
+
 /** Unknown tags as a plain path-to-count map, which is what they mean. */
 function unknownCounts(file: GedcomFile): Record<string, number> {
   return Object.fromEntries(
@@ -56,7 +78,7 @@ function byXref(file: GedcomFile, xref: string): GedcomIndividual {
 }
 
 describe("a whole family, from a fixture file", () => {
-  const file = clean(parseGedcom(fixture("family.ged")));
+  const file = familyFile();
 
   it("reads every record", () => {
     expect(file.individuals).toHaveLength(5);
@@ -126,7 +148,9 @@ describe("a whole family, from a fixture file", () => {
     // unknown tags would put "we ignored 240 things" into a report where
     // nothing was lost, which is how a report loses its credibility.
     expect(byXref(file, "I2").familiesAsSpouse).toEqual(["F1", "F2"]);
-    expect(byXref(file, "I3").familiesAsChild).toEqual(["F1"]);
+    expect(byXref(file, "I3").familiesAsChild).toEqual([
+      { family: "F1", pedigree: null, line: 33 },
+    ]);
     expect(unknownCounts(file)).not.toHaveProperty("INDI.FAMS");
   });
 
@@ -135,9 +159,10 @@ describe("a whole family, from a fixture file", () => {
   });
 
   it("stores a range from the file whole, raising no issue at file level (YEO-88)", () => {
-    // `clean()` above already asserts `file.issues` is `[]` for this whole
-    // file — that passing, with a range in it, IS the lossless claim made at
-    // file level rather than at the value level `dateIssue` tests below.
+    // `familyFile()` above pins this whole file's issue list to the one
+    // `EST` narrowing — so a range sitting in the same file and adding
+    // nothing to that list IS the lossless claim, made at file level rather
+    // than at the value level the `dateIssue` tests below work at.
     expect(byXref(file, "I5").birth?.date).toEqual({
       date: "1880-01-01",
       qualifier: "exact",
@@ -149,7 +174,7 @@ describe("a whole family, from a fixture file", () => {
 });
 
 describe("the date forms the ticket names", () => {
-  const file = clean(parseGedcom(fixture("family.ged")));
+  const file = familyFile();
 
   it("reads ABT as about", () => {
     expect(byXref(file, "I1").death?.date).toEqual({
@@ -571,6 +596,97 @@ describe("interpreted dates", () => {
       precision: "day",
       upper: null,
       upperPrecision: "day",
+    });
+  });
+});
+
+describe("estimated dates say so on the report (YEO-47)", () => {
+  // The reading is not changing and never was: `lib/parse-date.ts` has always
+  // mapped `est` onto `about`, because `date_qualifier` has four members and
+  // "estimated" is not one of them. What E6-T2 added is the sentence about
+  // it. This was the one lossy date form in the pipeline that went through in
+  // silence, which made "how many dates did this import narrow" a question
+  // the report could not answer.
+
+  it("stores EST as about, exactly as it always has", () => {
+    const { birth } = dateIssue("EST 1918");
+
+    expect(birth?.date).toEqual({
+      date: "1918-01-01",
+      qualifier: "about",
+      precision: "year",
+      upper: null,
+      upperPrecision: "day",
+    });
+  });
+
+  it("reports it as narrowed, naming the text and the value written", () => {
+    const { file } = dateIssue("EST 1918");
+
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0]).toMatchObject({ kind: "narrowed", line: 3 });
+    expect(file.issues[0].message).toContain("EST 1918");
+    expect(file.issues[0].message).toContain("about");
+  });
+
+  it("says nothing about an ordinary ABT, which loses nothing", () => {
+    expect(dateIssue("ABT 1918").file.issues).toEqual([]);
+  });
+
+  it("reports an EST inside a range once, as the endpoint modifier", () => {
+    // Two sentences would make one loss look like two. The endpoint rule
+    // already owns this case, so the estimate rule stays out of it.
+    const { file } = dateIssue("BET EST 1890 AND 1900");
+
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0].message).toContain("BET EST 1890 AND 1900");
+  });
+});
+
+describe("PEDI, which is where union_children.relation comes from", () => {
+  /** An `INDI` whose `FAMC` carries the given sub-lines. */
+  function childLink(lines: readonly string[]) {
+    const file = parseGedcomText(
+      ["0 @I1@ INDI", "1 FAMC @F1@", ...lines].join("\n"),
+    );
+    return { file, links: file.individuals[0].familiesAsChild };
+  }
+
+  it("keeps PEDI beside the family it belongs to", () => {
+    const { links } = childLink(["2 PEDI adopted"]);
+
+    expect(links).toEqual([{ family: "F1", pedigree: "adopted", line: 2 }]);
+  });
+
+  it("lower-cases it, because files disagree about capitals", () => {
+    expect(childLink(["2 PEDI Foster"]).links[0].pedigree).toBe("foster");
+  });
+
+  it("leaves pedigree null when the file gives none", () => {
+    expect(childLink([]).links[0].pedigree).toBeNull();
+  });
+
+  it("keeps the raw word rather than translating it", () => {
+    // The parser stops at the last point that is still true of the file.
+    // `birth` is GEDCOM's word; `biological` is ours, and turning one into
+    // the other is `lib/gedcom-map.ts`'s job.
+    expect(childLink(["2 PEDI birth"]).links[0].pedigree).toBe("birth");
+  });
+
+  it("reports the other things hanging off a FAMC, which used to vanish", () => {
+    // `collectPointer` never looked at a `FAMC`'s children, so every one of
+    // them fell through without even reaching the unknown-tag list — a hole
+    // in "nothing a real file contains is dropped in silence".
+    const { file } = childLink(["2 NOTE adopted informally"]);
+
+    expect(unknownCounts(file)).toEqual({ "INDI.FAMC.NOTE": 1 });
+  });
+
+  it("takes the first of two PEDI lines", () => {
+    expect(childLink(["2 PEDI adopted", "2 PEDI foster"]).links[0]).toEqual({
+      family: "F1",
+      pedigree: "adopted",
+      line: 2,
     });
   });
 });

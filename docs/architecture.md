@@ -390,6 +390,71 @@ way in. The date is stored as `about 1890`, because `INT` says the submitter
 _inferred_ it and `exact` would claim a precision the file itself disclaims;
 the interpretation phrase is prose, has no column, and is reported.
 
+### What GEDCOM has that this schema does not
+
+The data model above was chosen against GEDCOM's own insight, so E6-T2
+(`YEO-47`) — the mapping in `lib/gedcom-map.ts` — was expected to be
+near-mechanical, and mostly is: `INDI` is an `individuals` row, `FAM` is a
+`unions` row, `CHIL` is a `union_children` row, `HUSB`/`WIFE` are the two
+partner columns, and since `YEO-88` every date form the format has arrives in
+columns that already fit it.
+
+The ticket asked for the places where it is _not_ mechanical to be written
+down rather than worked around. There are six, and none of them is an
+accident of the mapping — each is a thing the format records and this schema
+has nowhere to keep. They are listed cheapest-to-fix last.
+
+1. **A person must have a first name here and need not have one there.**
+   `individuals.given_name` is `not null`, because every surface in this
+   application labels a person with it. `1 NAME /Smith/` — a woman known only
+   by a married surname — is ordinary GEDCOM, and an `INDI` with no `NAME` at
+   all is how a program records somebody known only to have existed. The
+   mapping records `"Unknown"` and reports it every time. Skipping those
+   people was the obvious alternative and is much worse: they are in the file
+   _because_ they are somebody's parent, so dropping them deletes the edge
+   that was the only reason to record them. **The real fix is a nullable
+   `given_name`**, and it is a large one — every formatter, label and search
+   path assumes the column is there.
+2. **A person has one name here and many there.** GEDCOM's `NAME` repeats:
+   a birth name and a married name, an anglicised spelling, an alias. The
+   first is kept and the rest are reported. There is no column, and adding one
+   means a `names` table, which is a bigger change to the model than anything
+   in E6.
+3. **A union has no place.** `individuals` has `birth_place` and
+   `death_place`; `unions` has neither, so `MARR.PLAC` — one of the most
+   common lines in a real file — is read and then dropped, with a report line
+   each time. It is deliberately **not** folded into `unions.notes`: the date
+   precision section above spent its length arguing that facts do not belong
+   in `notes` "where nothing can query or format it", and a wedding's parish
+   is a fact of exactly that kind. This is the cheapest of the six to fix —
+   two columns and a form field, no reshaping of anything.
+4. **`PEDI` is written on the child and the edge is written on the family.**
+   `union_children.relation` is one column that needs two records to fill it:
+   `CHIL` under `FAM` says the link exists, `PEDI` under the child's own
+   `FAMC` says what kind it is. This is not a schema gap so much as a
+   reminder that our one-row-per-link shape is tidier than the format's, and
+   it did cost something — the parser had never looked at a `FAMC`'s children
+   at all, so every sub-tag under one was falling through without even
+   reaching the unknown-tag list. E6-T2 fixed that hole as well.
+5. **`union_end_reason` has a `death` member and GEDCOM has no tag for it.**
+   A marriage ends when a partner dies, and no file records that as an event
+   of the family — it is an event of the person. So the mapping infers it, and
+   stores **no end date** with it: the date is already recorded once, on the
+   person who died, and a copy on the union would be a second thing to correct
+   forever. `validateUnion` permits a reason without a date and refuses only
+   the reverse, which is what makes the inference safe.
+6. **`unions.sequence` has no GEDCOM equivalent whatsoever.** See
+   [Ordering](#ordering) below for what the column is for; the mapping derives
+   it from date order with file order behind it. Nothing is lost here — there
+   was never anything in the file to lose — but it is worth knowing that the
+   one column in these three tables with no counterpart in the format is the
+   one that carries the story ordering, and it will not survive a round trip
+   through anybody else's program.
+
+Findings one, two and three are the only ones that lose data, and all three
+lose it _with a report line_, never silently. Nothing in this list was worked
+around in the mapping.
+
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations
@@ -600,8 +665,16 @@ grants write and delete on the store, and never appears in the repository.
   knows which photograph belongs to whom and cannot show it, if the store went
   too. Rows are cheap to protect and files are not; this is the trade-off as
   it stands rather than an oversight.
-- **A GEDCOM `INT` phrase is not stored.** `INT 1890 (from baptism record)`
-  becomes `about 1890` and the phrase survives only on the import report. So
-  does a modifier on a range endpoint — the `ABT` in `BET ABT 1890 AND 1900`.
-  Both are `narrowed` issues rather than accidents (`YEO-88`); the ranges
-  themselves are stored whole.
+- **Four GEDCOM date forms are stored slightly poorer than they were
+  written.** An `INT` phrase — `INT 1890 (from baptism record)` becomes
+  `about 1890` and the note survives only on the report. A modifier on a range
+  endpoint — the `ABT` in `BET ABT 1890 AND 1900`. A range whose upper bound
+  is unreadable, stored as `after` its lower bound. And `EST 1918`, stored as
+  `about 1918`, which is the oldest of the four and has been true since
+  `lib/parse-date.ts` was written. All four are `narrowed` issues rather than
+  accidents (`YEO-88`, `YEO-47`); the ranges themselves are stored whole.
+- **Three things a GEDCOM file records have no column at all**: a second name
+  for a person, a place for a marriage, and a first name that the file leaves
+  blank. Each is reported per record rather than lost, and each is written up
+  with its fix in
+  [What GEDCOM has that this schema does not](#what-gedcom-has-that-this-schema-does-not).
