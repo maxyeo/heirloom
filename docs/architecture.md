@@ -817,6 +817,15 @@ grants write and delete on the store, and never appears in the repository.
 - **Orientation is respected, never repaired.** PNG, WebP and GIF keep
   whatever orientation tag they arrived with and nothing re-synthesises one,
   because nothing that produces those formats produces a rotated image.
+- **Importing the same file twice imports everybody twice.** `lib/gedcom-map.ts`
+  mints a fresh id for every record on every parse, so a second import of one
+  file is a second complete copy of the tree rather than a no-op or a merge.
+  The transaction (E6-T4) guarantees the copy lands whole; it does not notice
+  that it is a copy. Duplicate detection is out of scope for E6 and the honest
+  fix is not de-duplication after the fact but a stable identity to match on —
+  either the file's own `_UID`/`REFN` where a program wrote one, or a
+  reader-facing merge step of the kind E3-T10 already has for unions.
+
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.
