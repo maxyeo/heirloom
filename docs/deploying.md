@@ -134,16 +134,16 @@ In Vercel, under **Settings → Environment Variables**. Every variable below is
 needed in the **Production** scope; add them to Preview and Development too
 only if you intend to deploy those, which by default this repository does not.
 
-| Variable                 | Required | What it is, and where it comes from                                                                                              |
-| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`           | Yes      | Supabase **transaction** pooler string, port `6543` (step 1). Every request the app serves goes through it                       |
-| `MIGRATE_DATABASE_URL`   | Yes      | Supabase **session** pooler string, port `5432` (step 1). Used only by the migration step of the build                           |
-| `AUTH_SECRET`            | Yes      | Generate it yourself: `npx auth secret`. Signs the session cookie                                                                |
-| `AUTH_GOOGLE_ID`         | Yes      | OAuth client ID from step 2                                                                                                      |
-| `AUTH_GOOGLE_SECRET`     | Yes      | OAuth client secret from step 2                                                                                                  |
-| `ALLOWED_EMAILS`         | Yes      | Comma-separated addresses of everyone allowed in. You write this one                                                             |
-| `STORAGE_TOKEN`          | Not yet  | Read-write token for a **private** Blob store. Nothing reads it until image upload ships — see [`STORAGE_TOKEN`](#storage_token) |
-| `NEXT_PUBLIC_SITE_TITLE` | No       | The name in the header and page titles. Defaults to `Heirloom` (`lib/site.ts`). This is the one thing an install renames         |
+| Variable                 | Required | What it is, and where it comes from                                                                                      |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`           | Yes      | Supabase **transaction** pooler string, port `6543` (step 1). Every request the app serves goes through it               |
+| `MIGRATE_DATABASE_URL`   | Yes      | Supabase **session** pooler string, port `5432` (step 1). Used only by the migration step of the build                   |
+| `AUTH_SECRET`            | Yes      | Generate it yourself: `npx auth secret`. Signs the session cookie                                                        |
+| `AUTH_GOOGLE_ID`         | Yes      | OAuth client ID from step 2                                                                                              |
+| `AUTH_GOOGLE_SECRET`     | Yes      | OAuth client secret from step 2                                                                                          |
+| `ALLOWED_EMAILS`         | Yes      | Comma-separated addresses of everyone allowed in. You write this one                                                     |
+| `STORAGE_TOKEN`          | Yes      | Read-write token for a **private** Blob store. Image upload reads it — see [`STORAGE_TOKEN`](#storage_token)             |
+| `NEXT_PUBLIC_SITE_TITLE` | No       | The name in the header and page titles. Defaults to `Heirloom` (`lib/site.ts`). This is the one thing an install renames |
 
 `VERCEL` is set by the platform, not by you. `next.config.ts` reads it to drop
 `output: "standalone"`, which Vercel's own builder does not want.
@@ -232,8 +232,9 @@ step 7.
 
 ### `STORAGE_TOKEN`
 
-Image upload is not built yet (`E5-T2`), so this one can wait. When you do get
-to it, one choice is made at store-creation time and is awkward to revisit.
+Image upload (`E5-T2`) reads this, so any deploy that will accept a photograph
+needs it. One choice is made at store-creation time and is awkward to revisit,
+which is why it is called out here rather than left to be discovered.
 
 **Create the Blob store with its access set to Private.** In Vercel:
 **Storage → Create Database → Blob**, and set access to **Private** before
@@ -262,6 +263,14 @@ store and moving whatever is in the first.
 Like `AUTH_SECRET`, the token is a password — it grants write and delete on
 the store. Leaving it unset until you need it costs a readable error at the
 first upload and nothing before that.
+
+**Uploads are limited to 4 MB**, and that is not a setting you can raise. A
+Vercel function receives at most a 4.5 MB request body, and the documented way
+around it — the browser uploading to the store directly — is closed off here
+deliberately (see [Known
+limitations](architecture.md#known-limitations)). Expect a recent phone's
+photographs to be larger than that, and to need resizing before they will
+upload.
 
 ## 4. Baseline the migration ledger
 

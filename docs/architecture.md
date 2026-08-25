@@ -102,6 +102,36 @@ What it costs is that an image URL is no longer a durable thing anybody can
 write down. The expiry itself, and the contract that follows from it, are in
 [The storage seam](#the-storage-seam).
 
+#### What the upload endpoint takes out of a photograph
+
+The boundary above protects the picture. It does not protect what is written
+in the margins of the file, and on a family wiki the margins are the problem:
+family photographs are phone photographs, and a phone photograph taken at home
+carries the coordinates of the home in it, to a few metres, invisibly in every
+program that displays it.
+
+The site is private, but the _file_ does not stay behind the site — it is
+handed to a storage host, fetched by a browser, saved by a relative,
+forwarded, backed up. Each of those is fine for a photograph and none of them
+is fine for an address. So `lib/image-metadata.ts` removes the location on the
+way in (`E5-T2`), once, before anything else can copy the file somewhere this
+code does not run. Out come the Exif GPS directory, the XMP and IPTC blocks
+that carry coordinates as text, and the vendor maker note that cannot be
+parsed well enough to be trusted.
+
+**Orientation stays**, and that is the reason this is byte-level surgery
+rather than a three-line deletion. A phone stores its pixels the way the
+sensor delivered them and writes "rotate this" into the same Exif block the
+coordinates are in; delete the block and every portrait photograph in the wiki
+lies on its side permanently, with the information needed to fix it destroyed
+on upload. The scrub is length-preserving and rewrites no offset, so the
+capture date, the camera and the colour profile survive too — a family archive
+is precisely the place where "when was this taken" is worth keeping.
+
+Metadata that cannot be parsed is dropped whole rather than passed through,
+and a file whose container cannot be walked is refused outright. Both are the
+same rule: this code does not forward bytes it could not read.
+
 ### Entry HTML
 
 Entry bodies are the one place authored markup reaches the browser. TipTap
@@ -689,7 +719,7 @@ one expiry.
 
 > `key` is the durable handle. `url` is not — never persist it.
 
-This is the "stable URL" question `YEO-42` has to answer, and the answer is
+This is the "stable URL" question `YEO-42` had to answer, and the answer is
 that the stable URL is not the storage host's. An entry body that embedded a
 signed URL would render for fifteen minutes and show a broken image for the
 rest of that revision's life, and revisions are append-only, so the broken
@@ -709,6 +739,25 @@ HTML would never be edited away. So:
   is a query over keys. Against expiring URLs it would not be a well-formed
   question.
 
+`E5-T2` shipped both halves of that, because either alone is incoherent.
+`POST /api/images` stores an upload under a key it mints itself and answers
+with the key and its site-relative path — never with the URL `put` handed
+back, which would be a credential with a timer on it. `GET /api/images/…`
+turns that path back into a freshly signed URL and redirects to it, behind the
+same session guard as everything else, with `no-store` so that a cached
+redirect cannot outlive its own target.
+
+The redirect is deliberate: proxying the bytes would make this application a
+CDN for its own images, holding a function open per photograph on a page. What
+stays here is the authorisation; what never touches this code is the file.
+
+The two halves also settle where the key check lives. `lib/storage.ts`
+validates nothing on purpose and names the upload endpoint as the owner of
+that obligation, and on the upload path the key is minted from a UUID and
+cannot be steered — so the _resolving_ route is the caller that makes the
+check load-bearing, and the two ship together for that reason as much as for
+symmetry.
+
 The credential itself belongs with `AUTH_SECRET` in the section above: it
 grants write and delete on the store, and never appears in the repository.
 
@@ -724,6 +773,16 @@ grants write and delete on the store, and never appears in the repository.
   of thousands is what would change the answer, and the fix is named where the
   query lives: a generated `tsvector` over the name and a `WHERE` clause ahead
   of the ranking.
+- **Uploads are capped at 4 MB.** Not a preference: a Vercel function
+  receives at most a 4.5 MB request body, and the documented way past it is a
+  browser talking to the storage vendor directly — which would put its SDK in
+  a client bundle and need a fourth function on the seam, both of which this
+  repository fails the build over. A recent phone routinely produces larger
+  photographs than that, so the fix is for the editor's image button (`E5-T3`)
+  to downscale in a canvas before it posts.
+- **GIF metadata is not touched.** There is no Exif block and no coordinate in
+  the format, so there is nothing to remove; PNG and WebP keep whatever
+  orientation tag they arrived with, and nothing re-synthesises one.
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.
