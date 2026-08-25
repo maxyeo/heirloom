@@ -100,13 +100,28 @@ interface RegisteredSurface {
 }
 
 /**
- * The tab order, as `ModalDialog` has always read it. Unchanged from the
- * hand-written trap this replaces, deliberately: the ticket is about where the
- * decision lives, and a quietly different selector would be a second change
- * hiding inside the first.
+ * The tab order, as `ModalDialog` has always read it — with one correction.
+ *
+ * Both `EditPersonForm` and `PersonRemoval`'s `RemovalForm` render a
+ * `<input type="hidden">` as the first child inside the dialogue, ahead of
+ * any real control: the record's id, a union's id, the reference the server
+ * action needs and nothing an author ever sees. An unqualified `input` here
+ * matches it, `.focus()` on a hidden input is a no-op, and
+ * `event.preventDefault()` has already told the browser not to do what it
+ * would have done natively — so a Tab from the heading, where focus opens,
+ * landed nowhere at all. `IndividualFieldset` disables every field mid-save
+ * (`disabled={pending}`), which is the identical failure for a different
+ * reason: `button:not([disabled])` already excluded a disabled button, and a
+ * disabled `input`/`select`/`textarea` is exactly as inert.
+ *
+ * Excluding both is what makes `nextTrapIndex`'s own doc comment true rather
+ * than aspirational: it names "a dialogue mid-submission can disable every
+ * button it has" as why `length === 0` must not swallow Tab, but a disabled
+ * field was still being counted into `length` here, so that branch could
+ * never fire for these forms.
  */
 const FOCUSABLE_SELECTOR =
-  "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+  "button:not([disabled]), [href], input:not([type='hidden']):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
 let stack: RegisteredSurface[] = [];
 

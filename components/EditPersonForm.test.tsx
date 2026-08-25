@@ -222,6 +222,19 @@ function escape(): void {
   });
 }
 
+/** Tab, as an event the surface-stack listener can answer and this file can inspect. */
+function tab(): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key: "Tab",
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    document.dispatchEvent(event);
+  });
+  return event;
+}
+
 /**
  * What the server action would make of a submission: exactly the two calls
  * `updateIndividualAction` makes before it reaches the database.
@@ -255,6 +268,28 @@ describe("opening", () => {
     expect(document.getElementById(labelledBy ?? "")?.textContent).toBe(
       "Edit Rose Hale",
     );
+  });
+});
+
+describe("the Tab trap", () => {
+  /**
+   * `<input type="hidden" name="id">` is this form's very first child, ahead
+   * of every field an author can see, and focus opens on the heading — see
+   * `components/ModalDialog.tsx`. So the first Tab a keyboard user presses is
+   * exactly the case `components/surface-stack.ts`'s `FOCUSABLE_SELECTOR` got
+   * wrong: an unqualified `input` matched the hidden one, `.focus()` on it is
+   * a no-op, and `preventDefault()` had already told the browser not to do
+   * what native Tab would have. The reader was stranded on the heading with
+   * no way to reach a single field.
+   */
+  it("skips the hidden id field and lands on the first real control", () => {
+    const host = mount(rose);
+    open(host);
+
+    const event = tab();
+
+    expect(document.activeElement).toBe(control(host, "givenName"));
+    expect(event.defaultPrevented).toBe(true);
   });
 });
 

@@ -466,6 +466,35 @@ describe("where focus goes", () => {
     expect(tab.defaultPrevented).toBe(true);
   });
 
+  it("skips the hidden reference field at the confirmation stage", () => {
+    // `keepsTab inside the dialogue` above opens on the list, which has no
+    // hidden input — only `RemovalForm`, the confirmation stage, sends one.
+    // It renders `<input type="hidden">` per reference the server action
+    // needs, ahead of the "Back" button and every other visible control, so
+    // this is the case that actually bit: focus opens on the heading same as
+    // above, but the first element in document order is the hidden field, and
+    // `.focus()` on it is a no-op — `event.preventDefault()` had already told
+    // the browser not to do what native Tab would have, leaving the reader
+    // stranded on the heading.
+    openRemoval("thomas", "Delete Thomas Hale from the tree");
+    const hidden = dialog()?.querySelector("input[type='hidden']");
+    expect(hidden).not.toBeNull();
+
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(tab);
+    });
+
+    expect(document.activeElement).not.toBe(hidden);
+    expect(document.activeElement?.tagName).not.toBe("H2");
+    expect(document.activeElement).toBe(buttonLabelled(dialog()!, "Back"));
+    expect(tab.defaultPrevented).toBe(true);
+  });
+
   it("wraps Tab round the end of the dialogue", () => {
     openRemoval("thomas");
     const buttons = [...(dialog()?.querySelectorAll("button") ?? [])];

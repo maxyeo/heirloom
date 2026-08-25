@@ -60,6 +60,39 @@ function ModalSurface({
   );
 }
 
+/**
+ * The shape `ModalSurface` above does not have, and the real dialogues do:
+ * a hidden input rendered before any visible control — `EditPersonForm`'s
+ * `<input type="hidden" name="id">`, `PersonRemoval`'s `RemovalForm` sends one
+ * per reference — and fields that go `disabled` mid-submission, the way
+ * `IndividualFieldset` disables every one of its own while `pending`.
+ * `FOCUSABLE_SELECTOR` matching either is how a Tab from the heading can find
+ * `focusable[0]`, call `.focus()` on it, and land nowhere: both are a no-op to
+ * focus, and `event.preventDefault()` has already told the browser not to do
+ * what it would otherwise have done.
+ */
+function ModalSurfaceWithHiddenField({
+  onDismiss = () => {},
+  disableFields = false,
+}: {
+  onDismiss?: () => void;
+  disableFields?: boolean;
+}) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  useDismissableSurface({ onDismiss, modal: true, surfaceRef });
+
+  return (
+    <div ref={surfaceRef}>
+      <h2 tabIndex={-1}>A dialogue</h2>
+      <input type="hidden" name="id" value="thomas" />
+      <input type="text" name="name" disabled={disableFields} />
+      <button type="button" disabled={disableFields}>
+        save
+      </button>
+    </div>
+  );
+}
+
 function pressEscape(): void {
   act(() => {
     document.dispatchEvent(
@@ -273,6 +306,40 @@ describe("the focus trap", () => {
     const event = pressTab();
 
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("skips a hidden input at the front of the surface", () => {
+    // The bug itself: `focusable[0]` used to be the hidden `id` field every
+    // real dialogue renders first, `.focus()` on it is a no-op, and Tab from
+    // the heading — where focus opens — went nowhere at all.
+    const host = render(<ModalSurfaceWithHiddenField />);
+    const heading = host.querySelector("h2");
+    act(() => heading?.focus());
+
+    const event = pressTab();
+
+    expect(document.activeElement).toBe(
+      host.querySelector("input[type='text']"),
+    );
+    expect(document.activeElement).not.toBe(heading);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("does not swallow Tab when every field is disabled mid-submission", () => {
+    // `IndividualFieldset` sets `disabled={pending}` on every one of its
+    // fields, which is the same class of bug as the hidden input: a disabled
+    // control is still matched by an unqualified selector and still a no-op
+    // to `.focus()`. With nothing genuinely focusable, `nextTrapIndex`'s own
+    // doc comment says Tab must fall through to the browser rather than be
+    // swallowed.
+    const host = render(<ModalSurfaceWithHiddenField disableFields />);
+    const heading = host.querySelector("h2");
+    act(() => heading?.focus());
+
+    const event = pressTab();
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(heading);
   });
 
   it("leaves Tab alone when the topmost surface is not modal", () => {
