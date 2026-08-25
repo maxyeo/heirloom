@@ -545,7 +545,9 @@ export const individuals = pgTable(
      * must handle that, and the canvas does — it falls back to the full
      * image, which is slow and correct, rather than to no image, which would
      * be wrong. It is never the other way round: a thumbnail with no portrait
-     * is not a state anything writes, and `validateIndividual` refuses one.
+     * is not a state anything writes, and `validateIndividual` normalises one
+     * away rather than refusing it — silently, because no author can cause it
+     * and there is no field on screen to hang a message under.
      */
     portraitThumbKey: text("portrait_thumb_key"),
     createdAt: timestamp("created_at", { withTimezone: true })

@@ -268,6 +268,26 @@ export function PortraitField({
   const fileInput = useRef<HTMLInputElement>(null);
 
   /**
+   * Which pick is the current one.
+   *
+   * Incremented by every pick and by "Remove photograph", and checked again
+   * after each `await` — so an upload that is still in flight when the author
+   * moves on cannot land on top of what they did next. Without it the winner
+   * is whichever `prepare` *settles* last, which is not necessarily the one
+   * they chose last: a large photograph picked first can easily finish after
+   * a small one picked second, and the form would then hold the abandoned
+   * image.
+   *
+   * The file input is `disabled` while `busy`, and that is what makes this
+   * hard to reach through a mouse and a keyboard. It is not the guarantee,
+   * though, and `components/GedcomImport.tsx` makes the same distinction in
+   * as many words: disabling a control is "a convenience for the ordinary
+   * path, not the guard". A counter costs one ref and makes the answer
+   * independent of when React happens to commit an attribute.
+   */
+  const pick = useRef(0);
+
+  /**
    * The preview's `src`.
    *
    * Built from the key by the same function every other portrait in the
@@ -279,41 +299,69 @@ export function PortraitField({
   const previewSrc = portraitSrc(portraitKey === "" ? null : portraitKey);
 
   const clear = () => {
+    // Supersede anything in flight, so an upload the author has just removed
+    // cannot reappear a second later.
+    pick.current += 1;
     onChange("portraitKey", "");
     onChange("portraitThumbKey", "");
     setFailure(null);
+    setBusy(false);
     // So choosing the same file again still fires a change event.
     if (fileInput.current !== null) fileInput.current.value = "";
   };
 
   const choose = async (file: File) => {
+    const token = (pick.current += 1);
     setBusy(true);
     setFailure(null);
     try {
       const result = await prepare(file);
+
+      // Superseded while this was in flight — by a later pick, or by Remove.
+      // Say nothing and change nothing: whatever replaced it is the author's
+      // more recent intention.
+      if (token !== pick.current) return;
+
       if (!result.ok) {
-        setFailure(result.message);
         /**
-         * Both keys cleared on failure, never one. A half-pair is the state
-         * `validateIndividual` normalises away, so leaving a stale portrait
-         * beside a failed replacement would show the author their old
-         * photograph and save it, which reads as the upload having worked.
+         * A refused pick leaves the record **exactly as it was**, and this is
+         * the important line in this component.
+         *
+         * Clearing both keys here looks like the tidy thing to do and is
+         * data loss. The failure happens inside `prepare`, before a single
+         * `onChange` has run, so the two keys still hold whatever they held
+         * when the form opened — for an edit, a complete and already-saved
+         * pair. Emptying them would mean that picking a file that the
+         * endpoint refuses, or picking one while the connection is down,
+         * silently deletes the photograph the family already had: nothing
+         * gates Save on this message, and "that file did not work" does not
+         * read as "and your old picture is gone now", so the next thing the
+         * author does is save.
+         *
+         * There is no half-pair to guard against on this path — that is the
+         * *success* path's problem, handled below — so leaving the keys
+         * alone is both the safe answer and the honest one. The old portrait
+         * really is still what is on file, and the preview keeps showing it.
          */
-        onChange("portraitKey", "");
-        onChange("portraitThumbKey", "");
+        setFailure(result.message);
         return;
       }
+
       onChange("portraitKey", result.pair.portraitKey);
       /**
        * An empty string, not the absence of a call. The caller holds these as
        * form values, so "no thumbnail" has to be *written* — leaving the
        * previous portrait's thumbnail in place would pair a new photograph
-       * with an old face on the canvas.
+       * with an old face on the canvas. This is the half-pair that is
+       * genuinely reachable, and it is reachable only after a *successful*
+       * upload.
        */
       onChange("portraitThumbKey", result.pair.portraitThumbKey ?? "");
     } finally {
-      setBusy(false);
-      if (fileInput.current !== null) fileInput.current.value = "";
+      if (token === pick.current) {
+        setBusy(false);
+        if (fileInput.current !== null) fileInput.current.value = "";
+      }
     }
   };
 

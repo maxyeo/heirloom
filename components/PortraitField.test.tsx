@@ -64,16 +64,21 @@ function fileInput(host: HTMLElement): HTMLInputElement {
   return input;
 }
 
-/** Choose a file, the way `components/GedcomImport.test.tsx` does. */
-async function choose(
-  input: HTMLInputElement,
-  name = "photo.jpg",
-): Promise<void> {
+/** Put a file on the input, without dispatching anything. */
+function setFiles(input: HTMLInputElement, name: string): void {
   const chosen = new File(["x"], name, { type: "image/jpeg" });
   Object.defineProperty(input, "files", {
     configurable: true,
     value: Object.assign([chosen], { item: () => chosen }),
   });
+}
+
+/** Choose a file, the way `components/GedcomImport.test.tsx` does. */
+async function choose(
+  input: HTMLInputElement,
+  name = "photo.jpg",
+): Promise<void> {
+  setFiles(input, name);
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     // Let the component's async `choose` handler settle.
@@ -175,7 +180,24 @@ describe("picking a file", () => {
     expect(onChange).toHaveBeenCalledWith("portraitThumbKey", "");
   });
 
-  it("on failure, clears both keys and shows the message", async () => {
+  /**
+   * The data-loss guard.
+   *
+   * An earlier version of this component cleared both keys when a pick was
+   * refused, on the theory that it was avoiding a half-pair. It was not:
+   * `prepare` fails before any `onChange` runs, so the keys still hold the
+   * portrait the person already had — and emptying them meant that picking a
+   * file the endpoint refuses, or picking one with the connection down,
+   * deleted a photograph the family had already saved. Nothing gates Save on
+   * the error message, and "that file could not be read" does not read as
+   * "and your old picture is gone", so the next thing an author does is save.
+   *
+   * Asserted as `not.toHaveBeenCalled` rather than by checking the final
+   * values, because the bug was an *extra write* — a test that only looked at
+   * the end state would pass just as happily with the write present and the
+   * caller reapplying its own props.
+   */
+  it("leaves an already-saved portrait untouched when a replacement fails", async () => {
     const onChange = vi.fn();
     const host = mount({
       portraitKey: KEY,
@@ -186,11 +208,100 @@ describe("picking a file", () => {
 
     await choose(fileInput(host));
 
-    expect(onChange).toHaveBeenCalledWith("portraitKey", "");
-    expect(onChange).toHaveBeenCalledWith("portraitThumbKey", "");
+    expect(onChange).not.toHaveBeenCalled();
     expect(host.textContent).toContain(
       "That file could not be read as an image.",
     );
+    // And the preview still shows the photograph that is genuinely on file.
+    const preview = host.querySelector("img")?.getAttribute("src") ?? "";
+    expect(preview.endsWith(portraitSrc(KEY) ?? "")).toBe(true);
+  });
+
+  it("keeps both keys empty when a first-ever pick fails", async () => {
+    // The same rule seen from the other side: with nothing saved yet there is
+    // nothing to protect, and the hidden inputs must still post as empty
+    // rather than as a stale value from a failed attempt.
+    const onChange = vi.fn();
+    const host = mount({
+      portraitKey: "",
+      portraitThumbKey: "",
+      onChange,
+      prepare: failing("That file is too large."),
+    });
+
+    await choose(fileInput(host));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(hiddenInput(host, "portraitKey").value).toBe("");
+    expect(hiddenInput(host, "portraitThumbKey").value).toBe("");
+  });
+});
+
+describe("two picks in flight at once", () => {
+  /**
+   * The winner must be the pick the author made last, not the upload that
+   * happened to finish last — a large photograph chosen first can easily
+   * settle after a small one chosen second.
+   *
+   * The file input is `disabled` while an upload runs, which is what makes
+   * this hard to reach with a mouse. It is not the guarantee, and this
+   * codebase draws that distinction elsewhere: `components/GedcomImport.tsx`
+   * says in as many words that disabling a control is "a convenience for the
+   * ordinary path, not the guard". So the component carries a pick counter,
+   * and this asserts the counter rather than the attribute.
+   */
+  it("ignores an earlier pick that settles after a later one", async () => {
+    const onChange = vi.fn();
+    const SECOND = "images/ef/3f6c1b0e-9c3a-4a1f-8f2b-2d4c5e6a7b99.jpg";
+
+    let releaseFirst = () => {};
+    const firstSettled = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    let call = 0;
+    const prepare: PreparePortrait = async () => {
+      call += 1;
+      if (call === 1) {
+        await firstSettled;
+        return { ok: true, pair: { portraitKey: KEY, portraitThumbKey: null } };
+      }
+      return {
+        ok: true,
+        pair: { portraitKey: SECOND, portraitThumbKey: null },
+      };
+    };
+
+    const host = mount({ onChange, prepare });
+    const input = fileInput(host);
+
+    /**
+     * Both picks are dispatched inside **one** `act`, and the first is left
+     * hanging. Two overlapping `act` calls corrupt React's internal state,
+     * so the un-awaited pick cannot go through the `choose` helper above —
+     * which is exactly why the events are dispatched by hand here.
+     */
+    await act(async () => {
+      setFiles(input, "slow.jpg");
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      setFiles(input, "quick.jpg");
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(call).toBe(2);
+    expect(onChange).toHaveBeenCalledWith("portraitKey", SECOND);
+    onChange.mockClear();
+
+    // Now let the abandoned first upload land. It must change nothing.
+    await act(async () => {
+      releaseFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
