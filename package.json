@@ -20,7 +20,9 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx db/seed.ts",
-    "db:keep-alive": "tsx db/keep-alive.ts"
+    "db:keep-alive": "tsx db/keep-alive.ts",
+    "db:backup": "tsx db/backup.ts",
+    "db:restore": "tsx db/restore.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",

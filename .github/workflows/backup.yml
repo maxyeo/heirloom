@@ -1,0 +1,251 @@
+# Takes a backup of the whole database every night, proves it can be
+# restored, and keeps it somewhere Supabase's free tier cannot lose it.
+#
+# The free tier has no backups worth the name — no point-in-time recovery, and
+# nothing that survives the project being paused, deleted, or lost with the
+# account it lives in. This is the operator-side counterpart to the family's
+# own export (E7-T4): that one is a feature people use, this one is what means
+# the data survives an accident nobody noticed. See docs/backups.md for the
+# retention policy and the restore procedure.
+#
+# In GitHub Actions rather than Vercel Cron for the same reason as
+# keep-alive.yml: backing up the database is an operations concern, not an
+# application one, and putting it in the app would couple it to a host. See
+# docs/architecture.md ("Portability").
+#
+# It needs two repository secrets, under Settings -> Secrets and variables ->
+# Actions:
+#
+#   BACKUP_DATABASE_URL  Supabase's *session* pooler string (port 5432) — not
+#                        the transaction pooler the app and the keep-alive
+#                        use. pg_dump holds one session open for the whole
+#                        run, which the transaction pooler cannot give it.
+#   BACKUP_PASSPHRASE    Any long random string. It encrypts the dump, and
+#                        without it there is no way to read the backups back.
+#
+# Lose BACKUP_PASSPHRASE and every artifact this has ever uploaded becomes
+# noise. Keep it wherever the Supabase password is kept, not only here.
+
+name: Back up the database
+
+on:
+  schedule:
+    # Nightly, off the hour — scheduled jobs queued at :00 are the most likely
+    # to be delayed or dropped by GitHub under load. Early morning UTC, when a
+    # long dump is least likely to overlap with somebody writing an entry.
+    - cron: "37 3 * * *"
+  # So both secrets can be verified now rather than a day from now.
+  workflow_dispatch:
+
+# Read the repo, and file the failure issue below. Nothing else. In
+# particular, nothing here writes to the repository: a database dump must
+# never be committed.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Dump, restore it, keep it
+    runs-on: ubuntu-latest
+    # Forks do not inherit the secrets, so the schedule would fail nightly in
+    # someone else's repository and leave them holding the failure issue this
+    # files. Same reasoning, and same escape hatch, as keep-alive.yml: a fork
+    # that does run on Supabase can trigger this by hand or change the name
+    # here.
+    if: github.repository == 'maxyeo/heirloom' || github.event_name == 'workflow_dispatch'
+    # A backstop for the whole job. The bounds that matter are on the dump and
+    # restore steps; this one only exists so nothing sits here for six hours.
+    timeout-minutes: 20
+
+    services:
+      # The dump is restored into this before it is kept, every single night.
+      # An untested backup is a hypothesis, and the cheapest way to keep
+      # testing it is to make the test the same code path an operator would
+      # use — `npm run db:restore`, pointed here instead of at production.
+      #
+      # Pinned to a major rather than `latest` so a new PostgreSQL release
+      # cannot change what "verified" means overnight.
+      verify:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same Node major as CI and as local development.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `npm ci` rather than `npm install`, matching CI: this should run
+      # against the locked dependency tree.
+      - run: npm ci
+
+      # Before anything is dumped, so a missing passphrase costs nothing and
+      # cannot end with a plaintext copy of the family's history sitting in a
+      # public repository's artifacts. Every artifact this workflow uploads is
+      # world-readable — that is what a public repository means — so
+      # encryption is the boundary, not a precaution.
+      - name: Require an encryption passphrase
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKUP_PASSPHRASE}" ]; then
+            echo "::error::BACKUP_PASSPHRASE is not set. Refusing to take a backup that could only be kept in the clear — artifacts on a public repository are downloadable by anyone. See docs/backups.md."
+            exit 1
+          fi
+
+      # pg_dump can read a server older than itself but not a newer one, and
+      # the runner image's client trails the PostgreSQL Supabase runs. Pinning
+      # a current client from PGDG means the version of the *runner image*
+      # never decides whether tonight's backup happens. Bump the pin when the
+      # server outgrows it: that failure is loud — pg_dump refuses outright
+      # and the issue below gets filed — rather than a dump that quietly
+      # leaves out whatever the older client did not understand.
+      - name: Install a current PostgreSQL client
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          pg_dump --version
+
+      - name: Dump
+        # A database that accepts the connection and then stalls is the
+        # failure a bound on the *step* guards, for the reason keep-alive.yml
+        # spells out: exceeding a job timeout cancels the job and skips every
+        # step conditioned on failure(), so the reporting below would never
+        # run. This dump is seconds at the size this database will be for
+        # years; ten minutes is far past stuck.
+        timeout-minutes: 10
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: npm run db:backup -- --out backups
+
+      # Symmetric, because there is exactly one party: the operator, later.
+      # `--passphrase-fd 0` keeps the secret out of the process list.
+      - name: Encrypt
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for dump in backups/*.sql.gz; do
+            gpg --batch --yes --quiet --pinentry-mode loopback \
+              --symmetric --cipher-algo AES256 \
+              --passphrase-fd 0 --output "$dump.gpg" "$dump" <<< "$BACKUP_PASSPHRASE"
+          done
+          ls -l backups
+
+      # Deliberately from the encrypted file, not from the plaintext still
+      # sitting on disk. What gets kept is the `.gpg`, so what has to be
+      # proven restorable is the `.gpg` — including that the passphrase in the
+      # secret is the one it was encrypted with. Verifying the plaintext would
+      # test everything except the step that can lock us out.
+      - name: Restore it, and check every row came back
+        timeout-minutes: 10
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          # The service container above. `db/restore-guard.ts` allows a local
+          # host without ceremony, which is exactly what makes a nightly drill
+          # cheap enough to keep doing.
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          for encrypted in backups/*.sql.gz.gpg; do
+            name=$(basename "$encrypted" .gpg)
+            gpg --batch --yes --quiet --pinentry-mode loopback \
+              --decrypt --passphrase-fd 0 \
+              --output "verify/$name" "$encrypted" <<< "$BACKUP_PASSPHRASE"
+            cp "backups/${name%.sql.gz}.manifest.json" "verify/"
+            npm run db:restore -- --from "verify/$name"
+          done
+
+      # Belt and braces. The upload below names only the encrypted files, but
+      # a glob is a weaker guarantee than the plaintext not existing.
+      - name: Discard every plaintext copy
+        run: rm -rf verify backups/*.sql.gz
+
+      - name: Keep it
+        uses: actions/upload-artifact@v7
+        with:
+          # The run id keeps each night's artifact distinct and traceable back
+          # to the run that produced it.
+          name: database-backup-${{ github.run_id }}
+          path: |
+            backups/*.sql.gz.gpg
+            backups/*.manifest.json
+          # 90 days is GitHub's maximum for a public repository, and the
+          # retention policy is written down in docs/backups.md. Anything
+          # longer than 90 days has to be downloaded and kept elsewhere.
+          retention-days: 90
+          # A green run that uploaded nothing is the exact silent failure this
+          # workflow exists to prevent.
+          if-no-files-found: error
+
+      # A red cross on a tab nobody opens is not visibility, and a backup
+      # nobody knows is broken is the same as no backup. GitHub emails only
+      # whoever last edited the cron when a scheduled run fails — precisely
+      # the notification people filter away. An open issue is a state you trip
+      # over instead, and these two steps keep it truthful: it exists while
+      # backups are broken and closes itself when the next one succeeds.
+      - name: Open or update the failure issue
+        # cancelled() as well as failure(): the job timeout above and a
+        # cancellation from the Actions UI both land there rather than in
+        # failure(), and a backup that stopped because it was cancelled is
+        # still a backup that did not happen. A manual cancellation filing an
+        # issue is a rare, self-healing false positive.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create backup --color B60205 \
+            --description "Automated: the database backup is failing" --force
+          existing=$(gh issue list --state open --label backup --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "Database backup is failing" --label backup \
+              --body "$(printf '%s\n' \
+                'The nightly backup did not produce a verified, restorable dump.' \
+                '' \
+                "Failing run: $RUN_URL" \
+                '' \
+                'Until this is fixed there is no recovery point newer than the last green run, and the oldest kept backup ages out after 90 days. Usual causes: the `BACKUP_DATABASE_URL` or `BACKUP_PASSPHRASE` repository secret is missing or has been rotated, the Supabase project is paused, or the restore check found the dump and the restored database disagreeing — which is the one to read carefully rather than retry.' \
+                '' \
+                'Runbook: `docs/backups.md`. This issue closes itself on the next successful run.')"
+          fi
+
+      - name: Close the failure issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --label backup --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Backup succeeded again; closing."
+          fi

@@ -11,6 +11,8 @@ Built for Vercel + Supabase, but it runs on any Node host with any Postgres.
 - [Architecture](docs/architecture.md) — the data model and the security model
 - [Deploying](docs/deploying.md) — the production runbook, written for someone
   who did not build it
+- [Backups](docs/backups.md) — what is taken nightly, how long it is kept, and
+  how to restore it on the day that matters
 - [Design tokens](docs/design-tokens.md) — the Wikipedia type, colour and
   layout values, and the one rule that keeps them in one place
 - [Testing](docs/testing.md) — how the suite is split, and how to test
@@ -166,6 +168,15 @@ of inactivity, which will find a family wiki that gets visited monthly. The
 trivial query once a day to avoid it. It needs a repository secret named
 `DATABASE_URL` before it will pass — see [Keep the database
 awake](docs/deploying.md#8-keep-the-database-awake).
+
+**Back it up.** The Supabase free tier has no backups at all, so until this is
+set up the deployed database is the only copy of the family's history. The
+`Back up the database` workflow (`.github/workflows/backup.yml`) dumps it
+nightly, encrypts it, and — every single night — restores it into a throwaway
+PostgreSQL and checks that every row came back, because an untested backup is
+a hypothesis. It needs two repository secrets, `BACKUP_DATABASE_URL` and
+`BACKUP_PASSPHRASE`. The retention policy, what is deliberately not covered,
+and the restore procedure are in [Backups](docs/backups.md).
 
 ### Other hosts
 

@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# database dumps written by `npm run db:backup`. They are the whole database
+# in one file, in the clear.
+/backups
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
