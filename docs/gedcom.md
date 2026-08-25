@@ -7,12 +7,13 @@ reasonable to put decades of somebody's work in here in the first place.
 
 This page covers the **parser** — E6-T1 (`YEO-46`), the read half — the
 **mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
-(`YEO-47`), and the **export** back out, which is E7-T1 (`YEO-51`). The import
-flow around them is E6-T3 to E6-T5.
+(`YEO-47`), the **preview** somebody reads before an import happens, which is
+E6-T3 (`YEO-48`), and the **export** back out, which is E7-T1 (`YEO-51`).
+Writing the rows is E6-T4 and reporting on them afterwards is E6-T5.
 
 ## The pipeline
 
-Five modules on the way in, each with one job, in the order the bytes move
+Six modules on the way in, each with one job, in the order the bytes move
 through them:
 
 | Module                   | Takes         | Gives                                   |
@@ -22,6 +23,7 @@ through them:
 | `lib/gedcom-lines.ts`    | text          | a tree of tagged nodes                  |
 | `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
+| `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
 
 And two on the way back out:
 
@@ -48,8 +50,9 @@ grammar, whole files for the parser.
 ## The one thing that must stay true
 
 **Nothing here reaches the database.** No `@/db`, no React, no `next/*`, no
-npm package at all — see `lib/gedcom.purity.test.ts`, which walks both import
-closures, the parser's and the mapper's, and asserts it.
+npm package at all — see `lib/gedcom.purity.test.ts`, which walks all four
+import closures — the parser's, the mapper's, the preview's and, since E7-T1
+(`YEO-51`), the exporter's — and asserts it.
 
 The mapper's closure is the parser's plus the three E3-T1 validation modules
 (`lib/individual-input.ts`, `lib/union-input.ts`, `lib/child-input.ts`) and
@@ -237,10 +240,14 @@ every time with the sentence the validator gave.
 
 The considered alternative was to drop the offending _field_ and re-validate —
 blank the date, keep the person. It was rejected because it is a recovery
-policy E6-T2 would be inventing on its own, and E6-T4 owns the question it
-belongs to: an all-or-nothing import may decide that any refusal fails the
-whole file, in which case a per-field rescue here is cleverness that never
-runs.
+policy E6-T2 would be inventing on its own, and the question it belongs to
+was E6-T4's: whether an all-or-nothing import should decide that any refusal
+fails the whole file.
+
+**E6-T4 (`YEO-49`) answered no**, and the reasoning is
+[below](#the-write-half): all-or-nothing is a property of the write, not of
+the reading. So the skipping described here is the behaviour, and a per-field
+rescue remains a thing nobody has asked for.
 
 `BET 1900 AND 1890` is where the two halves meet. The parser stores it exactly
 as written and raises nothing, because reading a file and judging it are
@@ -263,6 +270,109 @@ between `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own
 docblock promised: carrying both halves is only worth it if somebody
 eventually compares them. It says nothing about a file whose halves agree,
 which is every well-formed file.
+
+## The write half
+
+`lib/gedcom-import.ts` (E6-T4, `YEO-49`) takes a mapping and writes it into
+`individuals`, `unions` and `union_children` — all of it, or none of it.
+
+### All or nothing is a property of the _write_
+
+The reason the ticket exists: a half-imported tree is worse than no import,
+because it looks like data, so nobody re-runs it, and the gaps surface one at
+a time over months. One transaction is the whole answer. Every row lands or
+none does, and the tree is never left in a state nobody chose.
+
+That is deliberately **not** the same rule as "any refusal fails the file".
+A record `validateIndividual` refused is a reported skip, and the import
+proceeds. The distinction is which half of the pipeline the guarantee is
+about:
+
+- the transaction is there so a tree is never half-**written**;
+- a tree that is fully written, and honestly described as missing one person
+  whose death date preceded their birth, is not half-anything. It is the whole
+  of what the file could be read as, plus a report saying what the rest was.
+
+Failing an entire file on one unreadable date would make dirty files
+unimportable, and this epic exists precisely because real GEDCOM files are
+dirty. A rule that refuses every real file is not a safety property. The count
+of what was skipped is on the preview the reader confirms (E6-T3) and on the
+report afterwards (E6-T5), so a skip is consented to rather than discovered.
+
+### Nothing is decided here
+
+By the time a `GedcomMapping` arrives, the three validators have run and what
+they refused is already gone. The ids were minted in memory and every foreign
+key resolved, which is what makes the write one bulk insert with nothing to
+read back mid-transaction.
+
+The insert order — individuals, then unions, then child links — is still
+required, and pre-resolved ids do not remove the requirement. Postgres checks
+a foreign key when the row is inserted unless the constraint is `DEFERRABLE`,
+and none in `db/schema.ts` are. What the pre-resolution buys is the absence of
+a read in the middle of the write, not freedom from ordering.
+
+### Batching, and the two ceilings
+
+`lib/import-batches.ts` is the arithmetic, kept separate so `npm test` can
+check it in CI's bare environment — the acceptance criterion is a claim about
+a number of round trips, and a claim about a number should not need Postgres
+to verify. A file with several hundred people is **one statement per table**,
+three round trips for the import.
+
+Two limits govern, and they are different kinds of thing:
+
+| Constant                 | Value  | Kind                                           |
+| ------------------------ | ------ | ---------------------------------------------- |
+| `MAX_BIND_PARAMETERS`    | 65,533 | correctness — the driver refuses beyond it     |
+| `MAX_ROWS_PER_STATEMENT` | 1,000  | prudence — statement duration and pool holding |
+
+65,533 rather than the protocol's usual 65,535 because that is where
+postgres.js actually refuses: `connection.js` throws at `>= 65534`, so 65,533
+is the largest count that reaches Postgres.
+
+The row cap is the one that binds in practice — the widest table here is 19
+columns, so the parameter ceiling is 3,449 rows away. It exists because
+`statement_timeout` is a per-statement budget rather than a per-import one: one
+enormous insert is a single timer that either fits or fails the whole file,
+where fifty smaller ones are each comfortably inside it. It also bounds how
+long an import holds a pooled connection, since Supabase's pooler runs in
+transaction mode and pins a backend for the length of the transaction.
+
+The parameter ceiling is therefore a guard rather than a working limit, kept
+because this schema has already been widened once for expressiveness
+(`YEO-88`) and the next widening should not be able to overflow the wire
+protocol in silence.
+
+### The function timeout
+
+The criterion asks for the import to finish inside Vercel's function timeout
+_or_ to run in chunks that are individually safe to retry. Those are not both
+available: chunks that commit independently are exactly the half-imported tree
+this ticket exists to prevent. So the import completes in one invocation, and
+whichever route comes to call it must set `maxDuration` — that is a
+requirement on the route rather than something already wired, since
+`maxDuration` is a route-segment export and E6-T4 deliberately adds no route.
+
+What makes overrunning it safe is the transaction rather than the number. A
+function killed mid-import never reaches `commit`, so the tree is untouched
+and the reader can simply upload the file again. The timeout is a failure to
+import, never a partial import.
+
+### A hazard for whoever edits this next
+
+**postgres.js commits a transaction callback that returns normally.** It
+issues `rollback` only when the callback _throws_. Any refusal added inside
+the transaction later must `throw`, not `return` — returning a refusal after a
+write reports it and commits it anyway.
+
+That is not hypothetical; it is the bug `lib/reorder-unions.ts` shipped and
+then fixed, and `lib/reorder-unions.db.test.ts` pins the semantics against a
+real database. `refuse` in `lib/set-parents.ts` is the idiom for doing it
+correctly. Both are deliberately absent from `lib/gedcom-import.ts` today,
+because it has nothing to refuse: every decision was made before the
+transaction opened, so anything that goes wrong inside it is a genuine fault
+and is left to propagate.
 
 ## Writing it back out
 
@@ -426,6 +536,74 @@ and one unreadable birth date would report 4,001 problems.
 reported". They are redundant — the same edges are written on the `FAM` side —
 so reporting them would put "we ignored 240 things" into a report where
 nothing was lost. They are parsed onto the individual instead.
+
+## Previewing an import
+
+> Uploading the wrong file must not be a database restore.
+
+E6-T3 (`YEO-48`) puts a stop between choosing a file and importing it.
+`/import` uploads the `.ged` to `POST /api/import`, which parses it, maps it,
+and answers with counts, a dozen names, and every warning above — and writes
+nothing. A second request, carrying the digest of the file that was previewed,
+is what imports it.
+
+| Module                        | What it owns                                         |
+| ----------------------------- | ---------------------------------------------------- |
+| `lib/import-preview.ts`       | The cap, the counts, the sample, the warning groups  |
+| `lib/import-endpoint.ts`      | The URL and the two field names, shared by both ends |
+| `app/api/import/route.ts`     | The session guard, the multipart form, the branch    |
+| `components/GedcomImport.tsx` | The three stages of the screen                       |
+
+### Nothing on this path can write
+
+`lib/import-preview.ts` is under the same import-closure rule as the parser
+and the mapper, and `lib/gedcom.purity.test.ts` asserts it: no `@/db`, no npm
+package, nothing outside the parser's own closure plus `lib/person-format.ts`.
+
+That is deliberately stronger than "the preview does not write". _Cancelling_
+reaches none of this code either — cancel is the second request never being
+sent, not a request that gets ignored — but a preview that **could** write
+would make the guarantee worth nothing the first time somebody added a
+convenience to it.
+
+### Why the file is uploaded twice
+
+A serverless function keeps nothing between requests, so the confirming
+request carries the file again along with the SHA-256 of the bytes the preview
+described. The endpoint recomputes it and refuses a mismatch with `409`. That
+is what makes "explicit confirm step" a statement about _this file_ rather
+than about a second button press.
+
+The alternative — stash the parsed mapping server-side under a token — needs
+somewhere to stash it, which is either the database the preview must not touch
+or the blob store, and it leaves every cancelled import as something to clean
+up later.
+
+### There is no format sniff
+
+GEDCOM has no magic bytes, and it does not need one. `parseGedcom` is total: a
+file that is not GEDCOM comes back with no records and an issue per line, so
+the preview says _"0 people, 0 unions, 214 lines that are not GEDCOM"_, which
+tells whoever picked it far more than a rejection would. The only things
+refused before parsing are a file too large to buffer and an empty one.
+
+### What the screen shows, and in what order
+
+Counts first, then the names, then warnings worst-first — the character set
+leads, because a file read as the wrong one has every accented name in it
+wrong and nothing else matters until that is settled, and `narrowed` comes
+last, because it is the one group that means _nothing to fix_.
+
+Unknown tags are kept out of that list entirely, under a heading of their own,
+for the reason [Nothing is dropped in silence](#nothing-is-dropped-in-silence)
+gives.
+
+One warning is derived rather than passed through. _People with no name in the
+file_ is counted off the `INDI` records themselves, because the mapper reports
+it as `value` alongside unrelated findings and the only way to pull it back
+out of `issues` would be to match on the wording of a sentence somebody should
+be free to reword. The `value` group then skips one issue per line the derived
+group claims, so one loss does not get two spellings on one screen.
 
 ## Character encoding
 

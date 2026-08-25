@@ -46,6 +46,23 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 /**
  * The public entry points. Everything either one reaches is in scope.
  *
+ * Four of them since E7-T1 (`YEO-51`), and the fourth is what the other three
+ * were kept pure *for*. `lib/gedcom-export.ts` writes the rows back out as a
+ * file, and E7-T2 (`YEO-52`) round-trips export through import and compares
+ * the two texts byte for byte — a comparison that can only be a test of the
+ * *format* while neither half needs a database. The reading of the rows is
+ * `lib/export-tree.ts`, which is deliberately on the other side of this line
+ * and is not an entry point here.
+ *
+ * Three of them since E6-T3 (`YEO-48`). `lib/import-preview.ts` is the third
+ * and the one this rule was always for: it turns a mapping into the counts,
+ * the sample and the warnings somebody reads *before* deciding whether to
+ * import, and "cancelling leaves the database untouched" is the acceptance
+ * criterion it has to hold up. Stated as a property of the import closure,
+ * that criterion stops being a code path nobody happened to take and becomes
+ * a fact about what is reachable: on the previewing path there is no code
+ * that could write, whatever it did.
+ *
  * Two of them since E6-T2 (`YEO-47`). `lib/gedcom-map.ts` turns the parsed
  * file into `individuals` / `unions` / `union_children` rows, and it is under
  * exactly the same rule for exactly the same reason: E6-T3's preview has to
@@ -53,18 +70,11 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * deciding what to write and writing it are separate operations. The mapper
  * is the half that decides, so a `@/db` import in it would be the same defect
  * as one in the parser, arriving one module further along.
- *
- * Three since E7-T1 (`YEO-51`), and the third is what the other two were kept
- * pure *for*. `lib/gedcom-export.ts` writes the rows back out as a file, and
- * E7-T2 (`YEO-52`) round-trips export through import and compares the two
- * texts byte for byte — a comparison that can only be a test of the *format*
- * while neither half needs a database. The reading of the rows is
- * `lib/export-tree.ts`, which is deliberately on the other side of this line
- * and is not an entry point here.
  */
 const ENTRIES = {
   parser: join("lib", "gedcom.ts"),
   mapper: join("lib", "gedcom-map.ts"),
+  preview: join("lib", "import-preview.ts"),
   exporter: join("lib", "gedcom-export.ts"),
 } as const;
 
@@ -213,6 +223,62 @@ describe("the mapper's import closure", () => {
     expect(files).toContain(join("lib", "individual-input.ts"));
     expect(files).toContain(join("lib", "union-input.ts"));
     expect(files).toContain(join("lib", "child-input.ts"));
+  });
+});
+
+describe("the preview's import closure", () => {
+  const { files, packages } = closure(ENTRIES.preview);
+
+  it("is the modules it is supposed to be", () => {
+    // The mapper's closure plus this module and the one formatter it needs.
+    // `lib/person-format.ts` is here because the sample of names on the
+    // preview screen has to read the way a name reads everywhere else in the
+    // application — the tree node, the detail panel and the removal dialogue
+    // all go through the same function, and a fourth spelling of "join the
+    // names, drop the empty one" is how a preview and the tree it produces
+    // end up disagreeing about what somebody is called. It imports nothing
+    // itself, which is why it can be here at all.
+    expect(files.sort()).toEqual(
+      [
+        join("lib", "ansel.ts"),
+        join("lib", "child-input.ts"),
+        join("lib", "field-input.ts"),
+        join("lib", "gedcom-encoding.ts"),
+        join("lib", "gedcom-lines.ts"),
+        join("lib", "gedcom-map.ts"),
+        join("lib", "gedcom-report.ts"),
+        join("lib", "gedcom.ts"),
+        join("lib", "import-preview.ts"),
+        join("lib", "individual-input.ts"),
+        join("lib", "parse-date.ts"),
+        join("lib", "person-format.ts"),
+        join("lib", "row-id.ts"),
+        join("lib", "union-input.ts"),
+      ].sort(),
+    );
+  });
+
+  it("imports no package at all", () => {
+    expect(packages.filter((name) => !ALLOWED.has(name))).toEqual([]);
+  });
+
+  it("never reaches the database", () => {
+    // The acceptance criterion "cancelling leaves the database untouched",
+    // stated where it can fail. Cancelling reaches none of this either — it
+    // is the second request never being sent — but a preview that could write
+    // would make that guarantee worth nothing.
+    for (const file of files) {
+      expect(read(file)).not.toContain('from "@/db');
+      expect(read(file)).not.toContain('from "./db');
+      expect(read(file)).not.toContain("drizzle-orm");
+    }
+  });
+
+  it("reuses the mapping rather than deciding rows a second time", () => {
+    // Stated as membership, because the alternative failure is silent: a
+    // preview that counted rows its own way would still typecheck, and would
+    // quietly start describing an import that E6-T4 does not perform.
+    expect(files).toContain(join("lib", "gedcom-map.ts"));
   });
 });
 

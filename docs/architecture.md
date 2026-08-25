@@ -817,6 +817,15 @@ grants write and delete on the store, and never appears in the repository.
 - **Orientation is respected, never repaired.** PNG, WebP and GIF keep
   whatever orientation tag they arrived with and nothing re-synthesises one,
   because nothing that produces those formats produces a rotated image.
+- **Importing the same file twice imports everybody twice.** `lib/gedcom-map.ts`
+  mints a fresh id for every record on every parse, so a second import of one
+  file is a second complete copy of the tree rather than a no-op or a merge.
+  The transaction (E6-T4) guarantees the copy lands whole; it does not notice
+  that it is a copy. Duplicate detection is out of scope for E6 and the honest
+  fix is not de-duplication after the fact but a stable identity to match on —
+  either the file's own `_UID`/`REFN` where a program wrote one, or a
+  reader-facing merge step of the kind E3-T10 already has for unions.
+
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.
@@ -836,6 +845,18 @@ grants write and delete on the store, and never appears in the repository.
   `about 1918`, which is the oldest of the four and has been true since
   `lib/parse-date.ts` was written. All four are `narrowed` issues rather than
   accidents (`YEO-88`, `YEO-47`); the ranges themselves are stored whole.
+- **An import can be previewed but not yet performed.** E6-T3 (`YEO-48`)
+  landed the whole path up to and including consent — upload, parse, preview,
+  cancel, and a confirming request that proves it is confirming the file that
+  was previewed — and deliberately stopped there. Writing the rows is E6-T4
+  (`YEO-49`), which lands them as one transaction that rolls back whole; a
+  plain sequence of inserts added earlier to finish the button is the
+  half-imported tree that ticket exists to prevent. Confirming today answers
+  `501` and says so. See [Previewing an import](gedcom.md#previewing-an-import).
+- **A previewed file is uploaded twice.** Once to be read and once to be
+  imported, because a serverless function keeps nothing between requests and
+  the alternative leaves every cancelled import as something to clean up
+  later. The second upload carries the digest of the first.
 - **Three things a GEDCOM file records have no column at all**: a second name
   for a person, a place for a marriage, and a first name that the file leaves
   blank. Each is reported per record rather than lost, and each is written up
