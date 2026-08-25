@@ -48,8 +48,30 @@ export const GEDCOM_EXPORT_ENDPOINT = "/api/export/gedcom";
  */
 export const GEDCOM_MEDIA_TYPE = "text/vnd.familysearch.gedcom; charset=utf-8";
 
+/**
+ * Where the full export is (E7-T4, `YEO-54`).
+ *
+ * A second route rather than a query parameter on the first, because the two
+ * answer with different media types under different names and share nothing
+ * but a session guard. `/full` and not `/backup`: see {@link FULL_EXPORT_TITLE}.
+ */
+export const FULL_EXPORT_ENDPOINT = "/api/export/full";
+
+/**
+ * ZIP's registered media type.
+ *
+ * `application/zip` rather than one of the `x-` spellings that predate the
+ * registration — every browser and every archive tool understands it, and it
+ * is what makes the response a file rather than something a tab tries to
+ * display.
+ */
+export const FULL_EXPORT_MEDIA_TYPE = "application/zip";
+
 /** What every export of this kind is called, before the date and extension. */
 const FILENAME_STEM = "family-tree";
+
+/** The full export's own stem. See {@link gedcomFilename} for the date. */
+const FULL_EXPORT_FILENAME_STEM = "family-export";
 
 /**
  * The name the browser saves the file under, dated.
@@ -99,6 +121,69 @@ export function gedcomDownloadHeaders(now: Date): Record<string, string> {
   return {
     "Content-Type": GEDCOM_MEDIA_TYPE,
     "Content-Disposition": `attachment; filename="${gedcomFilename(now)}"`,
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+/**
+ * What this download is called on the settings page, and why it is not called
+ * a backup (E7-T4, `YEO-54`).
+ *
+ * E7-T3's reviewer raised it and it is the right call. `docs/backups.md`
+ * opens by drawing exactly this line:
+ *
+ * > *"It is the counterpart to the family's own export, and the two are not
+ * > substitutes. Export is a feature: the people in the wiki can take their
+ * > data with them. This is the thing that means the data is still there
+ * > after an accident nobody noticed at the time."*
+ *
+ * The two differ in every operational way that matters. The nightly Postgres
+ * backup runs on a schedule whether anybody remembers it or not, is
+ * encrypted, is kept for ninety days, and proves itself by restoring every
+ * night. This is a file a person clicks for, once, and then has to look
+ * after. Calling both of them "backup" in the one place a non-technical
+ * reader meets either would tell them the second is the first — which is the
+ * precise misunderstanding E7-T3's caveat exists to prevent, arriving from
+ * the other direction.
+ *
+ * So: **export** on the page, and *backup* left to mean the operator's
+ * runbook. The endpoint is spelled to match ({@link FULL_EXPORT_ENDPOINT}),
+ * because a URL is read by people too.
+ */
+export const FULL_EXPORT_TITLE = "Full export";
+
+/**
+ * The name the browser saves the archive under, dated.
+ *
+ * `gedcomFilename`'s reasoning, unchanged and for the same reasons: ISO order
+ * so a folder of them sorts by name, UTC because the server is the only clock
+ * in the exchange, and nothing in the name that came from a person, so the
+ * quoted `Content-Disposition` below needs no RFC 5987 escape.
+ */
+export function fullExportFilename(now: Date): string {
+  return `${FULL_EXPORT_FILENAME_STEM}-${now.toISOString().slice(0, 10)}.zip`;
+}
+
+/**
+ * The response headers the full export carries.
+ *
+ * The same four as the GEDCOM download and each for the same reason —
+ * `attachment` to make it a download, `no-store` to keep a family's names out
+ * of a shared machine's disk cache, `nosniff` because nothing downstream
+ * should be guessing at the body.
+ *
+ * What is deliberately absent is `Content-Length`. The archive is generated
+ * as it is sent and its size is not known when the headers go out; a length
+ * guessed here and disagreed with by the body is a truncated download that
+ * looks complete, which is the one failure a backup must not have. Without
+ * it the response is chunked and the browser shows a download with no
+ * progress bar — the honest trade.
+ */
+export function fullExportDownloadHeaders(now: Date): Record<string, string> {
+  return {
+    "Content-Type": FULL_EXPORT_MEDIA_TYPE,
+    "Content-Disposition": `attachment; filename="${fullExportFilename(now)}"`,
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
   };

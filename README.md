@@ -19,6 +19,8 @@ Built for Vercel + Supabase, but it runs on any Node host with any Postgres.
   something that needs Postgres
 - [GEDCOM](docs/gedcom.md) — the import format, why the parser imports nothing,
   and what it reports rather than drops
+- [Export](docs/export.md) — what the family can take with them, what is in the
+  archive, and how to read it back
 
 ## Status
 

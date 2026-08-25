@@ -55,6 +55,54 @@ export const HTML_TOKEN_PATTERN =
   /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][^\s/>]*)([^>]*)>|([^<]+)/g;
 
 /**
+ * One attribute of an opening tag, read out of the raw attribute run
+ * `HTML_TOKEN_PATTERN`'s third group hands back.
+ *
+ * The quoting cases are all handled even though `sanitize-html` always emits
+ * double quotes, because this reads a *stored* body and a row written before
+ * the sanitiser existed — or by a hand-run `UPDATE` — is exactly the input
+ * that is neither well-formed nor anyone's fault. An attribute it cannot
+ * parse yields `null`, which every caller reads as "not the kind of tag I am
+ * looking for" and leaves alone.
+ *
+ * Shared for this module's own stated reason: E11-T6 (`YEO-76`) needed it to
+ * find `<a href>`, and E7-T4 (`YEO-54`) needs it to find `<img src>`, and a
+ * second copy of a regex that has to agree with the sanitiser's output is a
+ * second place for that agreement to drift.
+ *
+ * The value comes back **as written**, still escaped. Decoding is the
+ * caller's, because what an attribute means depends on which attribute it is:
+ * an href is percent-encoded as well, and a caller that wants a slug out of
+ * one has a second decode to do in a particular order.
+ *
+ * @param attributes everything between the tag name and the `>`
+ * @param name the attribute to find, lowercase
+ * @returns its value, or `null` if the tag does not carry it
+ */
+export function attributeValue(
+  attributes: string,
+  name: string,
+): string | null {
+  for (const match of attributes.matchAll(ATTRIBUTE_PATTERN)) {
+    if (match[1].toLowerCase() !== name) continue;
+    // Exactly one of the three value alternatives fired; the others are empty.
+    return match[2] || match[3] || match[4] || "";
+  }
+  return null;
+}
+
+/**
+ * `name="value"`, `name='value'` and `name=value`, in that order of
+ * preference.
+ *
+ * Declared with `g` and consumed with `matchAll`, which clones the regex
+ * rather than advancing `lastIndex` on it, so one module-level pattern is
+ * safe to share between callers.
+ */
+const ATTRIBUTE_PATTERN =
+  /([a-zA-Z_:][-\w:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+
+/**
  * The four escapes `sanitizeHtml` emits, decoded in one pass.
  *
  * Deliberately not a character-reference decoder. `sanitize-html` parses its

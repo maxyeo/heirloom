@@ -232,3 +232,63 @@ export function imageKeyFromPath(segments: readonly string[]): string {
   assertSafeStorageKey(key);
   return key;
 }
+
+/**
+ * The reverse of {@link imagePath}: which stored image, if any, an `<img
+ * src>` in an entry body refers to (E7-T4, `YEO-54`).
+ *
+ * The full export has to put the family's photographs in the archive, and
+ * `lib/storage.ts` deliberately has no `list` — the seam is exactly
+ * `put`/`get`/`delete`, and widening it to enumerate a store would narrow the
+ * set of hosts that can implement it (docs/architecture.md#the-storage-seam).
+ * So the set of images an archive should carry is read off the *references*:
+ * every `src` in every entry body and every revision of one. That is also the
+ * question E5-T5's orphan sweep asks in reverse — "referenced by no revision"
+ * — so the two agree about what "referenced" means by sharing this function.
+ *
+ * Deliberately strict, and strict in the same directions
+ * `entrySlugFromHref` is:
+ *
+ * - **An absolute URL is not one of ours**, even when it names this host.
+ *   Bodies are site-relative by construction (docs/architecture.md#links-
+ *   between-entries), so an absolute `src` is something pasted in from
+ *   somewhere else and its bytes are not ours to include.
+ * - **A malformed percent-escape yields `null` rather than throwing.**
+ *   `decodeURIComponent` raises `URIError` on a lone `%`, and a stray
+ *   character in a stored body must not take an export down with it — a
+ *   backup that refuses to run because of one bad `src` is the failure this
+ *   ticket exists to avoid.
+ * - **A key that fails `assertSafeStorageKey` yields `null`.** The path is
+ *   read out of stored HTML, which is the one place a value that never went
+ *   through `newImageKey` could appear, so the same check the route makes is
+ *   made here.
+ *
+ * A query or fragment is stripped first: `?v=2` on an image URL is a
+ * cache-buster, not part of the key.
+ *
+ * @param src the `src` as it appears on the `img`, percent-encoded and with
+ *   HTML escapes already decoded
+ * @returns the storage key, or `null` if this is not an image this
+ *   application stores
+ */
+export function imageKeyFromHref(src: string): string | null {
+  const prefix = `${IMAGE_ROUTE}/`;
+  if (!src.startsWith(prefix)) return null;
+
+  const path = src.slice(prefix.length).split(/[#?]/, 1)[0];
+  if (path === "") return null;
+
+  let segments: string[];
+  try {
+    segments = path.split("/").map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+
+  try {
+    return imageKeyFromPath(segments);
+  } catch (error) {
+    if (error instanceof UnsafeStorageKeyError) return null;
+    throw error;
+  }
+}

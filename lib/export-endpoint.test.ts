@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  FULL_EXPORT_ENDPOINT,
+  FULL_EXPORT_MEDIA_TYPE,
+  FULL_EXPORT_TITLE,
+  fullExportDownloadHeaders,
+  fullExportFilename,
   GEDCOM_EXPORT_ENDPOINT,
   GEDCOM_MEDIA_TYPE,
   gedcomDownloadHeaders,
@@ -88,5 +93,77 @@ describe("the response headers", () => {
 describe("the endpoint", () => {
   it("is a site-relative path the settings page can point an anchor at", () => {
     expect(GEDCOM_EXPORT_ENDPOINT).toBe("/api/export/gedcom");
+  });
+});
+
+/**
+ * The full export's half of the contract (E7-T4, `YEO-54`).
+ *
+ * The same shape as the GEDCOM's above and for the same reason: the filename
+ * is a function from a `Date` to a string, so "the name carries the date" is
+ * checkable against a literal rather than by driving a route with a clock in
+ * it.
+ */
+describe("the full export's filename", () => {
+  it("carries the date, in sortable order", () => {
+    expect(fullExportFilename(NOON)).toBe("family-export-2026-08-25.zip");
+  });
+
+  it("sits beside a GEDCOM in a folder without colliding with it", () => {
+    // Two downloads on the same day are two files, and both say which they
+    // are without anyone opening them.
+    expect(fullExportFilename(NOON)).not.toBe(gedcomFilename(NOON));
+  });
+
+  it("needs no escaping, because nothing in it comes from a person", () => {
+    expect(fullExportFilename(NOON)).toMatch(/^[a-z0-9-]+\.zip$/);
+  });
+});
+
+describe("the full export's response headers", () => {
+  const headers = fullExportDownloadHeaders(NOON);
+
+  it("makes the response a download, under the dated name", () => {
+    expect(headers["Content-Disposition"]).toBe(
+      'attachment; filename="family-export-2026-08-25.zip"',
+    );
+  });
+
+  it("declares a ZIP", () => {
+    expect(headers["Content-Type"]).toBe(FULL_EXPORT_MEDIA_TYPE);
+    expect(FULL_EXPORT_MEDIA_TYPE).toBe("application/zip");
+  });
+
+  it("keeps the family's names out of shared caches", () => {
+    expect(headers["Cache-Control"]).toBe("private, no-store");
+  });
+
+  it("states no length, because the archive is written as it is sent", () => {
+    /**
+     * The one header this download deliberately does not carry. A length
+     * guessed before the archive exists and disagreed with by the body is a
+     * truncated download that looks complete — the single failure a backup
+     * must not have.
+     */
+    expect(headers["Content-Length"]).toBeUndefined();
+  });
+});
+
+describe("the full export's name", () => {
+  it("is an export and not a backup", () => {
+    /**
+     * E7-T3's reviewer raised it and `docs/backups.md` settles it: the
+     * operator's nightly Postgres backup and the family's own export are
+     * deliberately different things, and sharing a word for them on the one
+     * page a non-technical reader meets either would say the second is the
+     * first. Pinned here as well as in `lib/export-options.test.ts` because
+     * this constant is where the word is chosen.
+     */
+    expect(FULL_EXPORT_TITLE).toBe("Full export");
+    expect(FULL_EXPORT_ENDPOINT).not.toContain("backup");
+  });
+
+  it("is a site-relative path the settings page can point an anchor at", () => {
+    expect(FULL_EXPORT_ENDPOINT).toBe("/api/export/full");
   });
 });

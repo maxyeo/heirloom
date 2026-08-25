@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { GEDCOM_EXPORT_ENDPOINT } from "@/lib/export-endpoint";
 import {
-  FULL_BACKUP_TICKET,
-  type ExportOption,
-  exportOptions,
-} from "@/lib/export-options";
+  FULL_EXPORT_ENDPOINT,
+  FULL_EXPORT_TITLE,
+  GEDCOM_EXPORT_ENDPOINT,
+} from "@/lib/export-endpoint";
+import { type ExportOption, exportOptions } from "@/lib/export-options";
 
 /**
- * What the settings page says (E7-T3, `YEO-53`).
+ * What the settings page says (E7-T3, `YEO-53`; E7-T4, `YEO-54`).
  *
  * Three of this ticket's four acceptance criteria are sentences: what the
  * GEDCOM does *not* contain, in plain language, pointing at E7-T4 for the
@@ -24,6 +24,21 @@ import {
  * nowhere to put a wiki, so it isn't one."* That is a claim about what a
  * reader is told at the moment they click, so it is asserted about the words,
  * not about the presence of a field.
+ *
+ * ## What E7-T4 changed here, and why the change had to be made here
+ *
+ * The pointer used to say the full export was *"not built yet"*, and the
+ * assertion below used to pin that phrase. That was deliberate on E7-T3's
+ * part: it made the claim unsofteneable — nobody could quietly reword the
+ * caveat into implying a backup existed before one did, because this file
+ * failed until the feature was real.
+ *
+ * E7-T4 built it, so the assertion is inverted rather than deleted: the
+ * pointer now has to name a download the reader can actually reach. A
+ * deleted assertion would have left the sentence unguarded in the other
+ * direction, which is the direction that matters now — a caveat that stops
+ * saying where the missing things are is a caveat that has quietly become a
+ * complaint.
  */
 
 function option(id: string): ExportOption {
@@ -47,13 +62,18 @@ function prose(candidate: ExportOption): string {
     .toLowerCase();
 }
 
-describe("the download on offer", () => {
-  it("points at the endpoint that answers it", () => {
+describe("the downloads on offer", () => {
+  it("points each at the endpoint that answers it", () => {
     expect(option("gedcom").href).toBe(GEDCOM_EXPORT_ENDPOINT);
+    expect(option("full-export").href).toBe(FULL_EXPORT_ENDPOINT);
   });
 
   it("says GEDCOM on the button, so nobody has to guess what lands", () => {
     expect(option("gedcom").action).toBe("Download family tree (GEDCOM)");
+  });
+
+  it("says ZIP on the other one, for the same reason", () => {
+    expect(option("full-export").action).toContain("ZIP");
   });
 });
 
@@ -79,19 +99,23 @@ describe("the caveat on the GEDCOM", () => {
     expect(missing).toContain("photographs");
   });
 
-  it("points at E7-T4 for the full backup", () => {
-    expect(caveat!.pointer).toContain(FULL_BACKUP_TICKET);
-    expect(FULL_BACKUP_TICKET).toBe("E7-T4");
+  it("points at the download that has the rest", () => {
+    // By its name on the page, not by a ticket id: a reader who has just been
+    // told this file is incomplete needs to know what to click, and "E7-T4"
+    // is a thing to click on in a tracker nobody has an account for.
+    expect(caveat!.pointer).toContain(FULL_EXPORT_TITLE);
+    expect(option("full-export").title).toBe(FULL_EXPORT_TITLE);
   });
 
-  it("does not claim a full backup already exists", () => {
+  it("no longer says the full export is unbuilt, because it is built", () => {
     /**
-     * The half that is easy to get wrong, because it only becomes wrong when
-     * somebody reads it: E7-T4 is not built, so a pointer in the present
-     * tense sends a reader who has just been told this file is not a backup
-     * off to look for one that is not there.
+     * The assertion E7-T3 wrote, inverted by E7-T4 rather than removed. It
+     * was pinned then so nobody could soften the claim before the feature was
+     * real; it is pinned now so nobody can leave a reader looking for a
+     * download that has been sitting on the page beneath them all along.
      */
-    expect(caveat!.pointer.toLowerCase()).toContain("not built yet");
+    expect(caveat!.pointer.toLowerCase()).not.toContain("not built");
+    expect(caveat!.pointer.toLowerCase()).not.toContain("e7-t4");
   });
 
   it("says outright that this is not the thing to keep instead of the site", () => {
@@ -99,27 +123,39 @@ describe("the caveat on the GEDCOM", () => {
   });
 });
 
-describe("the second option, which E7-T4 fills in", () => {
-  it("is listed, so the page it lands on is already the right shape", () => {
-    expect(option("full-backup").pendingTicket).toBe(FULL_BACKUP_TICKET);
-  });
-
-  it("is inert rather than a button that 404s", () => {
-    // `lib/site-nav.ts`'s rule, and the same reason: something that looks live
-    // and is not is worse than something that plainly says "later".
-    expect(option("full-backup").href).toBeNull();
+describe("the second option, which E7-T4 filled in", () => {
+  it("is live, and no longer names a ticket", () => {
+    expect(option("full-export").href).not.toBeNull();
+    expect(option("full-export").pendingTicket).toBeUndefined();
   });
 
   it("promises exactly what the GEDCOM leaves out", () => {
-    const backup = prose(option("full-backup"));
+    const full = prose(option("full-export"));
 
-    expect(backup).toContain("entry text");
-    expect(backup).toContain("revision");
-    expect(backup).toContain("images");
+    expect(full).toContain("entry");
+    expect(full).toContain("version");
+    expect(full).toContain("photograph");
   });
 
   it("carries no caveat, because it is the one that leaves nothing out", () => {
-    expect(option("full-backup").caveat).toBeNull();
+    expect(option("full-export").caveat).toBeNull();
+  });
+
+  it("is called an export and not a backup", () => {
+    /**
+     * E7-T3's reviewer raised this and `docs/backups.md` settles it: the
+     * operator's nightly Postgres backup and the family's own export are
+     * deliberately different things — one is scheduled, encrypted, kept
+     * ninety days and restored every night to prove it works; the other is a
+     * file somebody clicks for once and then has to look after. Sharing a
+     * word for them on the one page a non-technical reader meets either
+     * would say the second is the first.
+     *
+     * Asserted about the *prose*, not about the title alone, because the
+     * summary and the button are read at the same moment and one stray
+     * "backup" in either undoes it.
+     */
+    expect(prose(option("full-export"))).not.toContain("backup");
   });
 });
 

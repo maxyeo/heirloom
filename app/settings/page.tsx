@@ -17,7 +17,9 @@ import { requireSession } from "@/lib/session";
  *
  * `lib/export-options.ts`, and the reasoning is there. The short of it: E7-T4
  * (`YEO-54`) adds a second download beside this one, and it should be able to
- * do that by editing a list rather than this component.
+ * do that by editing a list rather than this component. It did — the whole of
+ * that ticket's change to this screen was three fields in that file, and this
+ * component was not reopened.
  */
 export const dynamic = "force-dynamic";
 
@@ -41,8 +43,9 @@ export default async function SettingsPage() {
 
       <div className="wiki-body">
         <p>
-          Everything in the family tree can be taken out of here at any time, in
-          a format other programs read. Nothing is deleted by downloading it.
+          Everything on this site can be taken out of it at any time, in formats
+          other programs read. Nothing is deleted by downloading it, and you can
+          do it as often as you like.
         </p>
       </div>
 

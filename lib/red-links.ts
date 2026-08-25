@@ -1,5 +1,6 @@
 import { entryHref, entrySlugFromHref } from "@/lib/entry-links";
 import {
+  attributeValue,
   collapseWhitespace,
   decodeHtmlEscapes,
   escapeHtmlAttribute,
@@ -204,28 +205,6 @@ type OpenAnchor = {
   start: number;
   end: number;
 };
-
-/**
- * Read one attribute out of the raw attribute run of an opening tag.
- *
- * The quoting cases are all handled even though `sanitize-html` always emits
- * double quotes, because this reads a *stored* body and a row written before
- * the sanitiser existed — or by a hand-run `UPDATE` — is exactly the input
- * that is neither well-formed nor anyone's fault. An attribute it cannot
- * parse yields `null`, which reads downstream as "not an entry link" and
- * leaves the tag alone.
- */
-const ATTRIBUTE_PATTERN =
-  /([a-zA-Z_:][-\w:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
-
-function attributeValue(attributes: string, name: string): string | null {
-  for (const match of attributes.matchAll(ATTRIBUTE_PATTERN)) {
-    if (match[1].toLowerCase() !== name) continue;
-    // Exactly one of the three value alternatives fired; the others are empty.
-    return match[2] || match[3] || match[4] || "";
-  }
-  return null;
-}
 
 /**
  * Every link to an entry in a body, in document order, in one pass.
