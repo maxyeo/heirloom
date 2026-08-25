@@ -591,6 +591,49 @@ describe("photographs", () => {
     expect(hasContentChanges(rows)).toBe(false);
   });
 
+  it("does not disturb the blocks around it, however it is nested", () => {
+    // A picture inside a bullet is reachable: the image node is a block and
+    // StarterKit's `listItem` holds `paragraph block*`. The `img` branch never
+    // touches `open`, so the list item closes exactly as it would have.
+    expect(
+      extractContentBlocks(
+        `<ul><li><p>Alice</p>${img(ROSE, "A")}</li><li><p>Brian</p></li></ul>`,
+      ),
+    ).toEqual([
+      { kind: "listItem", text: "Alice" },
+      { kind: "image", text: "A", source: ROSE },
+      { kind: "listItem", text: "Brian" },
+    ]);
+
+    // And between two headings, where a block that pushed itself onto `open`
+    // would have swallowed the second one.
+    expect(
+      extractContentBlocks(`<h2>Early life</h2>${img(ROSE)}<h3>School</h3>`),
+    ).toEqual([
+      { kind: "heading2", text: "Early life" },
+      { kind: "image", text: "", source: ROSE },
+      { kind: "heading3", text: "School" },
+    ]);
+  });
+
+  it("reads alt text the way it reads any other text", () => {
+    // Escapes decoded and whitespace collapsed, so a description that differs
+    // only in spacing is not a change.
+    expect(extractContentBlocks(img(ROSE, "Rose &amp; Walter"))).toEqual([
+      { kind: "image", text: "Rose & Walter", source: ROSE },
+    ]);
+    expect(extractContentBlocks(img(ROSE, "  Rose   at   sea  "))).toEqual([
+      { kind: "image", text: "Rose at sea", source: ROSE },
+    ]);
+  });
+
+  it("survives a stray closing tag, which carries no src", () => {
+    expect(extractContentBlocks("<p>a</p></img><p>b</p>")).toEqual([
+      { kind: "paragraph", text: "a" },
+      { kind: "paragraph", text: "b" },
+    ]);
+  });
+
   it("ignores an img the sanitiser would have dropped anyway", () => {
     // Unreachable from a stored body — `sanitizeHtml` runs first and discards
     // the whole tag — so this is about the check being made rather than
