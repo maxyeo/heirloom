@@ -15,6 +15,8 @@ Built for Vercel + Supabase, but it runs on any Node host with any Postgres.
   layout values, and the one rule that keeps them in one place
 - [Testing](docs/testing.md) — how the suite is split, and how to test
   something that needs Postgres
+- [GEDCOM](docs/gedcom.md) — the import format, why the parser imports nothing,
+  and what it reports rather than drops
 
 ## Status
 
