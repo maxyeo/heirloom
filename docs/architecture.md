@@ -593,6 +593,13 @@ grants write and delete on the store, and never appears in the repository.
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.
+- **Photographs are outside the backup.** The nightly dump
+  (`.github/workflows/backup.yml`, and [Backups](backups.md)) covers Postgres,
+  which is where everything except the image files lives. Images sit in Blob
+  storage behind `lib/storage.ts`, so a restore brings back a wiki that still
+  knows which photograph belongs to whom and cannot show it, if the store went
+  too. Rows are cheap to protect and files are not; this is the trade-off as
+  it stands rather than an oversight.
 - **A GEDCOM `INT` phrase is not stored.** `INT 1890 (from baptism record)`
   becomes `about 1890` and the phrase survives only on the import report. So
   does a modifier on a range endpoint — the `ABT` in `BET ABT 1890 AND 1900`.

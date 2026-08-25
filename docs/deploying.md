@@ -148,10 +148,14 @@ only if you intend to deploy those, which by default this repository does not.
 `VERCEL` is set by the platform, not by you. `next.config.ts` reads it to drop
 `output: "standalone"`, which Vercel's own builder does not want.
 
-There are four more variables in `.env.example` — `TEST_DATABASE_URL`,
-`PRODUCTION_DATABASE_URL`, `DATABASE_TARGET`, and `SEED_ALLOW_DESTRUCTIVE`.
-None of them belong in Vercel. They exist so a _developer's_ machine can point
-at a database other than the local one on purpose; see
+The rest of the variables in `.env.example` — `TEST_DATABASE_URL`,
+`PRODUCTION_DATABASE_URL`, `DATABASE_TARGET`, `SEED_ALLOW_DESTRUCTIVE`,
+`BACKUP_DATABASE_URL`, `RESTORE_DATABASE_URL`, and
+`RESTORE_ALLOW_DESTRUCTIVE` — do not belong in Vercel. They exist so a
+_developer's_ machine can point at a database other than the local one on
+purpose (and, for `BACKUP_DATABASE_URL`, so GitHub Actions can — it is a
+repository secret, set in [step 9](#9-set-up-backups), not a Vercel
+variable); see
 [Reaching production deliberately](../README.md#reaching-production-deliberately).
 Setting `DATABASE_TARGET` in a deploy environment in particular would only
 break it.
@@ -479,9 +483,41 @@ forks, which do not inherit the secret; if you forked this and are on
 Supabase, edit the repository name in its `if:` condition. If you are on any
 other Postgres, delete the workflow.
 
+## 9. Set up backups
+
+The Supabase free tier has no backups. Not "limited" backups — none that
+survive the project being paused past its grace period, deleted, or lost with
+the account. Whatever is in that database is the only copy until you do this
+step.
+
+The `Back up the database` workflow (`.github/workflows/backup.yml`) dumps the
+whole database nightly, encrypts it, restores it into a throwaway PostgreSQL
+to prove that it can be, and keeps it as a run artifact for 90 days. It needs
+two repository secrets alongside the keep-alive's:
+
+| Secret                | What it is                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `BACKUP_DATABASE_URL` | The **session** pooler string from step 1 — the same one `MIGRATE_DATABASE_URL` holds |
+| `BACKUP_PASSPHRASE`   | Any long random string (`openssl rand -base64 32`). It encrypts every dump            |
+
+The passphrase is not optional. This repository is public, and artifacts on a
+public repository are downloadable by anyone — an unencrypted dump would put
+the family's names, dates and notes at a URL that needs no account. The
+workflow refuses to dump anything if the secret is missing.
+
+Set both, then run the workflow by hand from the Actions tab. Because it
+verifies its own restore, a green run means a restorable backup rather than a
+file of about the right size.
+
+**[Backups](backups.md) is the full runbook**: the retention policy, what is
+and is not covered, how to restore into production on the day it matters, and
+the drill log. Read it now rather than then — in particular the part about
+keeping `BACKUP_PASSPHRASE` somewhere other than GitHub, since the day you
+need it may be a day you cannot ask GitHub for it.
+
 ## Operating it afterwards
 
-Four properties of this setup that are cheaper to know than to discover.
+Five properties of this setup that are cheaper to know than to discover.
 
 **Rolling back a deployment does not roll back the database.** Vercel's
 instant rollback restores code only. So migrations have to stay additive — add
@@ -489,6 +525,14 @@ a column, backfill it, stop reading the old one, drop it a release later — or
 a rollback lands the previous build on a schema it cannot use. This is a
 constraint on how you write migrations, not something to remember at rollback
 time, when it is already too late.
+
+**Undoing damage to the data is a restore, and it costs up to a day.** There
+is nothing finer-grained than the nightly backup — no point-in-time recovery
+on the free tier — so a migration that destroys a column, or a script pointed
+at the wrong database, is recovered by restoring last night's dump and losing
+whatever was written since. That asymmetry is worth holding in mind before
+running anything destructive against production: the code is reversible in
+seconds, and the data is not. See [Backups](backups.md).
 
 **Two merges inside a minute build concurrently.** Drizzle's migrator takes no
 advisory lock, so overlapping builds could in principle race on the same
