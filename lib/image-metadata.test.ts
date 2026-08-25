@@ -797,6 +797,41 @@ describe("a block whose payload is not the shape its label promises", () => {
     expect(segmentsOf(stripLocation(file, "image/jpeg"))[0].marker).toBe(0xc4);
   });
 
+  it("keeps every canonical Huffman table a code could be built from", () => {
+    /**
+     * The accepting test above pins two real tables; this pins the shape of
+     * all of them. Over-tightening here would reject files real encoders
+     * produce, and `optimize`d JPEGs carry tables computed for the image
+     * rather than the two standard ones — so accepting "a table" is not
+     * enough, the rule has to accept the whole space of valid ones.
+     *
+     * A code with `n` symbols all of length `L` is valid exactly when
+     * `n <= 2 ** L`, which is the Kraft bound at its simplest.
+     */
+    let checked = 0;
+    for (let length = 1; length <= 16; length += 1) {
+      // A count lives in one byte, so 255 is the ceiling however much
+      // room the code length itself leaves.
+      const room = Math.min(255, 2 ** length);
+      for (const count of [1, Math.ceil(room / 2), room]) {
+        const counts = Array.from({ length: 16 }, (_, i) =>
+          i === length - 1 ? count : 0,
+        );
+        const symbols = Array.from({ length: count }, (_, i) => i % 256);
+        if (new Set(symbols).size !== count) continue;
+        const file = jpeg([
+          { marker: 0xc4, payload: [0x00, ...counts, ...symbols] },
+          app1Exif(tiff()),
+        ]);
+        expect(segmentsOf(stripLocation(file, "image/jpeg"))[0].marker).toBe(
+          0xc4,
+        );
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(30);
+  });
+
   it("drops a table that tiles its payload and then leaves a tail", () => {
     // The whole reason to measure: a real table followed by a remainder is
     // carrying that remainder for some other purpose.
