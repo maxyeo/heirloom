@@ -338,7 +338,9 @@ The criterion asks for the import to finish inside Vercel's function timeout
 _or_ to run in chunks that are individually safe to retry. Those are not both
 available: chunks that commit independently are exactly the half-imported tree
 this ticket exists to prevent. So the import completes in one invocation, and
-the route that calls it sets `maxDuration`.
+whichever route comes to call it must set `maxDuration` — that is a
+requirement on the route rather than something already wired, since
+`maxDuration` is a route-segment export and E6-T4 deliberately adds no route.
 
 What makes overrunning it safe is the transaction rather than the number. A
 function killed mid-import never reaches `commit`, so the tree is untouched

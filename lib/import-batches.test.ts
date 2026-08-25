@@ -24,7 +24,19 @@ import {
  * `lib/gedcom-import.db.test.ts`.
  */
 
-/** The width of the widest table this import writes, from `db/schema.ts`. */
+/**
+ * The width of the widest table this import writes.
+ *
+ * A literal rather than `getTableColumns(schema.individuals)`, because
+ * importing the schema would drag `@/db` — and postgres.js — into a test that
+ * CI runs with no `DATABASE_URL` (docs/testing.md names that trap). Nothing
+ * here depends on the number being exactly right: every width up to the
+ * crossover at 65 gives the same batch size, so this stands for "a row of
+ * this schema's order of magnitude" rather than for a fact about a table.
+ *
+ * `lib/gedcom-import.db.test.ts` is where the real count is used, taken from
+ * `getTableColumns` so that the production path cannot drift from the schema.
+ */
 const INDIVIDUAL_COLUMNS = 19;
 
 function rows(count: number): number[] {
