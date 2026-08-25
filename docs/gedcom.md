@@ -280,6 +280,11 @@ which is every well-formed file.
 `lib/gedcom-import.ts` (E6-T4, `YEO-49`) takes a mapping and writes it into
 `individuals`, `unions` and `union_children` — all of it, or none of it.
 
+It is the transaction and nothing else. The rows themselves come from
+`lib/import-rows.ts`, on the pure side of the database line, so that E7-T2 can
+round-trip an export through the real import without a database — see
+[Proving the export is real](#proving-the-export-is-real).
+
 ### All or nothing is a property of the _write_
 
 The reason the ticket exists: a half-imported tree is worse than no import,
