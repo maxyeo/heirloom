@@ -204,8 +204,10 @@ export const IMAGE_ROUTE = "/api/images";
  * - The route can only ever address objects inside the image namespace. It
  *   is a containment property on top of `assertSafeStorageKey`, and it holds
  *   even for a key that passes every rule that function has — which matters
- *   the moment anything else shares the store, a backup being the obvious
- *   candidate.
+ *   the moment anything else shares the store. Nothing does today: the
+ *   nightly database dump goes to a CI artifact rather than here (`E9-T3`).
+ *   The namespace costs one `slice` and means the question never has to be
+ *   reopened.
  */
 export function imagePath(key: string): string {
   if (!key.startsWith(IMAGE_KEY_PREFIX)) {
