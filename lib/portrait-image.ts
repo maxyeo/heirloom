@@ -1,86 +1,79 @@
 /**
- * Turning a chosen photograph into the two images that get stored (E5-T4,
- * `YEO-44`).
+ * How a person's portrait thumbnail is made (E5-T4, `YEO-44`).
  *
- * ## Why this is not in `lib/portrait.ts`
+ * ## Why a thumbnail exists at all
  *
- * It was, for about an hour, and `lib/gedcom.purity.test.ts` refused it. That
- * test walks the *whole import closure* of the GEDCOM parser and mapper and
- * fails if it reaches anything at all, and the path is short: a person's
- * record now has a portrait key on it, so `lib/individual-input.ts` validates
- * one, so everything `lib/portrait.ts` imports becomes something the GEDCOM
- * parser imports. With the upload arithmetic in there, that closure grew
- * `lib/image-upload.ts` and with it `lib/image-metadata.ts` — a byte-level
- * Exif scrubber, reachable from a file parser that will never see an image.
+ * The tree loads the whole family at once — `getFamilyGraph` selects every row
+ * and the layout runs in the browser, because "a family tree is small"
+ * (docs/architecture.md). Small is a few hundred people, and a few hundred
+ * people with photographs is a few hundred images on one canvas, each drawn
+ * into a box forty-eight pixels wide. Serving the originals there downloads
+ * several hundred megapixels to paint a contact sheet.
  *
- * The test was right, and the fix is the split rather than a wider allowlist.
- * Two different questions were living in one module:
+ * That is the whole of what this module is for, and it is worth being precise
+ * about the difference from `lib/image-insert.ts` next door, which also
+ * shrinks images. **E5-T3 resizes reluctantly and E5-T4 resizes always.** The
+ * editor shrinks a photograph only when it is too large to send at all, and a
+ * file under the cap goes to the store byte for byte, keeping its own format
+ * and its Exif. A portrait is *additionally* copied down to a size the canvas
+ * can afford, and that copy is a second stored object rather than a
+ * replacement — the original is kept at full resolution, because this is an
+ * archive of a family's photographs.
  *
- * - **What a portrait *is*** — which key names one, how it becomes a `src`,
- *   which of the two a node loads. Every reader asks these, including the
- *   validator on the import path. That is `lib/portrait.ts`, and it depends
- *   on nothing but text handling and what a storage key is allowed to look
- *   like.
- * - **How a portrait is *made*** — how big, how many bytes, what encoding.
- *   Exactly one caller asks these: `components/PortraitField.tsx`, at the
- *   moment somebody picks a file. That is this module, and it is where the
- *   upload endpoint's cap belongs.
+ * So the two callers share the endpoint (`lib/image-endpoint.ts`), the
+ * uploader (`components/image-upload.ts`) and the arithmetic (`scaleToFit`),
+ * and differ in what they ask for. What is left here is the asking.
  *
- * The general rule is worth keeping: a module on the record's read path
- * should not import the write path's dependencies, because the read path is
- * reachable from everywhere.
+ * ## Why this is separate from `lib/portrait.ts`
+ *
+ * `lib/gedcom.purity.test.ts` walks the whole import closure of the GEDCOM
+ * parser and fails if it reaches anything at all, and the path is short: a
+ * person's record now has a portrait key on it, so `lib/individual-input.ts`
+ * validates one, so everything `lib/portrait.ts` imports becomes something
+ * the GEDCOM parser imports. With the upload arithmetic in there, that
+ * closure grew `lib/image-upload.ts` and with it `lib/image-metadata.ts` — a
+ * byte-level Exif scrubber, reachable from a text-file parser that will never
+ * see an image.
+ *
+ * The split is the fix rather than a wider allowlist. `lib/portrait.ts` is
+ * what a portrait *is* — which key names one, how it becomes a `src` — and
+ * every reader asks that, including the validator on the import path. This is
+ * how one is *made*, and exactly one caller asks: `components/PortraitField.tsx`,
+ * at the moment somebody picks a file.
  */
 
-import { type Dimensions, scaledTo, shouldReencode } from "./image-scale";
-import { MAX_UPLOAD_BYTES } from "./image-endpoint";
-import { PORTRAIT_THUMB_MAX_EDGE } from "./portrait";
-
-/**
- * The longest edge a stored *portrait* may have, in image pixels.
- *
- * The detail panel is 320 pixels wide, so 1600 is five times more than
- * anything on screen needs — and that is the point. This is an archive of a
- * family's photographs, and the copy it keeps should still be worth having
- * when somebody opens it full-screen, or prints it, or exports the lot
- * (E7-T4). The cap exists to clear {@link MAX_UPLOAD_BYTES}, not to decide
- * what a photograph is worth.
- *
- * It is a ceiling and not a target: {@link shouldReencode} leaves anything
- * already under it — and under the byte cap — completely untouched, original
- * bytes and all.
- */
-export const PORTRAIT_MAX_EDGE = 1600;
+import { scaleToFit, type Dimensions } from "./image-insert";
+import { PORTRAIT_NODE_SIZE } from "./portrait";
 
 /**
- * Whether the chosen photograph has to be re-encoded before it can be
- * uploaded as the portrait.
+ * The longest edge a stored thumbnail may have, in image pixels.
  *
- * A thin binding of {@link shouldReencode} to this application's two caps, so
- * that the component doing the canvas work names one function rather than
- * four numbers. The byte cap is the endpoint's own — imported rather than
- * restated, because a copy of `4 * 1024 * 1024` here would be a second place
- * to change it and the failure of forgetting is an upload refused after the
- * work of scaling it.
+ * Four times {@link PORTRAIT_NODE_SIZE}, and the multiplier is the reason for
+ * the number rather than the number being round. A thumbnail is drawn into a
+ * 48-pixel box on a display that may have two or three device pixels per CSS
+ * pixel, and it is drawn `object-cover` — so the box crops a square out of
+ * whatever aspect ratio the photograph has, and the edge that survives the
+ * crop is the *shorter* one. 192 leaves a portrait-shaped photograph sharp at
+ * 3x and a panoramic one sharp at 2x, at a few kilobytes each.
+ *
+ * It is not a display size. The node's box is CSS; this is how many pixels
+ * are stored behind it.
  */
-export function portraitNeedsReencoding(
-  source: Dimensions,
-  byteLength: number,
-): boolean {
-  return shouldReencode(
-    source,
-    byteLength,
-    PORTRAIT_MAX_EDGE,
-    MAX_UPLOAD_BYTES,
-  );
-}
+export const PORTRAIT_THUMB_MAX_EDGE = PORTRAIT_NODE_SIZE * 4;
 
 /**
  * The media type a thumbnail is encoded as.
  *
- * WebP because it is the smallest of the four types the upload endpoint
- * accepts (`lib/image-type.ts`) and the only one of them with an alpha
- * channel, so a PNG portrait with a transparent background does not acquire a
- * black one on the way through.
+ * WebP, and deliberately **not** `DOWNSCALE_TYPE` — the JPEG that
+ * `lib/image-insert.ts` uses for the same three canvas calls. The difference
+ * is what the output is *for*. That one replaces the author's file on its way
+ * to the store, so it takes the format every browser is required to be able
+ * to write and accepts losing transparency as the price of the file arriving
+ * at all. This one is a derived extra beside an original that is kept intact,
+ * so it can afford the better format: WebP is the smallest of the four types
+ * the endpoint accepts and the only one of them with an alpha channel, which
+ * means a PNG portrait with a transparent background does not acquire a black
+ * one on the tree.
  *
  * Nothing downstream depends on getting it. `HTMLCanvasElement.toBlob` is
  * specified to fall back to `image/png` when it does not know the type asked
@@ -107,16 +100,23 @@ export const PORTRAIT_THUMB_TYPE = "image/webp";
  * answer, because the original already *is* thumbnail-sized. It is also why
  * that fallback is not dead code.
  *
- * `null` too for a degenerate size, which is what a decoder reports for a
- * file it could not read. See `scaledTo`.
+ * `null` too for a degenerate size — zero, negative, or not a finite number,
+ * which is what a decoder reports for a file it could not read. `scaleToFit`
+ * is arithmetic and would return `NaN` or `0`, and a canvas of either size
+ * throws rather than drawing nothing; the honest answer is that there is no
+ * thumbnail to make.
  */
 export function thumbnailSize(
   source: Dimensions,
   maxEdge: number = PORTRAIT_THUMB_MAX_EDGE,
 ): Dimensions | null {
-  const scaled = scaledTo(source, maxEdge);
-  if (scaled === null) return null;
-  // `scaledTo` returns the source unchanged when it already fits; here that
+  const { width, height } = source;
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width <= 0 || height <= 0) return null;
+  if (!Number.isFinite(maxEdge) || maxEdge <= 0) return null;
+
+  const scaled = scaleToFit(source, maxEdge);
+  // `scaleToFit` returns the source unchanged when it already fits; here that
   // means "do not make one" rather than "make one the same size".
   const unchanged =
     scaled.width === source.width && scaled.height === source.height;

@@ -3,16 +3,14 @@
 import { useId, useRef, useState } from "react";
 
 import { PersonPortrait } from "@/components/PersonPortrait";
-import { ALLOWED_IMAGE_TYPES } from "@/lib/image-type";
-import { scaledTo } from "@/lib/image-scale";
-import { PORTRAIT_THUMB_MAX_EDGE, portraitSrc } from "@/lib/portrait";
+import { ImageUploadError, uploadImage } from "@/components/image-upload";
+import { DOWNSCALE_BACKGROUND, IMAGE_ACCEPT } from "@/lib/image-insert";
+import { portraitSrc } from "@/lib/portrait";
 import {
-  PORTRAIT_MAX_EDGE,
+  PORTRAIT_THUMB_MAX_EDGE,
   PORTRAIT_THUMB_TYPE,
-  portraitNeedsReencoding,
   thumbnailSize,
 } from "@/lib/portrait-image";
-import { uploadImage } from "@/lib/upload-image";
 
 /**
  * Choosing a person's portrait (E5-T4, `YEO-44`).
@@ -79,45 +77,27 @@ export type PreparePortraitResult =
  */
 export type PreparePortrait = (file: File) => Promise<PreparePortraitResult>;
 
-/**
- * The JPEG quality a re-encoded portrait is written at.
- *
- * High enough that a face does not visibly soften, low enough that a phone
- * photograph clears the upload cap with room to spare. It applies only when
- * `portraitNeedsReencoding` says the original cannot be sent as it stands —
- * a file already under both caps is uploaded byte for byte.
- */
-const PORTRAIT_QUALITY = 0.85;
-
 /** The quality a thumbnail is written at. */
 const THUMB_QUALITY = 0.8;
 
 /**
- * Draw `bitmap` into a canvas of `size` and encode it.
+ * Draw `bitmap` into a canvas of `size` and encode it as a thumbnail.
  *
- * The canvas is filled white first, and that is not cosmetic: JPEG has no
- * alpha channel, so a PNG portrait with a transparent background would
- * otherwise come out on black. White is what a photograph printed on paper
- * would have behind it, which is the right guess for a family archive.
- *
- * Deliberately the CSS keyword and **not** `--color-paper`, even though that
- * token is this application's word for white. A design token describes what
- * the interface looks like today; this colour is being baked into a stored
- * file that outlives every restyle, every export and any theme this
- * application might grow. Binding it to a token would mean a dark mode
- * shipped in two years quietly started matting photographs onto charcoal —
- * permanently, in the archive, with nothing to undo it.
+ * The canvas is filled first, and that is not cosmetic: if `toBlob` falls
+ * back to a format with no alpha channel, a PNG portrait with a transparent
+ * background would otherwise come out on black. {@link DOWNSCALE_BACKGROUND}
+ * rather than a colour of this module's own, because
+ * `components/image-upload.ts` is matting images for the same reason two
+ * files away and one answer to "what is behind a photograph" is enough.
  *
  * `null` when the browser cannot give a 2D context or cannot encode — an
- * answer rather than a throw, because both are recoverable: the caller falls
- * back to the original bytes for a portrait, and to no thumbnail at all for a
- * thumbnail, and neither loses the photograph.
+ * answer rather than a throw, because it is recoverable: the caller stores no
+ * thumbnail, the canvas falls back to the full image, and nothing about the
+ * photograph is lost.
  */
-async function encode(
+async function encodeThumbnail(
   bitmap: ImageBitmap,
   size: { width: number; height: number },
-  type: string,
-  quality: number,
 ): Promise<Blob | null> {
   const canvas = document.createElement("canvas");
   canvas.width = size.width;
@@ -126,105 +106,100 @@ async function encode(
   const context = canvas.getContext("2d");
   if (context === null) return null;
 
-  context.fillStyle = "white";
+  context.fillStyle = DOWNSCALE_BACKGROUND;
   context.fillRect(0, 0, size.width, size.height);
   context.drawImage(bitmap, 0, 0, size.width, size.height);
 
   return new Promise((resolve) =>
-    canvas.toBlob((blob) => resolve(blob), type, quality),
+    canvas.toBlob((blob) => resolve(blob), PORTRAIT_THUMB_TYPE, THUMB_QUALITY),
   );
 }
 
 /**
- * The real implementation: decode, scale, encode, upload twice.
+ * The thumbnail for `file`, already stored, or `null` if there is not one to
+ * store.
  *
- * The order matters in one place. The **portrait** is uploaded first, and the
- * thumbnail only afterwards, so a failure part-way through can never leave a
- * thumbnail key with no portrait beside it — the one half-pair
- * `validateIndividual` would normalise away, silently discarding the upload
- * that did succeed.
- *
- * A thumbnail that fails to encode or fails to upload is **not** an error.
- * The pair comes back with a null thumbnail, the row records a portrait and
- * no thumbnail, and the canvas falls back to the full image: slower for that
- * one person, and correct. Refusing the whole photograph because its small
- * copy could not be made would be losing the thing the author actually
- * wanted over the thing they never asked for.
+ * Every failure here returns `null` rather than throwing, and that is the
+ * rule this function exists to enforce: **a thumbnail is a derived
+ * convenience and must never cost the photograph.** A browser with no
+ * `createImageBitmap`, a decoder that refuses the file, a canvas the platform
+ * will not allocate, a `toBlob` that returns nothing, a second upload that
+ * fails — each ends with a portrait stored and no thumbnail, which is a state
+ * the schema allows and the canvas handles by loading the full image. Slower
+ * for that one person, and correct.
  */
-export const preparePortrait: PreparePortrait = async (file) => {
+async function storeThumbnail(file: File): Promise<string | null> {
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file);
   } catch {
-    // A file the browser cannot decode. The endpoint would refuse it too, on
-    // its bytes rather than on its name, but saying so here saves the upload.
-    return {
-      ok: false,
-      message: "That file could not be read as an image.",
-    };
+    return null;
   }
 
   try {
-    const source = { width: bitmap.width, height: bitmap.height };
-
-    /**
-     * The original, downscaled only if it has to be. `lib/image-upload.ts`
-     * predicted this: "a recent phone produces 3–12 MB images, so a
-     * meaningful share of what a family actually wants to upload will be
-     * refused… the fix is to downscale in a canvas before it posts."
-     */
-    let body: Blob = file;
-    if (portraitNeedsReencoding(source, file.size)) {
-      const box = scaledTo(source, PORTRAIT_MAX_EDGE);
-      const encoded =
-        box === null
-          ? null
-          : await encode(bitmap, box, "image/jpeg", PORTRAIT_QUALITY);
-      // A failed re-encode still tries the original: it may be over the
-      // dimension cap and under the byte cap, in which case the endpoint
-      // accepts it and the only thing lost is some bandwidth.
-      if (encoded !== null) body = encoded;
-    }
-
-    const uploaded = await uploadImage(body, file.name);
-    if (!uploaded.ok) return { ok: false, message: uploaded.message };
-
-    const thumbBox = thumbnailSize(source, PORTRAIT_THUMB_MAX_EDGE);
-    if (thumbBox === null) {
-      // Already thumbnail-sized. Nothing to make, and nothing lost.
-      return {
-        ok: true,
-        pair: { portraitKey: uploaded.image.key, portraitThumbKey: null },
-      };
-    }
-
-    const thumb = await encode(
-      bitmap,
-      thumbBox,
-      PORTRAIT_THUMB_TYPE,
-      THUMB_QUALITY,
+    const box = thumbnailSize(
+      { width: bitmap.width, height: bitmap.height },
+      PORTRAIT_THUMB_MAX_EDGE,
     );
-    if (thumb === null) {
-      return {
-        ok: true,
-        pair: { portraitKey: uploaded.image.key, portraitThumbKey: null },
-      };
-    }
+    // Already thumbnail-sized. Nothing to make, and nothing lost.
+    if (box === null) return null;
 
-    const uploadedThumb = await uploadImage(thumb, file.name);
-    return {
-      ok: true,
-      pair: {
-        portraitKey: uploaded.image.key,
-        portraitThumbKey: uploadedThumb.ok ? uploadedThumb.image.key : null,
-      },
-    };
+    const blob = await encodeThumbnail(bitmap, box);
+    if (blob === null) return null;
+
+    const uploaded = await uploadImage(
+      new File([blob], file.name, { type: blob.type }),
+    );
+    return uploaded.key;
+  } catch {
+    return null;
   } finally {
     // Decoded bitmaps hold memory outside the JavaScript heap, which the
     // garbage collector cannot see the size of. A family adding portraits to
     // twenty people in one sitting is twenty full-resolution decodes.
     bitmap.close();
   }
+}
+
+/**
+ * The real implementation: store the photograph, then its thumbnail.
+ *
+ * The **portrait is uploaded first**, and the ordering is load-bearing: a
+ * failure part-way through can then never leave a thumbnail key with no
+ * portrait beside it, which is the one half-pair `validateIndividual`
+ * normalises away — silently discarding the upload that did succeed.
+ *
+ * Shrinking the original when it is too large to send is not done here.
+ * `components/image-upload.ts` already does it for the editor, with the
+ * limitations that come with it written down in one place (an animated GIF is
+ * refused rather than flattened; a forced resize re-encodes as JPEG), and a
+ * second implementation of the same three canvas calls is how those two
+ * answers start disagreeing. This module asks it for the same thing the
+ * editor asks for, and adds only the thumbnail the tree needs.
+ */
+export const preparePortrait: PreparePortrait = async (file) => {
+  let portrait;
+  try {
+    portrait = await uploadImage(file);
+  } catch (error) {
+    /**
+     * `ImageUploadError` carries a sentence written for a person — usually
+     * the endpoint's own. Anything else is a programming fault and is
+     * rethrown rather than rendered as advice about a photograph.
+     */
+    if (error instanceof ImageUploadError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  return {
+    ok: true,
+    pair: {
+      portraitKey: portrait.key,
+      portraitThumbKey: await storeThumbnail(file),
+    },
+  };
 };
 
 export interface PortraitFieldProps {
@@ -379,7 +354,7 @@ export function PortraitField({
              * No `name`. The file itself is not a column — what posts is the
              * two hidden inputs below. Same rule as `DateField`'s visible box.
              */
-            accept={ALLOWED_IMAGE_TYPES.join(",")}
+            accept={IMAGE_ACCEPT}
             disabled={disabled || busy}
             onChange={(event) => {
               const file = event.target.files?.[0];

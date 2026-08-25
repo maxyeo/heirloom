@@ -64,22 +64,6 @@ import {
 export const PORTRAIT_NODE_SIZE = 48;
 
 /**
- * The longest edge a stored thumbnail may have, in image pixels.
- *
- * Four times {@link PORTRAIT_NODE_SIZE}, and the multiplier is the reason for
- * the number rather than the number being round. A thumbnail is drawn into a
- * 40-pixel box on a display that may have two or three device pixels per CSS
- * pixel, and it is drawn `object-cover` — so the box crops a square out of
- * whatever aspect ratio the photograph has, and the edge that survives the
- * crop is the *shorter* one. 160 leaves a portrait-shaped photograph sharp at
- * 3x and a panoramic one sharp at 2x, at a few kilobytes each.
- *
- * It is not a display size. The node's box is CSS; this is how many pixels
- * are stored behind it.
- */
-export const PORTRAIT_THUMB_MAX_EDGE = PORTRAIT_NODE_SIZE * 4;
-
-/**
  * Whether `key` is something this application stored as an image.
  *
  * Two checks, not one: inside the `images/` namespace, and safe as a storage

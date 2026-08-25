@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { ALLOWED_IMAGE_TYPES } from "@/lib/image-type";
-import { MAX_UPLOAD_BYTES } from "@/lib/image-endpoint";
 import {
-  PORTRAIT_MAX_EDGE,
+  PORTRAIT_THUMB_MAX_EDGE,
   PORTRAIT_THUMB_TYPE,
-  portraitNeedsReencoding,
   thumbnailSize,
 } from "@/lib/portrait-image";
-import { PORTRAIT_THUMB_MAX_EDGE } from "@/lib/portrait";
 
 /**
  * How a chosen photograph becomes the two images that get stored, checked
@@ -50,26 +47,25 @@ describe("thumbnailSize", () => {
   });
 });
 
-describe("portraitNeedsReencoding", () => {
-  it("is false for a small file under both caps", () => {
-    expect(portraitNeedsReencoding({ width: 800, height: 600 }, 1024)).toBe(
-      false,
-    );
-  });
+describe("what this module deliberately does not decide", () => {
+  /**
+   * Shrinking an oversized original is `components/image-upload.ts`'s job,
+   * shared with the editor (E5-T3). This module used to answer it too, with
+   * its own cap and its own byte check, and the two would have drifted the
+   * first time either was tuned.
+   *
+   * Asserted as an absence rather than left to a comment: if a
+   * `portraitNeedsReencoding` ever reappears here, this fails and asks why
+   * there are two answers again.
+   */
+  it("exports only the thumbnail's own decisions", async () => {
+    const portraitImage = await import("@/lib/portrait-image");
 
-  it("is true for a 12 MB phone photo", () => {
-    const twelveMB = 12 * 1024 * 1024;
-    expect(
-      portraitNeedsReencoding({ width: 3024, height: 4032 }, twelveMB),
-    ).toBe(true);
-    expect(twelveMB).toBeGreaterThan(MAX_UPLOAD_BYTES);
-  });
-
-  it("is true for an 8000px-wide image that is under the byte cap", () => {
-    expect(portraitNeedsReencoding({ width: 8000, height: 100 }, 1024)).toBe(
-      true,
-    );
-    expect(8000).toBeGreaterThan(PORTRAIT_MAX_EDGE);
+    expect(Object.keys(portraitImage).sort()).toEqual([
+      "PORTRAIT_THUMB_MAX_EDGE",
+      "PORTRAIT_THUMB_TYPE",
+      "thumbnailSize",
+    ]);
   });
 });
 

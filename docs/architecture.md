@@ -1092,11 +1092,11 @@ grants write and delete on the store, and never appears in the repository.
   a client bundle and need a fourth function on the seam, both of which this
   repository fails the build over. A recent phone routinely produces larger
   photographs than that, so the fix is to downscale in a canvas before
-  posting, and **both** upload paths now do. The editor's image button
-  (`E5-T3`) decides when and to what in `lib/image-insert.ts` and does it in
-  `components/image-upload.ts`; the portrait picker (`E5-T4`) decides in
-  `lib/image-scale.ts` and does it in `components/PortraitField.tsx`, and
-  posts through `lib/upload-image.ts`. Two things survive as limitations
+  posting. `lib/image-insert.ts` decides when and to what,
+  `components/image-upload.ts` does it, and **both** callers use it: the
+  editor's image button (`E5-T3`), which it was written for, and the portrait
+  picker (`E5-T4`), which asks it for the same thing and then adds the one
+  extra it needs — a thumbnail, in `lib/portrait-image.ts`. Two things survive as limitations
   rather than as bugs. **An animated GIF is never resized**, because a canvas
   keeps one frame, so an oversized one is refused with a sentence rather than
   silently turned into a still. And **a resize re-encodes as JPEG**, losing
@@ -1105,15 +1105,6 @@ grants write and delete on the store, and never appears in the repository.
   file that would otherwise not upload at all. (A portrait _thumbnail_ asks
   for WebP instead, and falls back to PNG, because it is generated rather
   than substituted for what the author chose.)
-- **There are two canvas-downscale implementations.** `E5-T3` and `E5-T4`
-  shipped in parallel and each grew one, so the same three browser calls are
-  wrapped twice with slightly different rules about when to bother. Neither
-  is wrong and neither is dead, but the second one is the moment to say so
-  out loud rather than the moment to leave it for somebody to find. The merge
-  is a small one — `lib/image-scale.ts` is already caller-neutral, taking its
-  caps as arguments — and it is not being done inside either ticket, because
-  a refactor across two features that landed the same day is how both get
-  destabilised at once.
 - **A portrait costs a redirect per person on the canvas.** Every image on the
   tree is a request to `GET /api/images/…`, which checks the session, asks the
   store whether the object exists, signs a URL and answers 302 — so a screen
