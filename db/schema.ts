@@ -1,6 +1,7 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  customType,
   date,
   index,
   integer,
@@ -100,6 +101,45 @@ export const childRelation = pgEnum("child_relation", [
   "foster",
 ]);
 
+/**
+ * Postgres's `tsvector`, which Drizzle has no column type for.
+ *
+ * Only ever read by Postgres: nothing selects this column, and nothing can
+ * write it (it is `generated always`). So `data: string` is a placeholder for
+ * a shape no TypeScript ever holds — what the type is really for is telling
+ * drizzle-kit which SQL type to emit, and giving `lib/pages.ts` a column
+ * reference to hand to `@@` and `ts_rank` instead of spelling the column name
+ * out as a string.
+ */
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return "tsvector";
+  },
+});
+
+/**
+ * The text search configuration every part of entry search agrees on (E8-T1,
+ * `YEO-55`).
+ *
+ * Exported because it has to be said twice and must not drift: once in
+ * `pages.search_vector` below, which is what the stored lexemes *are*, and
+ * once in `lib/pages.ts`'s `websearch_to_tsquery` and `ts_headline`, which is
+ * what a query is parsed and highlighted with. A query parsed under a
+ * different configuration than the document was indexed under does not error
+ * — it silently stems the term differently and finds nothing, which is the
+ * worst possible failure for a search box.
+ *
+ * `english` rather than `simple` because stemming is the whole point: an
+ * author who searches "marriages" should find an entry that says "married".
+ * The cost is that it also drops English stop words, so a query of nothing
+ * but "the" finds nothing — the right answer for a search over prose.
+ *
+ * Changing this value is a migration, not an edit: the stored column is
+ * `generated always`, so Postgres only recomputes it when the column
+ * definition changes.
+ */
+export const SEARCH_TEXT_CONFIG = "english";
+
 /** A wiki entry. Content lives here, never in the repo. */
 export const pages = pgTable(
   "pages",
@@ -115,8 +155,69 @@ export const pages = pgTable(
       .notNull()
       .defaultNow(),
     updatedBy: text("updated_by"),
+    /**
+     * What full-text search over entries matches against (E8-T1, `YEO-55`).
+     *
+     * **A generated column, not a trigger.** The two are the options Postgres
+     * offers for keeping a `tsvector` current, and a trigger is the one that
+     * can be wrong: it is a second place that has to know how the vector is
+     * built, it only fires for the statements it was attached to, and a bulk
+     * `UPDATE` that forgets it leaves rows indexed as they used to read. This
+     * column *is* the definition. There is no write path — `lib/save-page.ts`,
+     * `lib/create-page.ts`, `db/seed.ts`, a GEDCOM import, a hand-typed
+     * `UPDATE` in psql — that can produce a row whose vector disagrees with
+     * its text, because Postgres computes it as part of the write rather than
+     * after it.
+     *
+     * **Why the tags do not need stripping first.** `to_tsvector` runs the
+     * default parser, which recognises `tag` as its own token type, and the
+     * `english` configuration maps no dictionary to it — so `<p>`, `<em>`,
+     * and `<a href="https://example.com/secret">` are read, classified, and
+     * discarded, and what lands in the vector is the words between them. That
+     * is the acceptance criterion ("indexes the text content, not the HTML
+     * tags") met by the parser rather than by a `regexp_replace` this schema
+     * would then have to keep in step with whatever `lib/sanitize-html.ts`
+     * allows.
+     * It also means a link's `href` is not searchable text, which is right:
+     * an author looking for "example.com" is looking for it in prose.
+     *
+     * **The weights are the ranking.** `A` on the title and `B` on the body
+     * are what make a title match beat a body match, and they do it by
+     * arithmetic rather than by a tie-break: `ts_rank`'s default weights cap
+     * a `B` lexeme's contribution at 0.4 however many times the word occurs,
+     * while one `A` occurrence already scores about 0.61. So there is no
+     * number of mentions in a body that can outrank a title — see
+     * `lib/pages.ts` and the assertion in `lib/pages.db.test.ts`.
+     *
+     * Neither input needs `coalesce`: both columns are `not null` above, and
+     * `||` on two non-null vectors is non-null, so this column cannot be
+     * `NULL` and no row can silently fall out of every search. Making either
+     * column nullable would have to change this expression with it.
+     */
+    searchVector: tsvector("search_vector").generatedAlwaysAs(
+      // `sql.raw` because a column's generation expression is DDL: this string
+      // is what drizzle-kit writes into the migration, and a bound parameter
+      // has no meaning in a `CREATE TABLE`. It is safe for the reason raw SQL
+      // usually is not — `SEARCH_TEXT_CONFIG` is a constant declared just
+      // above, not a value anything outside this file can reach. Every place
+      // the *query* side names the configuration binds it instead, and casts
+      // it to `regconfig`; see `searchEntries` in `lib/pages.ts`.
+      sql`setweight(to_tsvector('${sql.raw(SEARCH_TEXT_CONFIG)}', "title"), 'A') || setweight(to_tsvector('${sql.raw(SEARCH_TEXT_CONFIG)}', "body_html"), 'B')`,
+    ),
   },
-  (t) => [index("pages_updated_at_idx").on(t.updatedAt)],
+  (t) => [
+    index("pages_updated_at_idx").on(t.updatedAt),
+    /**
+     * GIN rather than GiST: GIN is the index Postgres's own documentation
+     * recommends for `tsvector` search, and its trade — slower to update,
+     * faster and exact to query — is the right way round for a wiki, which is
+     * read far more often than it is written and has no lossy-recheck step to
+     * pay for. There are a few hundred entries here, so on today's data the
+     * planner may well still choose a sequential scan; the index is what keeps
+     * that decision the planner's to make as the table grows.
+     */
+    index("pages_search_vector_idx").using("gin", t.searchVector),
+  ],
 );
 
 /**

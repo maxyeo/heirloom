@@ -1,6 +1,13 @@
-import { eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { SEARCH_TEXT_CONFIG } from "@/db/schema";
+import {
+  DEFAULT_LIMIT,
+  type EntryMatch,
+  SNIPPET_OPTIONS,
+  toEntryMatches,
+} from "@/lib/entry-search";
 import type { EntryLink } from "@/lib/entry-link";
 import { compareEntriesByTitle } from "@/lib/page-index";
 
@@ -222,4 +229,110 @@ export async function listEntryLinks(): Promise<EntryLink[]> {
   // Sorting in place is safe: `entries` is an array Drizzle built for this
   // call, and nothing else holds a reference to it.
   return entries.sort(compareEntriesByTitle);
+}
+
+/**
+ * Full-text search over entries (E8-T1, `YEO-55`).
+ *
+ * ## The query, and why every part of it is in Postgres
+ *
+ * One statement does the matching, the ranking and the excerpting:
+ *
+ * - `@@` against `pages.search_vector`, the generated `tsvector` column
+ *   `db/schema.ts` defines and `pages_search_vector_idx` covers. This is the
+ *   only predicate, so it is the only thing the GIN index has to answer.
+ * - `ts_rank` over the same column, which is where "title matches rank above
+ *   body matches" comes from. Not as a tie-break bolted on afterwards, but as
+ *   arithmetic: the column stores the title's lexemes at weight `A` and the
+ *   body's at `B`, and `ts_rank`'s default weights cap a `B` lexeme at 0.4
+ *   however many times the word occurs, while a single `A` occurrence already
+ *   scores about 0.61. An entry that says "marriage" forty times in its body
+ *   cannot climb past an entry that says it once in its title.
+ * - `ts_headline` over `body_html`, which is the snippet. Same parser as
+ *   `to_tsvector`, so it drops the tags and marks the term Postgres actually
+ *   matched — stems and all, which is why this is not a substring search
+ *   performed in TypeScript afterwards: a search for "marriages" highlights
+ *   the word "married" it found, and nothing in the application knows how to
+ *   agree with the `english` dictionary about that.
+ *
+ * `websearch_to_tsquery` rather than `plainto_tsquery` because the input is a
+ * search box and people type search-box syntax into it: quoted phrases,
+ * `or`, and a leading `-` to exclude. It is also the parser that cannot throw
+ * on malformed input — `to_tsquery` raises a syntax error on a bare `&`,
+ * which would turn a typo into a 500. A query with no lexemes in it at all
+ * ("the", "!!!") parses to an empty tsquery, which matches nothing, which is
+ * the honest answer.
+ *
+ * The configuration is `SEARCH_TEXT_CONFIG`, cast to `regconfig` explicitly
+ * so the two-argument overload is the one resolved rather than left to
+ * inference over an untyped parameter. It has to be the same configuration
+ * the stored column was built with; `db/schema.ts` says what goes wrong if it
+ * ever is not.
+ *
+ * ## The ordering, past rank
+ *
+ * `ts_rank` alone is not a total order — two entries can score identically,
+ * and then the row order is whatever the plan happened to produce, so the
+ * same query could return the same results in a different order on a later
+ * request. `updated_at` descending breaks the tie the way a wiki should (the
+ * entry somebody touched most recently is the likelier answer) and `id`
+ * settles the rest, which is the same "make it total, not merely stable"
+ * argument `searchPeople` makes for its own sort.
+ *
+ * Deliberately *not* `compareEntriesByTitle`, which `listPages` and
+ * `listEntryLinks` both use: alphabetical is the right order for an index of
+ * everything and the wrong one for an answer to a question. Relevance is the
+ * order here, and the collation argument that comparator exists for does not
+ * arise, because nothing in this `ORDER BY` compares text.
+ *
+ * ## What is not here
+ *
+ * No `count`. The page shows the results it has, and a second query to say
+ * "23 entries" would cost as much as the first for a number that only ever
+ * gets read as "more than fit". No offset pagination either: `DEFAULT_LIMIT`
+ * results out of a corpus of a few hundred is the whole of the tail worth
+ * showing, and page two of a family wiki search is a feature nobody asked
+ * for.
+ *
+ * @param query what the author typed, unparsed
+ * @param options `limit`, defaulting to `DEFAULT_LIMIT`
+ * @returns the matching entries, most relevant first, at most `limit` of them
+ */
+export async function searchEntries(
+  query: string,
+  options: { limit?: number } = {},
+): Promise<EntryMatch[]> {
+  const { limit = DEFAULT_LIMIT } = options;
+
+  const trimmed = query.trim();
+  // No query issues no query. `@@` against an empty tsquery is false for
+  // every row, so this is the same answer the database would give — bought
+  // without the round trip, and without the notice Postgres logs when it is
+  // handed a string with no lexemes in it.
+  if (trimmed === "") return [];
+
+  // Built once and interpolated three times. Every value here reaches
+  // Postgres as a bound parameter — Drizzle's `sql` template parameterises
+  // its interpolations — which matters more than usual for a search box:
+  // this string is whatever a signed-in reader typed, and there is no RLS
+  // under this database (see `getPageBySlug`).
+  const tsquery = sql`websearch_to_tsquery(${SEARCH_TEXT_CONFIG}::regconfig, ${trimmed})`;
+
+  const rows = await db
+    .select({
+      id: schema.pages.id,
+      slug: schema.pages.slug,
+      title: schema.pages.title,
+      snippet: sql<string>`ts_headline(${SEARCH_TEXT_CONFIG}::regconfig, ${schema.pages.bodyHtml}, ${tsquery}, ${SNIPPET_OPTIONS})`,
+    })
+    .from(schema.pages)
+    .where(sql`${schema.pages.searchVector} @@ ${tsquery}`)
+    .orderBy(
+      desc(sql`ts_rank(${schema.pages.searchVector}, ${tsquery})`),
+      desc(schema.pages.updatedAt),
+      asc(schema.pages.id),
+    )
+    .limit(limit);
+
+  return toEntryMatches(rows);
 }
