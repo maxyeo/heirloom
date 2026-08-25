@@ -600,6 +600,56 @@ describe("interpreted dates", () => {
   });
 });
 
+describe("a modifier on a one-sided span's bound (YEO-47)", () => {
+  // `FROM x` and `TO y` give one bound, and the qualifier column has room for
+  // one word — so `FROM ABT 1912` has to choose between "after" and "about",
+  // and the span form wins. That is the same loss the two-point forms report
+  // for an endpoint, and it used to go through here in silence, which made
+  // "a modifier on a range endpoint is not stored" a rule that held for
+  // `BET ABT 1890 AND 1900` and quietly failed for `FROM ABT 1890`.
+
+  it("stores the bound and reports the modifier it overwrote", () => {
+    const { file, birth } = dateIssue("FROM ABT 1912");
+
+    expect(birth?.date).toEqual({
+      date: "1912-01-01",
+      qualifier: "after",
+      precision: "year",
+      upper: null,
+      upperPrecision: "day",
+    });
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0]).toMatchObject({ kind: "narrowed", line: 3 });
+    expect(file.issues[0].message).toContain("FROM ABT 1912");
+    expect(file.issues[0].message).toContain("about");
+  });
+
+  it("does the same for TO", () => {
+    const { file, birth } = dateIssue("TO EST 1918");
+
+    expect(birth?.date).toMatchObject({
+      date: "1918-01-01",
+      qualifier: "before",
+    });
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0].kind).toBe("narrowed");
+  });
+
+  it("takes no indefinite article it could get wrong", () => {
+    // The article bug `readInterpretedDate` was restructured to make
+    // impossible, guarded here too rather than left to be reintroduced.
+    const { file } = dateIssue("FROM ABT 1912");
+
+    expect(file.issues[0].message).not.toContain('an "before"');
+    expect(file.issues[0].message).not.toContain('a "after"');
+  });
+
+  it("says nothing about an unmodified bound, which loses nothing", () => {
+    expect(dateIssue("FROM 1912").file.issues).toEqual([]);
+    expect(dateIssue("TO 1918").file.issues).toEqual([]);
+  });
+});
+
 describe("estimated dates say so on the report (YEO-47)", () => {
   // The reading is not changing and never was: `lib/parse-date.ts` has always
   // mapped `est` onto `about`, because `date_qualifier` has four members and

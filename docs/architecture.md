@@ -668,7 +668,8 @@ grants write and delete on the store, and never appears in the repository.
 - **Four GEDCOM date forms are stored slightly poorer than they were
   written.** An `INT` phrase — `INT 1890 (from baptism record)` becomes
   `about 1890` and the note survives only on the report. A modifier on a range
-  endpoint — the `ABT` in `BET ABT 1890 AND 1900`. A range whose upper bound
+  endpoint — the `ABT` in `BET ABT 1890 AND 1900`, or in the one-sided
+  `FROM ABT 1912`. A range whose upper bound
   is unreadable, stored as `after` its lower bound. And `EST 1918`, stored as
   `about 1918`, which is the oldest of the four and has been true since
   `lib/parse-date.ts` was written. All four are `narrowed` issues rather than

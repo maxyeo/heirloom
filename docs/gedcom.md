@@ -84,6 +84,7 @@ in this schema has two date columns to put them in.
 | `FROM 1912`                      | `after 1912`, year precision, no upper bound  | no — nothing is lost        |
 | `TO 1918`                        | `before 1918`, year precision, no upper bound | no — nothing is lost        |
 | `BET ABT 1890 AND 1900`          | `1890` to `1900` — the `ABT` goes             | yes — the endpoint modifier |
+| `FROM ABT 1912`                  | `after 1912` — the `ABT` goes                 | yes — the endpoint modifier |
 | `BET 1890 AND (some Tuesday)`    | `after 1890` — the upper bound is unreadable  | yes — the upper bound       |
 | `INT 1890 (from baptism record)` | `about 1890`, year precision                  | yes — the phrase            |
 | `EST 1918`                       | `about 1918`, year precision                  | yes — that it was estimated |
@@ -105,7 +106,8 @@ and the short version sits beside the enum in `db/schema.ts`.
 
 **`narrowed` survived this ticket with a much smaller remit.** It now means
 what its name says and nothing more: the date was read, and something beside
-it was not stored. Four cases, all in the table above. It stays a different
+it was not stored. Four kinds, in five rows of the table above — the endpoint
+modifier appears twice, once for each shape a bound comes in. It stays a different
 kind from `date` for the reason it always did — a `date` issue means the field
 is **blank** and somebody has to go and fix the file, a `narrowed` issue means
 the field is **populated and slightly poorer**, and one report cannot answer
@@ -136,7 +138,12 @@ become the same row** — a period ("it lasted from") and a range ("it happened
 somewhere in") are a distinction this schema has no column for, and for a
 birth or a death the period reading is a data-entry habit rather than a claim.
 And an endpoint's own modifier goes, because a fuzzy edge on a bound of an
-interval has no reader anywhere in this application.
+interval has no reader anywhere in this application. That holds for a bound
+standing on its own as much as for one end of a pair: `FROM ABT 1912` becomes
+`after 1912` and says so. Review of E6-T2 found the one-sided forms dropping
+the modifier in silence, which had made this a rule that held for
+`BET ABT 1890 AND 1900` and quietly failed for `FROM ABT 1890` — one rule,
+both shapes.
 
 That leaves one thing worth knowing before E7-T2 (`YEO-52`) is written: **a
 third-party file's `FROM 1912 TO 1918` comes back out as `BET 1912 AND

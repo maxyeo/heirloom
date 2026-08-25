@@ -930,6 +930,109 @@ describe("pointers the file cannot honour", () => {
   });
 });
 
+describe("duplicate identifiers", () => {
+  // The parser reports a duplicated xref and deliberately does not resolve
+  // it; the mapping has to pick one, and every reference in the file is
+  // ambiguous either way. What matters is that it picks the *same* record
+  // everywhere — the row a pointer resolves to and the record `PEDI` is read
+  // off have to be the same person, or an adopted child comes out biological
+  // with nothing on the report to explain it.
+
+  it("resolves a duplicated xref to the first record that validated", () => {
+    const mapping = map(`0 @I1@ INDI
+1 NAME Alice /One/
+0 @I1@ INDI
+1 NAME Beth /Two/
+0 @F1@ FAM
+1 WIFE @I1@`);
+
+    expect(mapping.individuals).toHaveLength(2);
+    expect(union(mapping, "F1").values.partnerBId).toBe(
+      mapping.individuals[0].id,
+    );
+  });
+
+  it("skips a refused duplicate and resolves to the one that survived", () => {
+    // The regression this pins: the first `@I2@` is refused for impossible
+    // dates, so the pointer resolves to the second — and `PEDI` has to be
+    // read off that same second record, not off the discarded first.
+    const mapping = map(`0 @I1@ INDI
+1 NAME A /One/
+0 @I2@ INDI
+1 NAME Refused /Two/
+1 BIRT
+2 DATE 1950
+1 DEAT
+2 DATE 1900
+0 @I2@ INDI
+1 NAME Kept /Two/
+1 FAMC @F1@
+2 PEDI adopted
+0 @F1@ FAM
+1 HUSB @I1@
+1 CHIL @I2@`);
+
+    const kept = person(mapping, "I2");
+    expect(kept.values.givenName).toBe("Kept");
+    expect(mapping.unionChildren).toEqual([
+      {
+        unionId: union(mapping, "F1").id,
+        childId: kept.id,
+        relation: "adopted",
+      },
+    ]);
+  });
+
+  it("does not invent a disagreement between two families sharing an xref", () => {
+    // The cross-check reads "does any record bearing this identifier agree",
+    // so a duplicated `FAM` must not have one copy's children overwrite the
+    // other's and report a mismatch that the file does not have.
+    const mapping = map(`0 @I1@ INDI
+1 NAME A /One/
+0 @I2@ INDI
+1 NAME B /Two/
+1 FAMC @F1@
+0 @F1@ FAM
+1 HUSB @I1@
+1 CHIL @I2@
+0 @F1@ FAM
+1 HUSB @I1@`);
+
+    // The parser's own "this identifier is used twice" issue is expected and
+    // stays. What must not appear is a *cross-check* complaint: the second
+    // `F1` lists no children, and overwriting would have made the first one's
+    // `CHIL` vanish and Beth's `FAMC` look one-sided.
+    expect(
+      messages(mapping.issues, "pointer").filter((message) =>
+        message.includes("does not list them"),
+      ),
+    ).toEqual([]);
+    expect(mapping.unionChildren).toHaveLength(1);
+  });
+});
+
+describe("a file with nothing usable in it", () => {
+  it("maps to three empty lists and a report saying why", () => {
+    // The "pure and total" guarantee E6-T3's preview rests on: this never
+    // throws, so a preview can render a verdict on any file at all.
+    const mapping = mapGedcom(parseGedcomText("this is not a GEDCOM file"));
+
+    expect(mapping.individuals).toEqual([]);
+    expect(mapping.unions).toEqual([]);
+    expect(mapping.unionChildren).toEqual([]);
+    expect(mapping.issues.length).toBeGreaterThan(0);
+  });
+
+  it("maps an empty file to nothing at all, without complaint", () => {
+    const mapping = mapGedcom(parseGedcomText(""));
+
+    expect(mapping.individuals).toEqual([]);
+    expect(mapping.unions).toEqual([]);
+    expect(mapping.unionChildren).toEqual([]);
+    expect(mapping.issues).toEqual([]);
+  });
+});
+
 describe("a whole family, from a fixture file", () => {
   const mapping = mapGedcom(parseGedcom(fixture("family.ged")));
 

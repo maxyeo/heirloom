@@ -199,13 +199,11 @@ export function mapGedcom(file: GedcomFile): GedcomMapping {
   const knownIndividuals = new Set<string>();
 
   for (const individual of file.individuals) {
-    if (individual.xref !== null) {
-      knownIndividuals.add(individual.xref);
-      // First wins, for the same reason `byXref` below does.
-      if (!sourceByXref.has(individual.xref)) {
-        sourceByXref.set(individual.xref, individual);
-      }
-    }
+    // Unconditional, and the only one of the three that is: this set answers
+    // "was this identifier in the file at all", which is what separates a
+    // broken pointer from a pointer to somebody this import refused. A
+    // refused record is still a record the file contained.
+    if (individual.xref !== null) knownIndividuals.add(individual.xref);
 
     const values = mapIndividual(individual, issues);
     if (values === null) continue;
@@ -218,12 +216,26 @@ export function mapGedcom(file: GedcomFile): GedcomMapping {
     };
     individuals.push(mapped);
 
-    // First wins on a duplicate identifier. The parser has already reported
-    // it as a `pointer` issue, and every reference to it is ambiguous either
-    // way — picking the earlier record at least makes the choice the same one
-    // every time this file is imported.
+    // First *surviving* record wins on a duplicate identifier. The parser has
+    // already reported the duplication as a `pointer` issue, and every
+    // reference to it is ambiguous either way — picking the earliest one that
+    // validated at least makes the choice the same one every time this file
+    // is imported.
+    //
+    // Both maps are written here, together, and that is load-bearing rather
+    // than tidy. They are keyed the same way and read as a pair — `byXref`
+    // gives the row a pointer resolves to, `sourceByXref` gives the `INDI`
+    // that row was built from, and `relationFor` reads `PEDI` off the second
+    // for a child it found through the first. Populating `sourceByXref`
+    // earlier, before validation, made them disagree in exactly one case: a
+    // duplicated xref whose first record was refused and whose second was
+    // not. The pointer then resolved to the surviving row while `PEDI` was
+    // read off the discarded one, so an adopted child came out biological
+    // with nothing on the report to explain it. One write site is what makes
+    // that unrepresentable.
     if (individual.xref !== null && !byXref.has(individual.xref)) {
       byXref.set(individual.xref, mapped);
+      sourceByXref.set(individual.xref, individual);
     }
   }
 
@@ -237,7 +249,16 @@ export function mapGedcom(file: GedcomFile): GedcomMapping {
   for (const family of file.families) {
     if (family.xref !== null) {
       knownFamilies.add(family.xref);
-      childrenOf.set(family.xref, new Set(family.children));
+      // Added to rather than replaced. Two `FAM` records can share an xref —
+      // the parser reports that, and does not resolve it — and this map backs
+      // a *cross-check*, where the question is "does any record bearing this
+      // identifier agree with the person's own `FAMC`". Overwriting would
+      // answer for whichever duplicate happened to come last and invent a
+      // disagreement with the other, which is a false alarm on a report whose
+      // whole value is that it only speaks when something is wrong.
+      const children = childrenOf.get(family.xref) ?? new Set<string>();
+      for (const child of family.children) children.add(child);
+      childrenOf.set(family.xref, children);
     }
 
     const values = mapFamily(
@@ -643,15 +664,17 @@ function reportOneSidedLinks(
   childrenOf: ReadonlyMap<string, ReadonlySet<string>>,
   issues: GedcomIssue[],
 ): void {
+  // Accumulated, not replaced, for the reason `childrenOf` is — see the
+  // comment beside it in `mapGedcom`.
   const partnersOf = new Map<string, Set<string>>();
   for (const family of file.families) {
     if (family.xref === null) continue;
-    partnersOf.set(
-      family.xref,
-      new Set(
-        [family.husband, family.wife].filter((id): id is string => id !== null),
-      ),
-    );
+
+    const partners = partnersOf.get(family.xref) ?? new Set<string>();
+    for (const xref of [family.husband, family.wife]) {
+      if (xref !== null) partners.add(xref);
+    }
+    partnersOf.set(family.xref, partners);
   }
 
   for (const individual of file.individuals) {
@@ -717,6 +740,14 @@ function reportOneSidedLinks(
  * either of its partners has reached, so a remarriage counts 0, 1, 2 down
  * each partner's own list rather than counting the whole file. A union both
  * of whose partners are new starts at 0.
+ *
+ * That per-person counting is also what keeps the number away from
+ * `MAX_UNION_SEQUENCE`: the ceiling is 1000 and a person's sequence cannot
+ * exceed the number of families they appear in, so only somebody recorded
+ * with more than a thousand partnerships in one file would reach it. Such a
+ * union is refused by `validateUnion` and reported — which is a strange
+ * sentence to read on an import report, and a strange enough file that a
+ * guard here would be inventing a case to handle.
  *
  * A family this mapping later refuses still consumes its number, leaving a
  * gap. Gaps are harmless — `ownUnions` sorts by the column and never reads the

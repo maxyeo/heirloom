@@ -702,12 +702,12 @@ function readGedcomDateSpan(
 
   const fromOnly = FROM_ONLY.exec(text);
   if (fromOnly !== null) {
-    return readOnePointSpan("after", fromOnly[1]);
+    return readOnePointSpan(text, label, "after", fromOnly[1]);
   }
 
   const toOnly = TO_ONLY.exec(text);
   if (toOnly !== null) {
-    return readOnePointSpan("before", toOnly[1]);
+    return readOnePointSpan(text, label, "before", toOnly[1]);
   }
 
   const interpreted = INTERPRETED.exec(text);
@@ -804,8 +804,26 @@ function readTwoPointSpan(
   };
 }
 
-/** `FROM x` / `TO y`: one bound, nothing dropped, so no issue is raised. */
+/**
+ * `FROM x` / `TO y`: one bound, which becomes an `after` or `before` date.
+ *
+ * The bound itself is lossless — one date in, one date out, at its own
+ * precision — so the ordinary forms raise nothing.
+ *
+ * **A modifier on that bound is not.** `FROM ABT 1912` and `FROM EST 1912`
+ * both become `after 1912`: the qualifier column has room for one word and
+ * `after` is the one the span form claims, so whatever the bound said about
+ * itself is overwritten. That is the same loss `readTwoPointSpan` reports for
+ * an endpoint of a two-point span — a fuzzy edge on a bound of an interval
+ * has no reader anywhere in this application — and it is reported here for
+ * the same reason, in the same words. Review of E6-T2 (`YEO-47`) found it
+ * going through in silence, which had made "a modifier on a range endpoint is
+ * not stored" a rule that held for `BET ABT 1890 AND 1900` and quietly failed
+ * for `FROM ABT 1890`. One rule, both shapes.
+ */
 function readOnePointSpan(
+  text: string,
+  label: string,
   qualifier: "after" | "before",
   boundText: string,
 ): GedcomDateSpan {
@@ -817,10 +835,18 @@ function readOnePointSpan(
     return { ok: false, message: `"${bound}" is not a date.` };
   }
 
+  const value: ParsedDate = { ...parsedBound.value, qualifier };
+  const dropped = parsedBound.value.qualifier;
+
+  if (dropped === "exact") return { ok: true, value, narrowed: null };
+
   return {
     ok: true,
-    value: { ...parsedBound.value, qualifier },
-    narrowed: null,
+    value,
+    // `qualified as "${qualifier}"` rather than an indefinite article, for the
+    // reason `readInterpretedDate` spells out: `about`/`before`/`after` do not
+    // all take the same one.
+    narrowed: `The ${label} date "${text}" gives one bound, and a bound is already a bound. "${bound}" was stored, qualified as "${qualifier}"; the "${dropped}" on it is not stored.`,
   };
 }
 
