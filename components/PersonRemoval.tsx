@@ -86,20 +86,32 @@ export function PersonRemoval({
    * Dismissing the dialogue, from any of its four exits — Cancel, Escape, the
    * backdrop, or the close of a stage that had nothing to confirm.
    *
-   * Focus goes back to the button that opened it, which is the pattern
-   * `components/PersonPanel.tsx` sets for itself ("`onClose` is also what
-   * returns focus to the node"). Without it a keyboard user dismisses the
-   * dialogue and lands on `<body>`, behind the very panel they were reading,
-   * with no way back but tabbing in from the top of the document.
-   *
-   * The trigger is always mounted — it sits behind the overlay rather than
-   * being replaced by it — so there is nothing to wait for here.
+   * Where focus goes afterwards is deliberately *not* decided here (`YEO-83`).
+   * It used to be, and a callback only ever covers the exits routed through
+   * it: a removal that succeeds takes this dialogue away through its own form
+   * and never calls this at all. `returnFocus` below hangs the restore on the
+   * dialogue *leaving* instead, which is the one thing every exit has in
+   * common. In that last case the trigger has gone too — the person is out of
+   * the graph and this section renders nothing — and the hook declines to
+   * focus an element that is no longer connected, which is the honest answer
+   * rather than a special case written out here.
    */
   function close() {
     setOpen(false);
     setChoice(null);
-    triggerRef.current?.focus();
   }
+
+  /**
+   * Focus goes back to the button that opened it, which is the pattern
+   * `components/PersonPanel.tsx` sets for itself ("the caller knows which DOM
+   * node that is"). Without it a keyboard user dismisses the dialogue and
+   * lands on `<body>`, behind the very panel they were reading, with no way
+   * back but tabbing in from the top of the document.
+   *
+   * The trigger is always mounted — it sits behind the overlay rather than
+   * being replaced by it — so there is nothing to wait for here.
+   */
+  const returnFocus = () => triggerRef.current;
 
   return (
     <section className="border-t border-rule-soft pt-3">
@@ -120,6 +132,7 @@ export function PersonRemoval({
               : "Check this first"
           }
           onClose={close}
+          returnFocus={returnFocus}
         >
           {choice === null ? (
             <RemovalChoices preview={preview} onChoose={setChoice} />

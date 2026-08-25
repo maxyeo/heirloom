@@ -60,9 +60,9 @@ import { formatPersonName } from "@/lib/person-format";
  *
  * - **Cancel**, **Escape** and **the backdrop** all arrive at `requestClose`,
  *   which shows the discard prompt instead of closing when there is something
- *   to lose. Escape reaching here at all is what `ModalDialog`'s capture-phase
- *   listener buys — without it the keystroke would also close the detail panel
- *   underneath.
+ *   to lose. Escape reaching here *and stopping here* is what `ModalDialog`'s
+ *   registration on the shared surface stack buys (`YEO-83`) — the dialogue is
+ *   the topmost surface, so the detail panel underneath is not asked.
  * - **Leaving the page** — a reload, the back button, a typed URL — is the
  *   browser's own navigation, and `beforeunload` is the only hook there is.
  *   Registered only while the form is dirty, because a page that always asks
@@ -121,19 +121,27 @@ export function EditPerson({ person, action }: EditPersonProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
+  const close = useCallback(() => {
+    setOpen(false);
+  }, []);
+
   /**
    * Focus goes back to the button the dialogue came from, which is the pattern
    * `components/PersonPanel.tsx` sets for itself. Without it a keyboard user
    * closes the form and lands on `<body>`, behind the very panel they were
    * reading, with no way back but tabbing in from the top of the document.
    *
+   * Handed to `ModalDialog` rather than done in `close` above (`YEO-83`):
+   * `close` covers the exits that are routed through it, and a save that
+   * lands is not one of them — the form reports the write and this component
+   * stops rendering the dialogue, with no dismissal in between. Hanging the
+   * restore on the dialogue *leaving* covers every way out, the save
+   * included.
+   *
    * The trigger is always mounted — it sits behind the backdrop rather than
    * being replaced by it — so there is nothing to wait for here.
    */
-  const close = useCallback(() => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  }, []);
+  const returnFocus = useCallback(() => triggerRef.current, []);
 
   return (
     <section className="border-t border-rule-soft pt-3">
@@ -159,6 +167,7 @@ export function EditPerson({ person, action }: EditPersonProps) {
           person={person}
           action={action}
           onClose={close}
+          returnFocus={returnFocus}
         />
       ) : null}
     </section>
@@ -170,12 +179,15 @@ export interface EditPersonFormProps {
   action: IndividualFormAction;
   /** Saved, or discarded. Either way the dialogue goes. */
   onClose: () => void;
+  /** Passed through to `ModalDialog`: where focus lands when it goes. */
+  returnFocus?: () => HTMLElement | null;
 }
 
 export function EditPersonForm({
   person,
   action,
   onClose,
+  returnFocus,
 }: EditPersonFormProps) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -271,7 +283,11 @@ export function EditPersonForm({
   }, [confirmingDiscard]);
 
   return (
-    <ModalDialog title={`Edit ${name}`} onClose={requestClose}>
+    <ModalDialog
+      title={`Edit ${name}`}
+      onClose={requestClose}
+      returnFocus={returnFocus}
+    >
       <form action={formAction}>
         {/*
           The one thing this form sends that the author did not type: a

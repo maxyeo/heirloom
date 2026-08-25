@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { SetParentsForm } from "@/components/SetParentsForm";
 import type { FamilyGraph, GraphPerson } from "@/lib/family-graph";
@@ -546,5 +546,38 @@ describe("what comes back", () => {
     await submit(host);
 
     expect(sent(submissions[0]).relation).toBe("foster");
+  });
+});
+
+/**
+ * The two behaviours every surface on this canvas now shares (`YEO-83`).
+ *
+ * This form replaces the detail panel while it is open, so the reader has just
+ * come from a surface that closes on Escape and puts focus on its own heading.
+ * Before this ticket it did neither, which made Escape a key that worked, then
+ * silently did not, then worked again.
+ */
+describe("dismissing the form", () => {
+  it("backs out on Escape, submitting nothing", () => {
+    const onCancel = vi.fn();
+    const { submissions } = mount({ onCancel });
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(submissions).toEqual([]);
+  });
+
+  it("puts focus on the heading when it opens", () => {
+    // Otherwise the author presses the button that opens this and is left on
+    // an element that has just been unmounted.
+    const { host } = mount();
+
+    expect(host.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement?.textContent).toContain("Set parents");
   });
 });

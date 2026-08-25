@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { PersonPanel } from "@/components/PersonPanel";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import type { FamilyGraph } from "@/lib/family-graph";
+import { derivePersonDetail } from "@/lib/person-detail";
 import { type RemovalState, removedState } from "@/lib/removal-state";
 import { render } from "@/test/render";
 
@@ -443,6 +445,45 @@ describe("where focus goes", () => {
     expect(document.activeElement).toBe(buttonLabelled(host, "Remove…"));
   });
 
+  it("keeps Tab inside the dialogue", () => {
+    // `aria-modal="true"` tells assistive tech that everything outside is
+    // inert, and until `YEO-83` that was a claim the dialogue did not keep:
+    // focus opens on the heading, which is not in the tab order, so the very
+    // first Tab walked out into the panel behind the backdrop.
+    openRemoval("thomas");
+    const first = dialog()?.querySelector("button");
+
+    const tab = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(tab);
+    });
+
+    expect(document.activeElement).toBe(first);
+    expect(tab.defaultPrevented).toBe(true);
+  });
+
+  it("wraps Tab round the end of the dialogue", () => {
+    openRemoval("thomas");
+    const buttons = [...(dialog()?.querySelectorAll("button") ?? [])];
+    act(() => buttons[buttons.length - 1].focus());
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(document.activeElement).toBe(buttons[0]);
+  });
+
   it("returns focus to the trigger on Escape too", () => {
     const host = openRemoval("thomas");
 
@@ -460,40 +501,72 @@ describe("where focus goes", () => {
 
 describe("dismissing it with the keyboard", () => {
   /**
-   * `components/PersonPanel.tsx` listens for Escape on `document` and closes
-   * the panel this dialogue is rendered inside. Without the capture-phase
-   * handler in `RemovalDialog`, one Escape would dismiss the confirmation
-   * *and* close the record behind it — so this stands in for the panel's
-   * listener and asserts it never fires.
+   * One Escape, one surface (`YEO-83`).
+   *
+   * This dialogue is opened from inside `components/PersonPanel.tsx`, and the
+   * panel closes on Escape too. That used to mean one keystroke dismissed the
+   * confirmation *and* the record behind it — the author lost the page they
+   * were reading while answering a question about it — and the fix was a
+   * capture-phase listener here that silenced the panel's.
+   *
+   * So the panel is mounted for real underneath, rather than a stand-in
+   * listener asserted never to fire. Pinning the old fix meant pinning a
+   * mechanism; what the ticket is actually about is which surface answers,
+   * and only a second real surface can say.
    */
-  const panelListener = vi.fn();
+  const closePanel = vi.fn();
 
-  beforeEach(() => {
-    panelListener.mockClear();
-    document.addEventListener("keydown", panelListener);
-  });
+  /** The dialogue, open, over the panel it is rendered inside on the canvas. */
+  function openOverPanel(personId: string): HTMLElement {
+    closePanel.mockClear();
+    const family = graph();
+    const detail = derivePersonDetail(family, personId);
+    if (detail === null)
+      throw new Error(`nobody on the tree called ${personId}`);
 
-  afterEach(() => {
-    document.removeEventListener("keydown", panelListener);
-  });
+    const host = render(
+      <PersonPanel
+        detail={detail}
+        onSelectPerson={() => {}}
+        onClose={closePanel}
+        footer={<PersonRemoval graph={family} personId={personId} />}
+      />,
+    );
+    click(buttonLabelled(host, "Remove…"));
+    return host;
+  }
 
-  it("closes the dialogue and stops the panel from closing too", () => {
-    openRemoval("thomas");
-
+  function pressEscape(): void {
     act(() => {
-      document
-        .querySelector("[role='dialog'] button")
-        ?.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-        );
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
     });
+  }
+
+  it("closes the dialogue and leaves the record behind it open", () => {
+    const host = openOverPanel("thomas");
+
+    pressEscape();
 
     expect(dialog()).toBeNull();
-    expect(panelListener).not.toHaveBeenCalled();
+    expect(closePanel).not.toHaveBeenCalled();
+    expect(host.querySelector("aside")).not.toBeNull();
+  });
+
+  it("hands the next Escape to the panel underneath", () => {
+    // The other half of the same rule: dismissing the dialogue gives
+    // topmost-ness back rather than swallowing every Escape after it.
+    openOverPanel("thomas");
+
+    pressEscape();
+    pressEscape();
+
+    expect(closePanel).toHaveBeenCalledTimes(1);
   });
 
   it("leaves other keys alone", () => {
-    openRemoval("thomas");
+    openOverPanel("thomas");
 
     act(() => {
       document.dispatchEvent(
@@ -502,6 +575,6 @@ describe("dismissing it with the keyboard", () => {
     });
 
     expect(dialog()).not.toBeNull();
-    expect(panelListener).toHaveBeenCalled();
+    expect(closePanel).not.toHaveBeenCalled();
   });
 });

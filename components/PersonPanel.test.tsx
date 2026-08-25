@@ -307,6 +307,30 @@ describe("focus", () => {
     expect(document.activeElement?.textContent).toContain("Walter Hale");
   });
 
+  it("hands focus back to whatever opened it", () => {
+    /*
+      The canvas is the only thing that knows which node that is, so the panel
+      takes a getter rather than finding one (`YEO-83`). Asserted on the
+      *unmount* rather than on a close handler because that is the one event
+      every exit has in common — Escape, the close button, a click on the empty
+      canvas, and a person deleted out from under an open panel.
+    */
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    const host = render(
+      <PersonPanel
+        detail={detail()}
+        onSelectPerson={noop}
+        onClose={noop}
+        returnFocus={() => opener}
+      />,
+    );
+
+    unmount(host);
+
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("labels itself with whose record it is", () => {
     const host = render(
       <PersonPanel detail={detail()} onSelectPerson={noop} onClose={noop} />,

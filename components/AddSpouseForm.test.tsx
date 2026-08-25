@@ -401,3 +401,36 @@ describe("what the form does with the answer", () => {
     expect(submissions).toEqual([]);
   });
 });
+
+/**
+ * The two behaviours every surface on this canvas now shares (`YEO-83`).
+ *
+ * This form replaces the detail panel while it is open, so the reader has just
+ * come from a surface that closes on Escape and puts focus on its own heading.
+ * Before this ticket it did neither, which made Escape a key that worked, then
+ * silently did not, then worked again.
+ */
+describe("dismissing the form", () => {
+  it("backs out on Escape, submitting nothing", () => {
+    const onCancel = vi.fn();
+    const { submissions } = mount({ onCancel });
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(submissions).toEqual([]);
+  });
+
+  it("puts focus on the heading when it opens", () => {
+    // Otherwise the author presses the button that opens this and is left on
+    // an element that has just been unmounted.
+    const { host } = mount();
+
+    expect(host.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement?.textContent).toContain("Add a spouse");
+  });
+});

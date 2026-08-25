@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type Ref } from "react";
 
+import { useDismissableSurface } from "@/components/surface-stack";
 import type {
   ChildLink,
   ParentLink,
@@ -32,13 +33,19 @@ import type {
  *
  * ## Where the dismissal logic lives
  *
- * Escape is handled here rather than by the canvas, because "the panel closes
- * on Escape" is a property of the panel and testable as one. The other two
- * routes in are the canvas's business and stay there: React Flow deselects a
- * node when the pane is clicked, and the tree turns that into a close.
+ * The panel *declares itself dismissable* (`useDismissableSurface`, `YEO-83`)
+ * and does not decide whether any particular Escape is for it. It used to: it
+ * ran a `document` keydown listener of its own, and so did every other surface
+ * on this canvas, which is how one keystroke closed the add-person panel and
+ * the record behind it at once. The shared stack in
+ * `components/surface-stack.ts` now owns that decision — the panel says what
+ * dismissing means, and only the topmost surface is asked.
  *
- * `onClose` is also what returns focus to the node — the caller knows which
- * DOM node that is and this does not.
+ * "The panel closes on Escape" is still a property of the panel and still
+ * testable as one; what has moved is who arbitrates between the surfaces that
+ * all want the same key. The other two routes in remain the canvas's business:
+ * React Flow deselects a node when the pane is clicked, and the tree turns
+ * that into a close.
  */
 export interface PersonPanelProps {
   detail: PersonDetail;
@@ -93,6 +100,21 @@ export interface PersonPanelProps {
    * a family they are already in. The panel only knows whose record is open.
    */
   onSetParents?: () => void;
+  /**
+   * Where focus goes when the panel leaves (`YEO-83`).
+   *
+   * A slot-shaped prop like `footer` and `entryLink`, and optional for the
+   * same reason: the panel does not know which DOM node opened it, and the
+   * canvas does — a React Flow node wrapper it has to find by scanning, which
+   * is knowledge this file has no business holding. Called when the panel
+   * unmounts, so every exit is covered rather than only the ones that go
+   * through `onClose`; the guard against stealing focus from a reader who has
+   * already moved on lives in the hook.
+   *
+   * Omit it and the panel closes exactly as it did, leaving focus wherever the
+   * browser put it.
+   */
+  returnFocus?: () => HTMLElement | null;
   /** So the canvas can measure the panel and pan out from under it. */
   ref?: Ref<HTMLElement>;
 }
@@ -106,21 +128,16 @@ export function PersonPanel({
   onAddSpouse,
   onAddChild,
   onSetParents,
+  returnFocus,
   ref,
 }: PersonPanelProps) {
   const headingRef = useRef<HTMLDivElement>(null);
 
   // Escape closes from wherever focus happens to be — on the node that opened
-  // the panel, or on a link inside it. A listener on the document is what
-  // covers both; a handler on the panel would only catch the second.
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  // the panel, or on a link inside it. The shared listener is on the document
+  // for that reason; a handler on the panel would only catch the second. Not
+  // `modal`: the panel is part of the page and is deliberately tabbable past.
+  useDismissableSurface({ onDismiss: onClose, returnFocus });
 
   // Move focus into the panel when it opens, and again when it swaps to a
   // different person. Without this a keyboard user selects a node and their

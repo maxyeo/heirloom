@@ -415,30 +415,28 @@ function FamilyTreeCanvas({
   /**
    * "Focus returns to the node."
    *
-   * Watching the selection rather than hanging off the close button, because
-   * only one of the ways out of the panel goes through this component's own
-   * handler. Escape from a focused node and a click on the empty canvas are
-   * both React Flow deselecting on its own; a focus restore living in `close`
-   * would quietly not happen for either, and the panel would still look like
-   * it worked.
+   * Handed to the panel rather than hung off the close button, because only
+   * one of the ways out goes through this component's own handler. Escape from
+   * a focused node and a click on the empty canvas are both React Flow
+   * deselecting on its own; a focus restore living in `close` would quietly
+   * not happen for either, and the panel would still look like it worked. The
+   * panel unmounting is the one event all of them have in common, which is
+   * what `useDismissableSurface` hangs this on (`YEO-83`).
    *
-   * The guard is what keeps this from being a focus thief. When the panel
-   * unmounts the browser drops focus on `<body>`, which is the case worth
-   * rescuing; anywhere else means the reader has already moved on and the
-   * canvas has no business pulling them back.
+   * The guard that keeps this from being a focus thief moved with it: when the
+   * panel unmounts the browser drops focus on `<body>`, which is the case
+   * worth rescuing, and anywhere else means the reader has already moved on
+   * and the canvas has no business pulling them back. See `restoreFocus` in
+   * `components/surface-stack.ts`.
+   *
+   * Resolved when the panel goes rather than held as an element, because a
+   * deep link opens the panel before React Flow has drawn a node to go back
+   * to. Memoised only so the panel is not handed a new function every render.
    */
-  const lastSelectedId = useRef<string | null>(null);
-
-  useEffect(() => {
-    const previous = lastSelectedId.current;
-    lastSelectedId.current = selectedId;
-    if (selectedId !== null || previous === null) return;
-
-    const active = document.activeElement;
-    if (active === null || active === document.body) {
-      nodeElement(previous)?.focus();
-    }
-  }, [selectedId, nodeElement]);
+  const returnFocusToNode = useCallback(
+    () => (selectedId === null ? null : nodeElement(selectedId)),
+    [selectedId, nodeElement],
+  );
 
   /**
    * The selection and the URL, kept saying the same thing (E2-T4).
@@ -649,6 +647,12 @@ function FamilyTreeCanvas({
           detail={detail}
           onSelectPerson={selectPerson}
           onClose={close}
+          /*
+            The canvas is the only thing that knows which DOM node opened the
+            panel — the panel is handed a person, not a wrapper element to
+            scan for.
+          */
+          returnFocus={returnFocusToNode}
           /*
             E2-T2's entry link, composed into its own slot above the relatives
             rather than into the footer: it is not an edit to the record, it is
