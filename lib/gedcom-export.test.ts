@@ -911,6 +911,30 @@ describe("rows that could only have been written around the validators", () => {
     expect(text).toContain("2 DATE BET 1900 AND 1890\r\n");
   });
 
+  it("writes one FAMS for a person named in both partner columns", () => {
+    // `validateUnion` refuses a person in a union with themselves, so this is
+    // a row written around it — and it is the case the grouping behind `FAMS`
+    // has to collapse. Counting the union once per person rather than once per
+    // partner column is what keeps the same line from being written twice.
+    const text = writeGedcom({
+      individuals: [person({ id: id(1) })],
+      unions: [
+        union({
+          id: id(50),
+          partnerAId: id(1),
+          partnerBId: id(1),
+          type: "marriage",
+        }),
+      ],
+      unionChildren: [],
+    });
+
+    expect(text.match(/1 FAMS /g)).toHaveLength(1);
+    // Both columns are still written, because both are what the row says.
+    expect(text).toContain("1 HUSB @I1@\r\n");
+    expect(text).toContain("1 WIFE @I1@\r\n");
+  });
+
   it("never throws, whatever the row says", () => {
     expect(() =>
       writeGedcom({
