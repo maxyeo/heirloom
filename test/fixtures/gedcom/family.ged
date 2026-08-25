@@ -1,0 +1,59 @@
+0 HEAD
+1 SOUR Heirloom
+2 VERS 0.1.0
+1 CHAR UTF-8
+1 GEDC
+2 VERS 5.5.1
+2 FORM LINEAGE-LINKED
+0 @I1@ INDI
+1 NAME John Henry /Smith/
+1 SEX M
+1 BIRT
+2 DATE 12 MAR 1890
+2 PLAC Whitby, Yorkshire, England
+1 DEAT
+2 DATE ABT 1962
+2 PLAC Whitby, Yorkshire, England
+1 FAMS @F1@
+0 @I2@ INDI
+1 NAME Mary Ann /Byrne/
+1 SEX F
+1 BIRT
+2 DATE MAR 1893
+1 DEAT
+2 DATE BEF 1970
+1 FAMS @F1@
+1 FAMS @F2@
+0 @I3@ INDI
+1 NAME Edward /Smith/
+1 SEX M
+1 BIRT
+2 DATE 1915
+2 PLAC Whitby, Yorkshire, England
+1 FAMC @F1@
+0 @I4@ INDI
+1 NAME Ada /Smith/
+1 SEX F
+1 BIRT
+2 DATE EST 1918
+1 FAMC @F1@
+0 @I5@ INDI
+1 NAME Thomas /Byrne/
+1 SEX U
+1 FAMS @F2@
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CHIL @I3@
+1 CHIL @I4@
+1 MARR
+2 DATE AFT 1913
+2 PLAC St Anne's, Whitby, England
+0 @F2@ FAM
+1 HUSB @I5@
+1 WIFE @I2@
+1 MARR
+2 DATE 1885
+1 DIV
+2 DATE 1889
+0 TRLR

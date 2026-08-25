@@ -1,0 +1,22 @@
+0 HEAD
+1 CHAR UTF-8
+0 @I1@ INDI
+1 NAME Bartholomew /Featherstonehaugh/
+2 GIVN Bartholomew
+2 SURN Featherstonehaugh
+1 SEX M
+1 NOTE Born in a fishing village
+2 CONT on the Yorkshire coast,
+2 CONC  and christened there.
+1 BIRT
+2 DATE 1 JAN 1900
+2 PLAC Robin Hood's Bay, Whitby, North Riding of York
+3 CONC shire, England
+2 SOUR @S1@
+1 _UID 8F3C2A19
+1 OBJE
+2 FILE portrait.jpg
+2 FORM jpeg
+0 @S1@ SOUR
+1 TITL Parish register, Whitby
+0 TRLR
