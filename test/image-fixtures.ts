@@ -395,6 +395,23 @@ export const gifImage = (data: readonly number[]): number[] => [
   ...subBlocks(data),
 ];
 
+/**
+ * A payload of the kind a mislabelled extension can smuggle: a location, in
+ * plain text, behind a label whose real contents are four bytes of timing.
+ */
+export const GIF_SMUGGLED =
+  "GPSLatitude=37.4620N,GPSLongitude=122.2591W,HomeAddress=221B";
+
+/**
+ * An extension with an arbitrary label and a payload — the shape a real one
+ * is *not*. Used to check that a block is kept for its shape rather than for
+ * the label it claims.
+ */
+export const gifExtension = (
+  label: number,
+  payload: readonly number[],
+): number[] => [0x21, label, ...subBlocks(payload)];
+
 export const GIF_COMMENT_TEXT = "Taken at home, 37.77N 122.41W";
 
 /** A comment extension: free-form text, and a carrier like any other. */

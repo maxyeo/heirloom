@@ -128,9 +128,30 @@ ImageMagick and Photoshop's "Save for Web" all write one. A GIF made from a
 phone video by a tool that carries the source metadata across arrives with
 `exif:GPSLatitude` in it. So a GIF is walked like the others, and its
 application, comment and plain-text extensions are dropped, keeping only what
-draws and times the picture: the colour tables, the graphic control
-extensions, the image blocks, and the Netscape loop count without which every
-animation would play once and stop.
+draws and times the picture: the colour tables, the image blocks, the graphic
+control extensions, and the Netscape loop count without which every animation
+would play once and stop.
+
+One rule runs through all four containers, and it is the one this code got
+wrong more than once: **a block is kept for its shape, never for its label.**
+A label is a claim the file makes about itself. A graphic control extension is
+four bytes of timing, but the label sits in front of an ordinary
+variable-length chain, so keeping one on its label alone keeps whatever that
+chain holds — coordinates, or as many kilobytes as the upload cap allows. The
+same held for a JPEG `APP0` kept on its marker, and for a PNG chunk kept for
+_not_ appearing on a blocklist. Blocks with a mandated size are now checked
+against it; the rest are on allowlists of the types each format actually
+defines.
+
+That guarantee is deliberately narrower than "nothing chosen reaches the
+store", which is not available to any image scrubber and should not be
+implied. An image is arbitrary bytes: a palette is chosen values, a colour
+profile is a binary blob kept for colour accuracy, and a megapixel of pixels
+will carry a megabyte of anything. What is promised is that **no metadata
+block reaches the store unread** — everything that is not pixels, palette or
+profile is dropped, scrubbed, or matched against a shape with no room in it —
+and that location metadata is removed from all four formats, everywhere any
+of them defines a place to put it.
 
 **Orientation stays**, and that is the reason this is byte-level surgery
 rather than a three-line deletion. A phone stores its pixels the way the

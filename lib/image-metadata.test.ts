@@ -30,6 +30,8 @@ import {
   gif,
   gifApplication,
   gifComment,
+  gifExtension,
+  GIF_SMUGGLED,
   gifGraphicControl,
   gifImage,
   gifLoop,
@@ -506,6 +508,152 @@ describe("a GIF's other carriers", () => {
     expect(
       contains(stripLocation(original, "image/gif"), GIF_XMP_LATITUDE),
     ).toBe(false);
+  });
+});
+
+describe("a block wearing a label it does not fit", () => {
+  /**
+   * The rule, tested from the outside: a graphic control extension is four
+   * bytes of timing in a mandated eight-byte block, and it was kept on its
+   * label alone. Sixty bytes of coordinates behind a `0xF9` therefore went
+   * to the store byte for byte — a re-opened location leak, and a general
+   * channel for putting anything at all behind a durable, authenticated,
+   * retrievable key.
+   *
+   * The loop count next door was already validated by exact shape, which is
+   * what makes this worth a test rather than a fix: the reasoning existed and
+   * was not applied to the branch beside it.
+   */
+  it("is dropped when a graphic control extension carries a payload", () => {
+    const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
+    const original = gif([
+      gifExtension(0xf9, smuggled),
+      gifImage([0x4c, 0x01, 0x00]),
+    ]);
+    expect(contains(original, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/gif");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(gifBlocksOf(scrubbed)).toEqual(["image"]);
+  });
+
+  it("is dropped when that payload is chained across sub-blocks", () => {
+    // Nothing bounded the chain below the upload cap, so the channel was as
+    // wide as the file.
+    const long = Array.from({ length: 600 }, (_, index) => 0x41 + (index % 26));
+    const original = gif([
+      gifExtension(0xf9, long),
+      gifImage([0x4c, 0x01, 0x00]),
+    ]);
+
+    const scrubbed = stripLocation(original, "image/gif");
+    expect(gifBlocksOf(scrubbed)).toEqual(["image"]);
+    expect(scrubbed.length).toBeLessThan(original.length - 500);
+  });
+
+  it("keeps a genuine eight-byte graphic control extension", () => {
+    // The other half: shape validation that refused the real block would be
+    // a scrub that broke every animation instead of a leak.
+    const original = gif([gifGraphicControl(7), gifImage([0x4c, 0x01, 0x00])]);
+    expect(stripLocation(original, "image/gif")).toEqual(original);
+  });
+
+  it("is dropped when a JPEG APP0 is longer than a JFIF header", () => {
+    // The same defect in the JPEG walk, found by auditing the rest of the
+    // allowlist rather than by being told: APP0 was kept on its marker, and
+    // an APP0 segment holds sixty-five kilobytes.
+    const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
+    const original = jpeg([
+      { marker: 0xe0, payload: [...app0Jfif().payload, ...smuggled] },
+      app1Exif(phoneExif()),
+    ]);
+    expect(contains(original, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/jpeg");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(segmentsOf(scrubbed).map((segment) => segment.marker)).toEqual([
+      0xe1,
+    ]);
+  });
+
+  it("is dropped when a JPEG marker is reserved rather than read", () => {
+    // 0xF0-0xFD are reserved for JPEG extensions and skipped by every
+    // decoder. The walk dropped APP3-APP15 by name and kept these by
+    // omission — the blocklist mistake, in the container that had already
+    // been reviewed twice.
+    const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
+    const original = jpeg([
+      { marker: 0xf0, payload: smuggled },
+      { marker: 0xdb, payload: [0, 1, 2, 3] }, // a quantisation table
+      app1Exif(phoneExif()),
+    ]);
+    expect(contains(original, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/jpeg");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    // The table a decoder needs stays; the reserved marker does not.
+    expect(segmentsOf(scrubbed).map((segment) => segment.marker)).toEqual([
+      0xdb, 0xe1,
+    ]);
+  });
+
+  it("is dropped when a PNG chunk type is nobody's", () => {
+    // PNG was a blocklist of the three text types, so a private chunk was
+    // kept for not being named — weaker still than being kept for its label.
+    const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
+    const original = png([
+      { type: "IHDR", data: IHDR },
+      { type: "gpSd", data: smuggled },
+      { type: "IDAT", data: [1, 2, 3] },
+      { type: "IEND", data: [] },
+    ]);
+    expect(contains(original, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/png");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(chunksOf(scrubbed).map((chunk) => chunk.type)).toEqual([
+      "IHDR",
+      "IDAT",
+      "IEND",
+    ]);
+  });
+
+  it("is dropped when a WebP chunk is one the format does not define", () => {
+    const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
+    const original = webp([
+      { type: "VP8X", data: VP8X },
+      { type: "JUNK", data: smuggled },
+      { type: "ALPH", data: [7, 7] },
+      { type: "VP8 ", data: [1, 2, 3] },
+    ]);
+    expect(contains(original, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/webp");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    // The alpha plane and the bitstream are the image; they stay.
+    expect(riffChunksOf(scrubbed).map((chunk) => chunk.type)).toEqual([
+      "VP8X",
+      "ALPH",
+      "VP8 ",
+    ]);
+  });
+
+  it("keeps the PNG chunks an animation and a palette need", () => {
+    // An allowlist that forgot one would be a scrub that broke images, which
+    // is the failure the blocklist was avoiding. These are the ones it would
+    // hurt to lose.
+    const original = png([
+      { type: "IHDR", data: IHDR },
+      { type: "PLTE", data: [1, 2, 3] },
+      { type: "tRNS", data: [0] },
+      { type: "acTL", data: [0, 0, 0, 2, 0, 0, 0, 0] },
+      { type: "fcTL", data: [0, 0, 0, 0] },
+      { type: "fdAT", data: [9] },
+      { type: "iCCP", data: [1] },
+      { type: "IDAT", data: [1, 2, 3] },
+      { type: "IEND", data: [] },
+    ]);
+    expect(stripLocation(original, "image/png")).toEqual(original);
   });
 });
 

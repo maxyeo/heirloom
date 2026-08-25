@@ -122,6 +122,39 @@ import type { ImageType } from "@/lib/image-type";
  * fields that carry no location — and the offsets it avoids getting wrong
  * are ones this implementation never touches either.
  *
+ * ## One rule, and what it is worth
+ *
+ * Every container here decides what survives the same way: **a block is kept
+ * for its shape, never for its label.** A label is a claim the file makes
+ * about itself, and a block kept on its claim is a block whose contents were
+ * never looked at — which is an arbitrary-data channel with a respectable
+ * name on it. Review found that mistake three times in this file (a GIF
+ * graphic control extension, a JPEG `APP0`, and a PNG blocklist that kept a
+ * chunk for *not* being named), each time in a branch sitting beside one that
+ * did it correctly. The fixed-shape blocks are now checked against their
+ * mandated size, and the variable-length ones are on allowlists of types the
+ * format itself defines.
+ *
+ * ## What this cannot promise
+ *
+ * Not "no chosen bytes reach the store". That is not available to any image
+ * scrubber and it is worth writing down rather than implying otherwise: an
+ * image *is* arbitrary bytes. A palette is up to 768 bytes of chosen values,
+ * a colour profile is a binary blob kept deliberately for colour accuracy,
+ * and the pixels are the payload — a megapixel of them will carry a megabyte
+ * of anything at all, in the clear or in the low bits, and no amount of
+ * container walking changes that. A GIF's image-data chain is the same story
+ * one level down: sub-blocks past the point a decoder has all its pixels are
+ * never read and are kept, and telling them apart would mean decompressing
+ * the image to find out.
+ *
+ * What it does promise is narrower and is the thing the ticket asked for:
+ * **no metadata block reaches the store unread.** Every block that is not
+ * pixels, palette or profile is either dropped, or scrubbed, or matched
+ * against a shape that leaves it no room to carry anything. Location
+ * metadata is removed from all four formats, in every place any of them
+ * defines for it.
+ *
  * ## Known limits
  *
  * PNG, WebP and GIF keep whatever orientation tag they arrived with, and
@@ -544,18 +577,45 @@ function keepJpegSegment(
   payloadEnd: number,
 ): boolean {
   switch (marker) {
-    case 0xe0: // APP0 — JFIF/JFXX. Pixel density and a thumbnail; no prose.
-      return true;
+    case 0xe0:
+      /**
+       * APP0, and only when it is a bare JFIF header: the identifier, two
+       * version bytes, a density unit, two densities and two thumbnail
+       * dimensions — fourteen bytes of payload, exactly.
+       *
+       * It was kept on its marker alone, which is the same mistake the GIF
+       * walk made with `0xF9`: a marker is a claim, and an `APP0` segment can
+       * carry sixty-five kilobytes behind that claim. A longer one is either
+       * a JFXX extension or a JFIF with an embedded thumbnail, and what is
+       * lost by refusing both is a pixel-density hint and a thumbnail nothing
+       * renders.
+       */
+      return (
+        payloadEnd - payload === 14 && startsWith(bytes, payload, "JFIF\0")
+      );
     case 0xe1: // APP1 — Exif, or XMP wearing the same marker.
       if (!startsWith(bytes, payload, "Exif\0\0")) return false;
       return scrubExif(bytes.subarray(payload + 6, payloadEnd), budget);
     case 0xe2: // APP2 — kept only when it is a colour profile.
       return startsWith(bytes, payload, "ICC_PROFILE\0");
     default:
-      // Every other APPn (including APP13's IPTC block) and the comment
-      // segment. Everything below 0xE0 is structural — quantisation tables,
-      // Huffman tables, frame headers — and is kept.
-      return !(marker >= 0xe3 && marker <= 0xef) && marker !== 0xfe;
+      /**
+       * An allowlist of the markers a decoder actually reads: `0xC0`–`0xCF`
+       * is the frame and table space (start of frame, Huffman tables,
+       * arithmetic conditioning) and `0xDB`–`0xDF` the rest of the
+       * structural set (quantisation tables, restart interval, hierarchical
+       * progression). Standalone markers never reach here — they carry no
+       * payload and were kept by the walk.
+       *
+       * This was a list of markers to *drop* (`APP3`–`APP15` and the comment
+       * segment), which is the blocklist mistake the PNG walk also made:
+       * `0xF0`–`0xFD` are reserved for JPEG extensions, every decoder skips
+       * them, and a segment wearing one carried up to sixty-five kilobytes
+       * past a check that was only looking elsewhere.
+       */
+      return (
+        (marker >= 0xc0 && marker <= 0xcf) || (marker >= 0xdb && marker <= 0xdf)
+      );
   }
 }
 
@@ -608,8 +668,50 @@ function stripJpeg(bytes: ImageBytes, budget: Budget): ImageBytes {
   return join(bytes, keep);
 }
 
-/** PNG chunk types that exist to carry text, and nothing else. */
-const PNG_TEXT_CHUNKS = new Set(["tEXt", "zTXt", "iTXt"]);
+/**
+ * PNG chunk types that survive, plus `eXIf`, which is scrubbed rather than
+ * kept as it stands.
+ *
+ * An allowlist, and it replaced a blocklist of the three text chunk types.
+ * The blocklist was the same error as keeping a block for its label, one step
+ * weaker: it kept a chunk for *not being named*, so any private or unknown
+ * type — `gpSd`, say, holding a latitude — went to the store untouched. PNG's
+ * registered types are a closed set and its private ones are by definition
+ * things this application has no reason to carry.
+ *
+ * What is listed is everything that draws, colours or times the image:
+ * the four critical chunks, the colour and rendering hints, the APNG
+ * animation chunks (without which an animated PNG loses its frames), and the
+ * HDR signalling chunks. What is not listed and therefore goes: `tEXt`,
+ * `zTXt`, `iTXt` — which is how XMP arrives — `tIME`, and everything nobody
+ * has registered.
+ */
+const PNG_KEEP: ReadonlySet<string> = new Set([
+  // The image itself.
+  "IHDR",
+  "PLTE",
+  "IDAT",
+  "IEND",
+  // Colour, transparency and rendering intent.
+  "tRNS",
+  "gAMA",
+  "cHRM",
+  "sRGB",
+  "iCCP",
+  "sBIT",
+  "bKGD",
+  "hIST",
+  "sPLT",
+  "pHYs",
+  // APNG.
+  "acTL",
+  "fcTL",
+  "fdAT",
+  // HDR signalling.
+  "cICP",
+  "mDCv",
+  "cLLi",
+]);
 
 function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
   const keep: [number, number][] = [[0, 8]]; // The eight-byte signature.
@@ -629,9 +731,7 @@ function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
     if (end > bytes.length)
       throw new UnreadableImageError("chunk runs past the end");
 
-    if (PNG_TEXT_CHUNKS.has(type)) {
-      // Dropped whole. Nothing renders from these, and XMP arrives as one.
-    } else if (type === "eXIf") {
+    if (type === "eXIf") {
       if (scrubExif(bytes.subarray(data, data + length), budget)) {
         // The chunk's own bytes changed, so its checksum has to be redone
         // over type-and-data, which is what PNG covers with the CRC.
@@ -642,9 +742,11 @@ function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
         );
         keep.push([at, end]);
       }
-    } else {
+    } else if (PNG_KEEP.has(type)) {
       keep.push([at, end]);
     }
+    // Everything else is dropped whole, including every private and unknown
+    // type. Nothing renders from them.
 
     at = end;
     if (type === "IEND") break;
@@ -662,6 +764,27 @@ function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
  */
 const VP8X_EXIF = 0x08;
 const VP8X_XMP = 0x04;
+
+/**
+ * WebP chunks that survive, `EXIF` aside — it is scrubbed, and `XMP ` is
+ * always dropped.
+ *
+ * An allowlist for the same reason PNG has one: the walk used to keep any
+ * chunk it did not recognise, and RIFF lets a file carry as many
+ * four-character chunks as it likes. These seven are the whole of what the
+ * format defines for drawing an image — the extended header, a colour
+ * profile, the animation header and its frames, an alpha plane, and the two
+ * bitstream types.
+ */
+const WEBP_KEEP: ReadonlySet<string> = new Set([
+  "VP8X",
+  "ICCP",
+  "ANIM",
+  "ANMF",
+  "ALPH",
+  "VP8 ",
+  "VP8L",
+]);
 
 function stripWebp(bytes: ImageBytes, budget: Budget): ImageBytes {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -689,9 +812,11 @@ function stripWebp(bytes: ImageBytes, budget: Budget): ImageBytes {
       if (scrubExif(bytes.subarray(data, data + length), budget)) {
         keep.push([at, end]);
       } else cleared |= VP8X_EXIF;
-    } else {
+    } else if (WEBP_KEEP.has(type)) {
       keep.push([at, end]);
     }
+    // Anything else is dropped. There is no flag in `VP8X` to clear for it,
+    // because the format does not know it exists either.
 
     at = end;
   }
@@ -718,6 +843,51 @@ const GIF_IMAGE = 0x2c;
 const GIF_TRAILER = 0x3b;
 const GIF_GRAPHIC_CONTROL = 0xf9;
 const GIF_APPLICATION = 0xff;
+
+/**
+ * Whether the extension at `at` is exactly the shape its label mandates.
+ *
+ * The rule this enforces, and the one every branch of the GIF allowlist has
+ * to obey: **a block is kept for its shape, never for its label.** A label is
+ * a claim the file makes about itself, and the blocks being kept here are
+ * kept precisely because their contents are fixed and known — a graphic
+ * control extension is four bytes of timing, a loop count is two bytes of
+ * count. Keeping one on its label alone means keeping whatever a sub-block
+ * chain happens to contain, which is an arbitrary-data channel wearing the
+ * name of a four-byte field.
+ *
+ * `size` is the block-size byte the format mandates for that label and
+ * `length` the whole extension including introducer, label and terminator.
+ * Both are fixed by the specification, so a block that disagrees with either
+ * is not the block it says it is.
+ */
+function isFixedExtension(
+  bytes: Uint8Array,
+  at: number,
+  end: number,
+  label: number,
+  size: number,
+  length: number,
+): boolean {
+  return (
+    bytes[at + 1] === label && end - at === length && bytes[at + 2] === size
+  );
+}
+
+/**
+ * A graphic control extension: frame delay, disposal and transparency.
+ *
+ * Eight bytes, always — introducer, label, a block size of exactly four, the
+ * four bytes themselves, and the terminator. There is no variable-length
+ * form of this block and no version of the format in which there was one.
+ */
+function isGifGraphicControl(
+  bytes: Uint8Array,
+  at: number,
+  end: number,
+): boolean {
+  return isFixedExtension(bytes, at, end, GIF_GRAPHIC_CONTROL, 0x04, 8);
+}
 
 /**
  * The one application extension that survives: Netscape's loop count.
@@ -768,12 +938,21 @@ function gifSubBlocksEnd(bytes: Uint8Array, at: number): number {
   throw new UnreadableImageError("sub-block chain runs past the end");
 }
 
-/** Whether the extension at `at` is exactly a Netscape loop count. */
+/**
+ * Whether the extension at `at` is exactly a Netscape loop count.
+ *
+ * Shape first, then the two bytes inside the sub-block that are also fixed:
+ * its own length (`0x03`) and the sub-block id (`0x01`). What is left
+ * unchecked is the loop count itself, two bytes at `at + 16`, and it has to
+ * be: a real loop count is an arbitrary sixteen-bit number, so there is no
+ * shape to hold it to. That is 65,536 states of attacker-chosen value in a
+ * file that already carries a palette and a pixel buffer — noted rather than
+ * defended, because two bytes cannot hold a coordinate pair and no scrub can
+ * remove a field whose whole range is legal.
+ */
 function isGifLoop(bytes: Uint8Array, at: number, end: number): boolean {
   return (
-    bytes[at + 1] === GIF_APPLICATION &&
-    end - at === GIF_LOOP_LENGTH &&
-    bytes[at + 2] === 0x0b &&
+    isFixedExtension(bytes, at, end, GIF_APPLICATION, 0x0b, GIF_LOOP_LENGTH) &&
     startsWith(bytes, at + 3, GIF_LOOP) &&
     bytes[at + 14] === 0x03 &&
     bytes[at + 15] === 0x01
@@ -803,12 +982,20 @@ function isGifLoop(bytes: Uint8Array, at: number, end: number): boolean {
  * ## What is kept
  *
  * Everything that draws or times the picture: the header, the logical screen
- * descriptor, the global and local colour tables, every graphic control
- * extension, every image block, and the Netscape loop count. Everything that
- * carries free-form data goes — application extensions (bar the loop),
- * comment extensions, and plain-text extensions, which are a legacy
- * rendering feature no decoder has implemented in decades and an arbitrary
- * ASCII carrier in the meantime.
+ * descriptor, the global and local colour tables, every image block, and the
+ * two extensions with a mandated fixed shape — the graphic control extension
+ * and the Netscape loop count — **each matched against that shape rather than
+ * against its label**. Everything that carries free-form data goes:
+ * application extensions other than the loop, comment extensions, and
+ * plain-text extensions, which are a legacy rendering feature no decoder has
+ * implemented in decades and an arbitrary ASCII carrier in the meantime.
+ *
+ * The shape check is not decoration. A graphic control extension is four
+ * bytes of timing, but its label sits in front of an ordinary sub-block
+ * chain, so keeping one on the label alone kept whatever that chain held —
+ * sixty bytes of coordinates, or as many kilobytes as the upload cap allows.
+ * That is `isFixedExtension`, and the reason both arms of the allowlist go
+ * through it.
  *
  * Bytes after the trailer go too. They are outside the image by definition,
  * nothing renders them, and they are the most obvious place left to put
@@ -844,7 +1031,11 @@ function stripGif(bytes: ImageBytes): ImageBytes {
         throw new UnreadableImageError("truncated extension");
       }
       const end = gifSubBlocksEnd(bytes, at + 2);
-      if (bytes[at + 1] === GIF_GRAPHIC_CONTROL || isGifLoop(bytes, at, end)) {
+      // Both arms validate shape. Neither may be relaxed to a label test —
+      // see `isFixedExtension`, and the graphic control extension in
+      // particular, which was kept on its label alone until a reviewer put
+      // sixty bytes of coordinates behind a `0xF9`.
+      if (isGifGraphicControl(bytes, at, end) || isGifLoop(bytes, at, end)) {
         keep.push([at, end]);
       }
       at = end;
