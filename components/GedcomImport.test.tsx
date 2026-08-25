@@ -8,10 +8,10 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
-  IMPORT_PENDING_TICKET,
+  type ImportDoneResponse,
   type ImportPreviewResponse,
 } from "@/lib/import-endpoint";
-import type { ImportPreview } from "@/lib/import-preview";
+import type { ImportCounts, ImportPreview } from "@/lib/import-preview";
 import { render } from "@/test/render";
 
 /**
@@ -121,6 +121,13 @@ function previewAnswer(
   digest = "abc123",
 ): ImportPreviewResponse {
   return { stage: "preview", digest, preview };
+}
+
+/** The answer to a confirmed import that ran. */
+function importedAnswer(
+  written: ImportCounts = { people: 5, unions: 2, children: 2 },
+): ImportDoneResponse {
+  return { stage: "imported", written };
 }
 
 function mount() {
@@ -273,18 +280,36 @@ describe("the confirm step", () => {
     expect(calls[1].body.get(IMPORT_FILE_FIELD)).toBeInstanceOf(File);
   });
 
-  it("names the ticket when the answer is 'not yet' rather than 'no'", async () => {
+  it("shows what was written and takes the preview down", async () => {
+    // The preview described a decision that has now been made. Leaving "what
+    // this file would add" beside what it did add is two answers to one
+    // question, and the reader has no way to tell which is the outcome.
+    const screen = await previewed();
+    answers.push({ status: 200, body: importedAnswer() });
+
+    await click(screen.button("Import 5 people"));
+
+    expect(screen.host.textContent).toContain("What was imported");
+    expect(screen.button("Import 5 people")).toBeUndefined();
+  });
+
+  it("says the tree is untouched when the import fails", async () => {
     const screen = await previewed();
     answers.push({
-      status: 501,
-      body: { error: "Nothing was written.", pendingTicket: "E6-T4" },
+      status: 500,
+      body: {
+        error:
+          "The import did not finish, and nothing was written — the tree is " +
+          "exactly as it was. Try again.",
+      },
     });
 
     await click(screen.button("Import 5 people"));
 
     expect(screen.host.querySelector('[role="alert"]')?.textContent).toContain(
-      IMPORT_PENDING_TICKET,
+      "nothing was written",
     );
+    expect(screen.host.textContent).not.toContain("What was imported");
   });
 
   it("takes the preview down when a different file is chosen", async () => {

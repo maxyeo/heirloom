@@ -350,9 +350,13 @@ The criterion asks for the import to finish inside Vercel's function timeout
 _or_ to run in chunks that are individually safe to retry. Those are not both
 available: chunks that commit independently are exactly the half-imported tree
 this ticket exists to prevent. So the import completes in one invocation, and
-whichever route comes to call it must set `maxDuration` — that is a
-requirement on the route rather than something already wired, since
-`maxDuration` is a route-segment export and E6-T4 deliberately adds no route.
+whichever route comes to call it must set `maxDuration` — a requirement on the
+route rather than something E6-T4 could wire itself, since `maxDuration` is a
+route-segment export and that ticket deliberately adds no route.
+
+`app/api/import/route.ts` is that route, and E6-T5 (`YEO-50`) is what set the
+number: **60 seconds**, which is the ceiling on the plan this deploys to and
+comfortably above what the four-mebibyte upload cap can produce.
 
 What makes overrunning it safe is the transaction rather than the number. A
 function killed mid-import never reaches `commit`, so the tree is untouched
@@ -373,6 +377,39 @@ correctly. Both are deliberately absent from `lib/gedcom-import.ts` today,
 because it has nothing to refuse: every decision was made before the
 transaction opened, so anything that goes wrong inside it is a genuine fault
 and is left to propagate.
+
+## The seam between reading and writing
+
+E6-T3 and E6-T4 were built in parallel, which left one line between them
+unwritten: the confirming branch of `app/api/import/route.ts` answered `501`
+and named E6-T4 rather than calling `importGedcom`. E6-T5 (`YEO-50`) closed
+it, because there is no _post-import_ report until an import can run.
+
+The seam really was the one line the note promised. `readGedcom` already
+returns the `mapping` beside the preview — parsed once, so the rows that get
+written are the rows that were summarised — and every id in it was minted and
+every foreign key resolved before it left `lib/gedcom-map.ts`. What closing it
+needed beyond the call was three small things, and each of them is a decision
+rather than plumbing:
+
+- **`maxDuration` on the route**, which the section above covers.
+- **A `catch` around the write.** `lib/gedcom-import.ts` argues that faults
+  should propagate, and they still do — up to the route, which is the layer
+  that owns the sentence a reader sees. An uncaught throw is a bare platform
+  `500` with no JSON in it, and the screen's fallback for that reads "the
+  answer could not be read", which sends somebody looking at their connection
+  when the truth is that their tree is untouched. The transaction is what
+  makes the honest sentence available: an exception _means_ nothing was
+  written.
+- **One translation between two vocabularies.** E6-T3 named its counts for the
+  screen (`people`, `unions`, `children`) and E6-T4 named its counts for the
+  tables (`individuals`, `unions`, `unionChildren`). Both are right where they
+  are — a module whose whole job is three inserts should count in the tables'
+  words, and somebody who has just uploaded a family file is not reading
+  `db/schema.ts`. `writtenCounts` in `lib/import-endpoint.ts` is the one place
+  they are put side by side, and the alternative — aliasing one type to the
+  other — would have bought a vocabulary that is wrong at one of the two ends
+  forever.
 
 ## Writing it back out
 

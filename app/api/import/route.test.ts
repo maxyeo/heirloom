@@ -4,6 +4,7 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  type ImportDoneResponse,
   type ImportPreviewResponse,
   type ImportRefusal,
 } from "@/lib/import-endpoint";
@@ -31,20 +32,35 @@ import {
  * refused. Those are two of the ticket's four acceptance criteria, and they
  * are properties of this handler rather than of any value it computes.
  *
- * ## The one mock, and why it is the only one
+ * ## The two mocks, and why there are exactly two
  *
  * `@/auth` calls `NextAuth()` at import time and does not load outside the
  * Next.js runtime — the same reason `app/auth-boundary.test.ts` gives for
- * stubbing it and stubbing nothing else. There is no second mock because
- * there is no second boundary: this route reaches no store and no database,
- * which is the property `lib/gedcom.purity.test.ts` asserts from the other
- * side.
+ * stubbing it.
+ *
+ * `@/lib/gedcom-import` is the second, and it arrived with E6-T5 (`YEO-50`)
+ * closing the seam this route used to answer `501` at. It is the one thing on
+ * this path that reaches Postgres, and `npm test` runs with no
+ * `DATABASE_URL` by design (docs/testing.md). What it does when it gets
+ * there is not this file's question either: `lib/gedcom-import.db.test.ts`
+ * drives the real transaction against a real database, including the
+ * rollback. What is left here — and is only visible here — is that a
+ * confirmed request calls it exactly once with the mapping the same request
+ * was read from, that an unconfirmed one never calls it at all, and that a
+ * fault inside it becomes a sentence saying the tree is untouched.
+ *
+ * There is no third mock because there is no third boundary. Everything else
+ * this route reaches is pure, which is the property
+ * `lib/gedcom.purity.test.ts` asserts from the other side.
  */
 
 const state = vi.hoisted(() => ({
   session: null as { user: { email: string } } | null,
 }));
 vi.mock("@/auth", () => ({ auth: async () => state.session }));
+
+const importGedcom = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/gedcom-import", () => ({ importGedcom }));
 
 const { POST } = await import("@/app/api/import/route");
 
@@ -78,6 +94,12 @@ function digestOf(text: string): Promise<string> {
 
 beforeEach(() => {
   state.session = { user: { email: "rose@example.com" } };
+  importGedcom.mockReset();
+  importGedcom.mockResolvedValue({
+    individuals: 1,
+    unions: 0,
+    unionChildren: 0,
+  });
 });
 
 describe("the guard", () => {
@@ -192,17 +214,70 @@ describe("confirming", () => {
     expect((await POST(upload(TREE, { confirm: "" }))).status).toBe(409);
   });
 
-  it("accepts the digest it issued, and writes nothing yet", async () => {
-    // E6-T4 (`YEO-49`) replaces this answer with the transaction. Until it
-    // does, the endpoint says so plainly rather than looking finished — and
-    // this test is what will notice the day the status stops being 501.
+  it("accepts the digest it issued and writes the file", async () => {
     const response = await POST(
       upload(TREE, { confirm: await digestOf(TREE) }),
     );
 
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as ImportDoneResponse;
+    expect(body.stage).toBe("imported");
+    // The tables' counts, in the screen's words. `writtenCounts` is the one
+    // place the two vocabularies meet and `lib/import-endpoint.test.ts` pins
+    // the mapping itself; what this asserts is that the route puts the
+    // import's answer through it rather than the preview's prediction.
+    expect(body.written).toEqual({ people: 1, unions: 0, children: 0 });
+  });
+
+  it("hands the write the mapping this very request was read from", async () => {
+    // The property the two-request shape exists for, at the last step it can
+    // still be lost: the bytes are parsed once and the rows that get written
+    // are the rows that were summarised, rather than a second reading of the
+    // same file.
+    await POST(upload(TREE, { confirm: await digestOf(TREE) }));
+
+    expect(importGedcom).toHaveBeenCalledTimes(1);
+    const mapping = importGedcom.mock.calls[0][0] as {
+      individuals: { values: { givenName: string } }[];
+    };
+    expect(mapping.individuals).toHaveLength(1);
+    expect(mapping.individuals[0].values.givenName).toBe("Ada");
+  });
+
+  it("does not write for a request with no confirmation on it", async () => {
+    // Two of the ticket's acceptance criteria in one assertion, and neither
+    // is a property of any value this handler computes: previewing writes
+    // nothing, and cancelling is the absence of this second request.
+    await POST(upload(TREE));
+
+    expect(importGedcom).not.toHaveBeenCalled();
+  });
+
+  it("does not write for a confirmation that names a different file", async () => {
+    await POST(upload(TREE, { confirm: await digestOf("0 HEAD\n0 TRLR\n") }));
+
+    expect(importGedcom).not.toHaveBeenCalled();
+  });
+
+  it("says the tree is untouched when the import throws", async () => {
+    // `lib/gedcom-import.ts` is explicit that an exception *means* nothing
+    // was written, because the throw is what rolled the transaction back. So
+    // the sentence is not reassurance, it is the guarantee restated — and a
+    // bare platform 500 with no JSON in it would reach the screen as "the
+    // answer could not be read", which sends somebody looking at their
+    // connection instead.
+    importGedcom.mockRejectedValue(new Error("connection terminated"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await POST(
+      upload(TREE, { confirm: await digestOf(TREE) }),
+    );
+
+    expect(response.status).toBe(500);
     const body = (await response.json()) as ImportRefusal;
-    expect(body.pendingTicket).toBe("E6-T4");
-    expect(body.error).toContain("Nothing was written");
+    expect(body.error).toContain("nothing was written");
+    // A fault rather than a fact about the request, so it leaves a trace.
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });

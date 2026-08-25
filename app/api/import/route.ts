@@ -1,10 +1,11 @@
+import { importGedcom } from "@/lib/gedcom-import";
 import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_FILE_FIELD,
-  IMPORT_PENDING_MESSAGE,
-  IMPORT_PENDING_TICKET,
+  type ImportDoneResponse,
   type ImportPreviewResponse,
   type ImportRefusal,
+  writtenCounts,
 } from "@/lib/import-endpoint";
 import {
   checkGedcomUpload,
@@ -39,14 +40,45 @@ import { requireSessionOr401 } from "@/lib/session";
  * separately that the code on the *previewing* path could not write if it
  * tried.
  *
- * ## Why the write is not here
+ * ## Where the write is
  *
- * See {@link IMPORT_PENDING_TICKET}. E6-T4 (`YEO-49`) owns landing the rows
- * as one transaction that rolls back whole; a loop of inserts added here to
- * finish a button is the half-imported tree that ticket exists to prevent.
- * The seam is one line — `readGedcom` already returns the `mapping`, which
- * that ticket writes with nothing left to resolve (`lib/gedcom-map.ts`).
+ * `lib/gedcom-import.ts` (E6-T4, `YEO-49`), called on the confirming branch
+ * below and nowhere else. It lands the rows as one transaction that rolls
+ * back whole, which is why the call is a single `await` with no bookkeeping
+ * around it: there is no partial outcome to account for.
+ *
+ * E6-T3 and E6-T4 were built in parallel, so until E6-T5 (`YEO-50`) this
+ * branch answered `501` and named the ticket that would fill it in. The seam
+ * really was the one line its note promised — `readGedcom` already returns
+ * the `mapping`, with every id minted and every foreign key resolved — and
+ * closing it is a prerequisite for E6-T5 rather than a change of its own:
+ * there is no *post-import* report until an import can run.
  */
+/**
+ * How long the platform lets a confirmed import run, in seconds.
+ *
+ * A requirement `lib/gedcom-import.ts` states and deliberately cannot meet on
+ * its own: `maxDuration` is a route-segment export
+ * (`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/
+ * 02-route-segment-config/maxDuration.md`), so it belongs to whichever route
+ * comes to call the import, and E6-T4 added no route.
+ *
+ * Sixty rather than the platform's ten-second default because the import is
+ * one invocation by design. The alternative the criterion offered — chunks
+ * that are individually safe to retry — is not available here: chunks that
+ * commit independently *are* the half-imported tree the transaction exists to
+ * prevent. So the whole file lands in one function call, and the number has
+ * to cover the largest file the upload cap admits (`MAX_GEDCOM_BYTES`, four
+ * mebibytes) against a pooled connection.
+ *
+ * What makes overrunning it safe is the transaction rather than the number. A
+ * function killed mid-import never reaches `commit`, so the tree is untouched
+ * and the reader can upload the file again. Sixty seconds is the ceiling on
+ * Vercel's Hobby plan, which is where this deploys; raising it further is a
+ * plan change rather than an edit here.
+ */
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   const { response } = await requireSessionOr401();
   if (response) return response;
@@ -93,7 +125,7 @@ export async function POST(request: Request) {
    * chances for the screen somebody approved and the rows that get written to
    * describe different things.
    */
-  const { preview } = readGedcom(bytes);
+  const { mapping, preview } = readGedcom(bytes);
 
   const confirm = form.get(IMPORT_CONFIRM_FIELD);
   if (confirm === null) {
@@ -123,10 +155,41 @@ export async function POST(request: Request) {
     );
   }
 
-  return refuse(
-    { error: IMPORT_PENDING_MESSAGE, pendingTicket: IMPORT_PENDING_TICKET },
-    501,
-  );
+  /**
+   * The write, and the only thing on this path that can fail after consent.
+   *
+   * Caught rather than left to propagate, for the reader rather than for the
+   * code: an uncaught throw here is a bare platform `500` with no JSON in it,
+   * and the screen's fallback sentence for that is "the answer could not be
+   * read", which sends somebody looking at their connection when the truth is
+   * that their tree is untouched. `lib/gedcom-import.ts` is explicit that an
+   * exception *means* nothing was written — the transaction rolled back — so
+   * that is the sentence to say.
+   *
+   * Logged as well as answered. Every refusal above is a fact about the
+   * request and needs no record; this one is a fault, and the only place it
+   * can be seen afterwards is the platform's log.
+   */
+  let imported;
+  try {
+    imported = await importGedcom(mapping);
+  } catch (error) {
+    console.error("GEDCOM import failed:", error);
+    return refuse(
+      {
+        error:
+          "The import did not finish, and nothing was written — the tree is " +
+          "exactly as it was. Try again.",
+      },
+      500,
+    );
+  }
+
+  const answer: ImportDoneResponse = {
+    stage: "imported",
+    written: writtenCounts(imported),
+  };
+  return Response.json(answer);
 }
 
 /** One shape for every refusal; see {@link ImportRefusal}. */

@@ -1,4 +1,5 @@
-import type { ImportPreview } from "./import-preview";
+import type { ImportedCounts } from "./gedcom-import";
+import type { ImportCounts, ImportPreview } from "./import-preview";
 
 /**
  * The contract between the import screen and the import endpoint (E6-T3,
@@ -15,7 +16,9 @@ import type { ImportPreview } from "./import-preview";
  *
  * Everything here is pure and free of `@/db`, `@/auth` and the DOM, so both
  * ends can import it and `lib/import-endpoint.test.ts` can assert the whole
- * contract against literals in plain Node.
+ * contract against literals in plain Node. The one reference to a module that
+ * does reach `@/db` is a type, imported with `import type` and therefore
+ * erased — see {@link writtenCounts}, which explains why it is there.
  *
  * ## The two-request shape, and why it is two requests
  *
@@ -77,30 +80,44 @@ export type ImportPreviewResponse = {
 };
 
 /**
+ * The answer to a confirmed import that ran: the rows are in the tree.
+ *
+ * A stage of its own rather than a bare `200`, because the reader has just
+ * handed over a file they cannot see the inside of and "it worked" is not an
+ * answer to *what did it do*. E6-T5 (`YEO-50`) is the ticket that says so in
+ * full, and {@link ImportDoneResponse.written} is the smallest true version:
+ * how many rows reached each table.
+ */
+export type ImportDoneResponse = {
+  stage: "imported";
+  /**
+   * What the import actually wrote, counted off the rows that were inserted.
+   *
+   * The same shape as {@link ImportPreview.counts}, which is what makes the
+   * preview checkable against the outcome: the screen said 148 people and the
+   * import says 148 people, in the same three words. `lib/gedcom-import.ts`
+   * counts them in its own vocabulary — the *tables'* names, `individuals` /
+   * `unions` / `unionChildren` — and {@link writtenCounts} is the one place
+   * the two are put side by side.
+   */
+  written: ImportCounts;
+};
+
+/**
  * The answer to anything this endpoint will not do, at any stage.
  *
  * One shape for every refusal — too large, not a multipart form, a digest
- * that does not match — because the screen does the same thing with all of
- * them: show the sentence. The HTTP status carries the distinction for
- * anything that is not a person reading a screen.
+ * that does not match, an import that failed — because the screen does the
+ * same thing with all of them: show the sentence. The HTTP status carries the
+ * distinction for anything that is not a person reading a screen.
  */
 export type ImportRefusal = {
   /** A sentence for the person who picked the file. */
   error: string;
-  /**
-   * The ticket that will make this work, when the refusal is *not yet* rather
-   * than *no*.
-   *
-   * `lib/site-nav.ts` set this convention for the sidebar's unbuilt
-   * destination and the reasoning is the same one: something that looks live
-   * and is not is worse than something that plainly says "later". A refusal
-   * carrying a ticket is not a failure the reader caused and there is nothing
-   * for them to fix; saying so is more useful than an apology.
-   */
-  pendingTicket?: string;
 };
 
-export type ImportResponse = ImportPreviewResponse | ImportRefusal;
+export type ImportResponse =
+  ImportPreviewResponse | ImportDoneResponse | ImportRefusal;
 
 /** Whether an answer is a preview, for a caller narrowing one. */
 export function isImportPreview(
@@ -109,24 +126,42 @@ export function isImportPreview(
   return "stage" in response && response.stage === "preview";
 }
 
-/**
- * The ticket that writes the rows.
- *
- * E6-T3 owns everything up to and including the moment of consent: the
- * upload, the parse, the preview, the cancel, and the confirming request that
- * proves it is confirming *this* file. What it deliberately does not own is
- * the write — E6-T4 (`YEO-49`) is "all or nothing, any failure rolls back
- * completely", and a plain sequence of inserts added here to make a button
- * feel finished is the exact half-imported tree that ticket exists to
- * prevent: it looks like data, so nobody re-runs it.
- *
- * So the confirming branch of `app/api/import/route.ts` answers `501` and
- * names this, and every acceptance criterion of *this* ticket is true in the
- * strongest possible sense — nothing anywhere on this path can write.
- */
-export const IMPORT_PENDING_TICKET = "E6-T4";
+/** Whether an answer is a finished import, for a caller narrowing one. */
+export function isImportDone(
+  response: ImportResponse,
+): response is ImportDoneResponse {
+  return "stage" in response && response.stage === "imported";
+}
 
-/** What the endpoint says when a confirmed import has nowhere to go yet. */
-export const IMPORT_PENDING_MESSAGE =
-  "Nothing was written. Reading a file is finished; writing one is E6-T4, " +
-  "which lands the import as a single transaction that rolls back whole.";
+/**
+ * `lib/gedcom-import.ts`'s counts in the words the screen uses.
+ *
+ * Two names for three numbers, and both of them are right where they are.
+ * `ImportedCounts` is named for the **tables** — `individuals`, `unions`,
+ * `unionChildren` — which is what a module whose whole job is three inserts
+ * should be counting, and it is the name a reviewer of `db/schema.ts` can
+ * check. {@link ImportCounts} is named for the **screen** — people, unions,
+ * children — which is what somebody who has just uploaded a family file is
+ * looking at.
+ *
+ * The reconciliation is this function and nothing else. The considered
+ * alternative was to make one type an alias of the other and rename the
+ * fields at whichever end lost the argument, which trades a translation
+ * anybody can read for a vocabulary that is wrong in one of the two places
+ * forever. E6-T3 and E6-T4 were built in parallel and each chose the name its
+ * own half needed; this is the seam between them, so this is where the
+ * translation belongs.
+ *
+ * The type is imported with `import type` deliberately —
+ * `lib/gedcom-import.ts` reaches `@/db`, and this module is imported by
+ * `components/GedcomImport.tsx`, which is a client component. `import type`
+ * erases entirely, which is the rule `docs/testing.md` states for exactly
+ * this hazard.
+ */
+export function writtenCounts(imported: ImportedCounts): ImportCounts {
+  return {
+    people: imported.individuals,
+    unions: imported.unions,
+    children: imported.unionChildren,
+  };
+}

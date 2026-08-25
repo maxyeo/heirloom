@@ -6,8 +6,10 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  type ImportDoneResponse,
   type ImportRefusal,
   type ImportResponse,
+  isImportDone,
   isImportPreview,
 } from "@/lib/import-endpoint";
 import type { ImportPreview, ImportWarning } from "@/lib/import-preview";
@@ -61,6 +63,7 @@ export function GedcomImport() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [previewed, setPreviewed] = useState<Previewed | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
+  const [imported, setImported] = useState<ImportDoneResponse | null>(null);
   const [refusal, setRefusal] = useState<ImportRefusal | null>(null);
   const [cancelled, setCancelled] = useState(false);
 
@@ -73,6 +76,7 @@ export function GedcomImport() {
   function chooseFile(chosen: File | null) {
     setFileName(chosen?.name ?? null);
     setPreviewed(null);
+    setImported(null);
     setRefusal(null);
     setCancelled(false);
     // Whatever is in flight is about the old file and will be discarded when
@@ -120,6 +124,7 @@ export function GedcomImport() {
     if (!chosen || busy) return;
 
     setBusy("reading");
+    setImported(null);
     setRefusal(null);
     setCancelled(false);
 
@@ -129,13 +134,21 @@ export function GedcomImport() {
     if (stale(chosen)) return;
 
     setBusy(null);
-    if (!isImportPreview(answer)) return setRefusal(answer);
+    if (isImportPreview(answer)) {
+      return setPreviewed({
+        name: chosen.name,
+        digest: answer.digest,
+        preview: answer.preview,
+      });
+    }
 
-    setPreviewed({
-      name: chosen.name,
-      digest: answer.digest,
-      preview: answer.preview,
-    });
+    // An import in answer to a request that carried no confirmation. Nothing
+    // produces this and nothing should — the branch exists so that the day
+    // something does, the reader is told their tree changed rather than shown
+    // an empty screen.
+    if (isImportDone(answer)) return setImported(answer);
+
+    setRefusal(answer);
   }
 
   async function confirm() {
@@ -143,6 +156,7 @@ export function GedcomImport() {
     if (!chosen || !previewed || busy) return;
 
     setBusy("importing");
+    setImported(null);
     setRefusal(null);
 
     const body = new FormData();
@@ -166,6 +180,14 @@ export function GedcomImport() {
       });
     }
 
+    if (isImportDone(answer)) {
+      // The preview goes with it. It described a decision that has now been
+      // made, and leaving "what this file would add" on screen beside what it
+      // did add is two answers to one question.
+      setPreviewed(null);
+      return setImported(answer);
+    }
+
     setRefusal(answer);
   }
 
@@ -179,6 +201,7 @@ export function GedcomImport() {
     if (inputRef.current) inputRef.current.value = "";
     setFileName(null);
     setPreviewed(null);
+    setImported(null);
     setRefusal(null);
     setCancelled(true);
   }
@@ -225,6 +248,13 @@ export function GedcomImport() {
           </p>
         ) : null}
 
+        {busy === "importing" ? (
+          <p className="mt-3 text-caption text-ink-muted">
+            Importing {fileName}. It lands whole or not at all, so nothing is
+            written until this finishes.
+          </p>
+        ) : null}
+
         {cancelled ? (
           <p className="mt-3 text-caption">
             Cancelled. Nothing was imported and the tree is unchanged.
@@ -233,6 +263,17 @@ export function GedcomImport() {
       </div>
 
       {refusal ? <Refusal refusal={refusal} /> : null}
+
+      {imported ? (
+        <section className="mt-4">
+          <h2>What was imported</h2>
+          <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1">
+            <Count label="People" value={imported.written.people} />
+            <Count label="Unions" value={imported.written.unions} />
+            <Count label="Children" value={imported.written.children} />
+          </dl>
+        </section>
+      ) : null}
 
       {previewed ? (
         <section className="mt-4">
@@ -301,11 +342,6 @@ function Refusal({ refusal }: { refusal: ImportRefusal }) {
       className="mt-3 rounded-panel border border-rule-soft bg-panel px-3 py-2 text-caption"
     >
       {refusal.error}
-      {refusal.pendingTicket ? (
-        <span className="mt-1 block text-note text-ink-muted">
-          {refusal.pendingTicket} builds it.
-        </span>
-      ) : null}
     </p>
   );
 }
