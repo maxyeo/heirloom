@@ -342,6 +342,17 @@ describe("the name of the downloaded file", () => {
   it("still produces a filename for a name with nothing usable in it", () => {
     expect(importReportFilename(".ged")).toBe("gedcom-import-report.txt");
   });
+
+  it("cannot produce a path, or a hidden file", () => {
+    // A `download` attribute is a name and not a path, and a browser would
+    // refuse or flatten one anyway — but a name that can never look like a
+    // path is a stronger statement than a name the browser rescues. The
+    // leading dots go for a plainer reason: a report somebody cannot see in
+    // their downloads folder is a report they did not get.
+    expect(importReportFilename("../../etc/passwd.ged")).not.toContain("/");
+    expect(importReportFilename("..\\..\\tree.ged")).not.toContain("\\");
+    expect(importReportFilename("..ged")).not.toMatch(/^\./);
+  });
 });
 
 describe("the type, rather than a test, is what makes a skip name a record", () => {

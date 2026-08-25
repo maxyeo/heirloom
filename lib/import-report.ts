@@ -367,7 +367,13 @@ export function formatImportReport(
 export function importReportFilename(fileName: string): string {
   const stem = fileName
     .replace(/\.(ged|gedcom)$/i, "")
-    .replace(/[^\w.-]+/g, "-");
+    // Anything that is not a word character, a dot or a dash becomes a dash,
+    // which is what takes `/` and `\` out — a `download` attribute is not a
+    // path and must not be able to look like one.
+    .replace(/[^\w.-]+/g, "-")
+    // Leading dots make a hidden file on every Unix, and a name that arrives
+    // as `..ged` would otherwise produce one. Trailing ones are just untidy.
+    .replace(/^[.]+|[.]+$/g, "");
   return `${stem || "gedcom"}-import-report.txt`;
 }
 

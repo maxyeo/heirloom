@@ -581,9 +581,18 @@ function ImportedBody({
    * The download, assembled at the moment it is asked for.
    *
    * An object URL rather than a `data:` URI because a report can be hundreds
-   * of kilobytes, and revoked immediately after the click because the blob is
-   * held alive by the URL alone — leaving it would keep every report of every
-   * import in memory for as long as the page is open.
+   * of kilobytes, and one built here rather than held in state because the
+   * blob is kept alive by the URL alone — a URL made when the section renders
+   * would keep every report of every import in memory until the page closed.
+   *
+   * Two details that look like ceremony and are not. The anchor is **put in
+   * the document** before it is clicked, because a detached one is a no-op in
+   * Firefox rather than a download. And the URL is revoked on the next tick
+   * rather than on the next line: revoking is what frees the blob, and a
+   * browser that has not yet started reading it gets an empty file. One turn
+   * of the event loop is enough, and losing the revoke entirely — which is
+   * what a `finally` on a synchronous click would risk getting wrong — is a
+   * leak of the whole report.
    */
   function download() {
     const text = formatImportReport(report, {
@@ -596,8 +605,11 @@ function ImportedBody({
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = importReportFilename(fileName);
+    anchor.hidden = true;
+    document.body.append(anchor);
     anchor.click();
-    URL.revokeObjectURL(url);
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   return (
