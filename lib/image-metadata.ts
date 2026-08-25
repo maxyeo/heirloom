@@ -658,13 +658,39 @@ function keepJpegStructural(
 
   switch (marker) {
     case 0xc4:
-      // DHT — Huffman tables back to back: a class-and-id byte, sixteen
-      // counts, then one symbol for each unit the counts add up to.
+      /**
+       * DHT — Huffman tables back to back: a class-and-id byte, sixteen
+       * counts, then one symbol for each unit the counts add up to.
+       *
+       * Counting the symbols is not enough on its own. The symbol region
+       * is the widest thing in this file that a shape could still be put
+       * to: any byte is a legal symbol *value*, so measuring only the
+       * length leaves the whole region free. What constrains it is that
+       * the counts have to describe a code a decoder could actually use —
+       * no more than 256 symbols, and a code space that does not overflow
+       * (Kraft) — and that a table does not give the same symbol two
+       * codes. Together those turn "any bytes at all" into a permutation
+       * of distinct values under a valid tree, which is not a channel
+       * worth having but is a far narrower one than it was.
+       */
       return spansExactly(payload, payloadEnd, (at) => {
         if (bytes[at] >> 4 > 1 || (bytes[at] & 0x0f) > 3) return null;
         if (at + 17 > payloadEnd) return null;
+
         let symbols = 0;
-        for (let i = 0; i < 16; i += 1) symbols += bytes[at + 1 + i];
+        let space = 0;
+        for (let i = 0; i < 16; i += 1) {
+          const count = bytes[at + 1 + i];
+          symbols += count;
+          space += count << (15 - i);
+        }
+        if (symbols > 256 || space > 1 << 16) return null;
+        if (at + 17 + symbols > payloadEnd) return null;
+
+        const seen = new Set<number>();
+        for (let i = 0; i < symbols; i += 1) seen.add(bytes[at + 17 + i]);
+        if (seen.size !== symbols) return null;
+
         return at + 17 + symbols;
       });
     case 0xdb:
@@ -676,13 +702,24 @@ function keepJpegStructural(
         return at + 1 + (precision === 0 ? 64 : 128);
       });
     case 0xcc:
-      // DAC — two bytes for every arithmetic conditioning entry: a class
-      // and id, then the value being conditioned. Counting the bytes is not
-      // enough on its own, since any even run of text would pass that.
-      return spansExactly(payload, payloadEnd, (at) => {
-        if (bytes[at] >> 4 > 1 || (bytes[at] & 0x0f) > 3) return null;
-        return at + 2;
-      });
+      /**
+       * DAC — arithmetic conditioning, and dropped outright.
+       *
+       * Validating it record by record is not enough, and the reason is
+       * worth keeping: a record is a class-and-id byte followed by the
+       * value being conditioned, and only the first of those has a shape.
+       * Eight of the 256 first bytes are legal, so a filler byte in every
+       * first position and a chosen byte in every second smuggles data at
+       * half bandwidth, exactly reconstructable, scaling with the segment
+       * — and several segments are legal.
+       *
+       * The conditioning value has no shape to check it against, so the
+       * only sound options are to drop the segment or to keep the channel.
+       * Arithmetic-coded JPEG costs nothing to refuse: no mainstream
+       * encoder emits it and most decoders cannot read it, so a file that
+       * needs this segment is one no browser here would render anyway.
+       */
+      return false;
     case 0xc8:
       // JPG — reserved, carrying nothing any decoder is defined to read.
       return false;

@@ -710,6 +710,93 @@ describe("a block whose payload is not the shape its label promises", () => {
     );
   });
 
+  it("drops an arithmetic conditioning segment outright", () => {
+    // Half of every record in a DAC is a value with no shape to hold it
+    // to, so a filler byte in each first position and a chosen byte in
+    // each second smuggles at half bandwidth. Nothing here emits
+    // arithmetic-coded JPEG and most decoders cannot read it, so the
+    // segment costs nothing to refuse and cannot be validated to keep.
+    const interleaved = smuggled.flatMap((c) => [0x00, c]);
+    const file = jpeg([
+      { marker: 0xcc, payload: interleaved },
+      app1Exif(tiff()),
+    ]);
+    const scrubbed = stripLocation(file, "image/jpeg");
+    expect(segmentsOf(scrubbed).map((segment) => segment.marker)).not.toContain(
+      0xcc,
+    );
+    // Reconstructable from every other byte, so a raw search is not enough.
+    const out = [...scrubbed];
+    expect(
+      out.some((_, i) => smuggled.every((c, j) => out[i + j * 2] === c)),
+    ).toBe(false);
+  });
+
+  it("drops a Huffman table whose symbols repeat", () => {
+    // Any byte is a legal symbol value, so length alone leaves the symbol
+    // region free. A table that gives one symbol two codes is not a table.
+    // Counts a decoder could genuinely use — two codes of length two, one
+    // of length three — so only the repetition disqualifies it.
+    const repeated = [
+      0x00,
+      0,
+      2,
+      1,
+      ...Array.from({ length: 13 }, () => 0),
+      0x41,
+      0x41,
+      0x42,
+    ];
+    const file = jpeg([{ marker: 0xc4, payload: repeated }, app1Exif(tiff())]);
+    expect(segmentsOf(file).map((segment) => segment.marker)).toContain(0xc4);
+    expect(
+      segmentsOf(stripLocation(file, "image/jpeg")).map(
+        (segment) => segment.marker,
+      ),
+    ).not.toContain(0xc4);
+  });
+
+  it("drops a Huffman table whose counts overflow the code space", () => {
+    // Sixteen codes one bit long is not a prefix code; a decoder could
+    // never use it, so nothing legitimate is shaped like it.
+    const overflowing = [
+      0x00,
+      16,
+      ...Array.from({ length: 15 }, () => 0),
+      ...Array.from({ length: 16 }, (_, i) => i),
+    ];
+    const file = jpeg([
+      { marker: 0xc4, payload: overflowing },
+      app1Exif(tiff()),
+    ]);
+    expect(
+      segmentsOf(stripLocation(file, "image/jpeg")).map((s) => s.marker),
+    ).not.toContain(0xc4);
+  });
+
+  it("keeps the tables a real encoder writes, two to a segment", () => {
+    /**
+     * The check has to leave genuine tables alone, so these are the actual
+     * default DC tables from the JPEG standard as libjpeg emits them —
+     * luminance then chrominance, packed into one segment, which is how
+     * encoders really write them. A synthetic table proving the check
+     * accepts *something* would not have caught over-tightening.
+     */
+    const luminanceDc = [
+      0x00, 0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6,
+      7, 8, 9, 10, 11,
+    ];
+    const chrominanceDc = [
+      0x01, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6,
+      7, 8, 9, 10, 11,
+    ];
+    const file = jpeg([
+      { marker: 0xc4, payload: [...luminanceDc, ...chrominanceDc] },
+      app1Exif(tiff()),
+    ]);
+    expect(segmentsOf(stripLocation(file, "image/jpeg"))[0].marker).toBe(0xc4);
+  });
+
   it("drops a table that tiles its payload and then leaves a tail", () => {
     // The whole reason to measure: a real table followed by a remainder is
     // carrying that remainder for some other purpose.
