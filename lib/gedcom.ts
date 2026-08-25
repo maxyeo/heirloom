@@ -810,8 +810,8 @@ function readTwoPointSpan(
  * The bound itself is lossless — one date in, one date out, at its own
  * precision — so the ordinary forms raise nothing.
  *
- * **A modifier on that bound is not.** `FROM ABT 1912` and `FROM EST 1912`
- * both become `after 1912`: the qualifier column has room for one word and
+ * **A modifier that says something else is not.** `FROM ABT 1912` and
+ * `FROM EST 1912` both become `after 1912`: the qualifier column has room for one word and
  * `after` is the one the span form claims, so whatever the bound said about
  * itself is overwritten. That is the same loss `readTwoPointSpan` reports for
  * an endpoint of a two-point span — a fuzzy edge on a bound of an interval
@@ -820,6 +820,12 @@ function readTwoPointSpan(
  * going through in silence, which had made "a modifier on a range endpoint is
  * not stored" a rule that held for `BET ABT 1890 AND 1900` and quietly failed
  * for `FROM ABT 1890`. One rule, both shapes.
+ *
+ * The redundant spellings are the other half of getting that right, and the
+ * first version of this fix got them wrong: `FROM AFT 1912` and `TO BEF 1918`
+ * agree with the qualifier the span form already stores, so nothing is lost
+ * and nothing is said. Reporting them named one word as both what was stored
+ * and what was not.
  */
 function readOnePointSpan(
   text: string,
@@ -838,7 +844,17 @@ function readOnePointSpan(
   const value: ParsedDate = { ...parsedBound.value, qualifier };
   const dropped = parsedBound.value.qualifier;
 
-  if (dropped === "exact") return { ok: true, value, narrowed: null };
+  // Nothing was dropped when the bound carried no modifier — and equally when
+  // it carried the *same* one the span form stores. `FROM AFT 1912` and
+  // `TO BEF 1918` are the redundant spellings real files contain, and the
+  // stored value is exactly what they said; reporting them produced a
+  // sentence naming one word as both what was stored and what was not. A
+  // report whose value is that it only speaks when something is wrong cannot
+  // afford a false alarm, which is the same reason `lib/gedcom-map.ts`
+  // accumulates its cross-check maps rather than overwriting them.
+  if (dropped === "exact" || dropped === qualifier) {
+    return { ok: true, value, narrowed: null };
+  }
 
   return {
     ok: true,

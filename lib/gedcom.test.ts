@@ -648,6 +648,27 @@ describe("a modifier on a one-sided span's bound (YEO-47)", () => {
     expect(dateIssue("FROM 1912").file.issues).toEqual([]);
     expect(dateIssue("TO 1918").file.issues).toEqual([]);
   });
+
+  it("says nothing when the bound's modifier is the one being stored", () => {
+    // `FROM AFT 1912` and `TO BEF 1918` are the redundant spellings real
+    // files contain: the bound already says what the span form stores, so
+    // nothing is dropped. Reporting them named one word as both what was
+    // stored and what was not — a false alarm on a report whose whole value
+    // is that it only speaks when something is wrong.
+    const from = dateIssue("FROM AFT 1912");
+    expect(from.birth?.date).toMatchObject({
+      date: "1912-01-01",
+      qualifier: "after",
+    });
+    expect(from.file.issues).toEqual([]);
+
+    const to = dateIssue("TO BEF 1918");
+    expect(to.birth?.date).toMatchObject({
+      date: "1918-01-01",
+      qualifier: "before",
+    });
+    expect(to.file.issues).toEqual([]);
+  });
 });
 
 describe("estimated dates say so on the report (YEO-47)", () => {
