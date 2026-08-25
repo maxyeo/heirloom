@@ -11,7 +11,7 @@ This page covers the **parser** — E6-T1 (`YEO-46`), the read half — and the
 
 ## The pipeline
 
-Five modules, each with one job, in the order the bytes move through them:
+Six modules, each with one job, in the order the bytes move through them:
 
 | Module                   | Takes         | Gives                                   |
 | ------------------------ | ------------- | --------------------------------------- |
@@ -20,6 +20,7 @@ Five modules, each with one job, in the order the bytes move through them:
 | `lib/gedcom-lines.ts`    | text          | a tree of tagged nodes                  |
 | `lib/gedcom.ts`          | bytes or text | individuals, families, a report         |
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
+| `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
 
 `lib/gedcom-report.ts` holds the vocabulary the last three use to say what they
 could not use.
@@ -227,10 +228,14 @@ every time with the sentence the validator gave.
 
 The considered alternative was to drop the offending _field_ and re-validate —
 blank the date, keep the person. It was rejected because it is a recovery
-policy E6-T2 would be inventing on its own, and E6-T4 owns the question it
-belongs to: an all-or-nothing import may decide that any refusal fails the
-whole file, in which case a per-field rescue here is cleverness that never
-runs.
+policy E6-T2 would be inventing on its own, and the question it belongs to
+was E6-T4's: whether an all-or-nothing import should decide that any refusal
+fails the whole file.
+
+**E6-T4 (`YEO-49`) answered no**, and the reasoning is
+[below](#the-write-half): all-or-nothing is a property of the write, not of
+the reading. So the skipping described here is the behaviour, and a per-field
+rescue remains a thing nobody has asked for.
 
 `BET 1900 AND 1890` is where the two halves meet. The parser stores it exactly
 as written and raises nothing, because reading a file and judging it are
@@ -253,6 +258,107 @@ between `FAMS`/`FAMC` and `HUSB`/`WIFE`/`CHIL` is the one the parser's own
 docblock promised: carrying both halves is only worth it if somebody
 eventually compares them. It says nothing about a file whose halves agree,
 which is every well-formed file.
+
+## The write half
+
+`lib/gedcom-import.ts` (E6-T4, `YEO-49`) takes a mapping and writes it into
+`individuals`, `unions` and `union_children` — all of it, or none of it.
+
+### All or nothing is a property of the _write_
+
+The reason the ticket exists: a half-imported tree is worse than no import,
+because it looks like data, so nobody re-runs it, and the gaps surface one at
+a time over months. One transaction is the whole answer. Every row lands or
+none does, and the tree is never left in a state nobody chose.
+
+That is deliberately **not** the same rule as "any refusal fails the file".
+A record `validateIndividual` refused is a reported skip, and the import
+proceeds. The distinction is which half of the pipeline the guarantee is
+about:
+
+- the transaction is there so a tree is never half-**written**;
+- a tree that is fully written, and honestly described as missing one person
+  whose death date preceded their birth, is not half-anything. It is the whole
+  of what the file could be read as, plus a report saying what the rest was.
+
+Failing an entire file on one unreadable date would make dirty files
+unimportable, and this epic exists precisely because real GEDCOM files are
+dirty. A rule that refuses every real file is not a safety property. The count
+of what was skipped is on the preview the reader confirms (E6-T3) and on the
+report afterwards (E6-T5), so a skip is consented to rather than discovered.
+
+### Nothing is decided here
+
+By the time a `GedcomMapping` arrives, the three validators have run and what
+they refused is already gone. The ids were minted in memory and every foreign
+key resolved, which is what makes the write one bulk insert with nothing to
+read back mid-transaction.
+
+The insert order — individuals, then unions, then child links — is still
+required, and pre-resolved ids do not remove the requirement. Postgres checks
+a foreign key when the row is inserted unless the constraint is `DEFERRABLE`,
+and none in `db/schema.ts` are. What the pre-resolution buys is the absence of
+a read in the middle of the write, not freedom from ordering.
+
+### Batching, and the two ceilings
+
+`lib/import-batches.ts` is the arithmetic, kept separate so `npm test` can
+check it in CI's bare environment — the acceptance criterion is a claim about
+a number of round trips, and a claim about a number should not need Postgres
+to verify. A file with several hundred people is **one statement per table**,
+three round trips for the import.
+
+Two limits govern, and they are different kinds of thing:
+
+| Constant                 | Value  | Kind                                           |
+| ------------------------ | ------ | ---------------------------------------------- |
+| `MAX_BIND_PARAMETERS`    | 65,533 | correctness — the driver refuses beyond it     |
+| `MAX_ROWS_PER_STATEMENT` | 1,000  | prudence — statement duration and pool holding |
+
+65,533 rather than the protocol's usual 65,535 because that is where
+postgres.js actually refuses: `connection.js` throws at `>= 65534`, so 65,533
+is the largest count that reaches Postgres.
+
+The row cap is the one that binds in practice — the widest table here is 19
+columns, so the parameter ceiling is 3,449 rows away. It exists because
+`statement_timeout` is a per-statement budget rather than a per-import one: one
+enormous insert is a single timer that either fits or fails the whole file,
+where fifty smaller ones are each comfortably inside it. It also bounds how
+long an import holds a pooled connection, since Supabase's pooler runs in
+transaction mode and pins a backend for the length of the transaction.
+
+The parameter ceiling is therefore a guard rather than a working limit, kept
+because this schema has already been widened once for expressiveness
+(`YEO-88`) and the next widening should not be able to overflow the wire
+protocol in silence.
+
+### The function timeout
+
+The criterion asks for the import to finish inside Vercel's function timeout
+_or_ to run in chunks that are individually safe to retry. Those are not both
+available: chunks that commit independently are exactly the half-imported tree
+this ticket exists to prevent. So the import completes in one invocation, and
+the route that calls it sets `maxDuration`.
+
+What makes overrunning it safe is the transaction rather than the number. A
+function killed mid-import never reaches `commit`, so the tree is untouched
+and the reader can simply upload the file again. The timeout is a failure to
+import, never a partial import.
+
+### A hazard for whoever edits this next
+
+**postgres.js commits a transaction callback that returns normally.** It
+issues `rollback` only when the callback _throws_. Any refusal added inside
+the transaction later must `throw`, not `return` — returning a refusal after a
+write reports it and commits it anyway.
+
+That is not hypothetical; it is the bug `lib/reorder-unions.ts` shipped and
+then fixed, and `lib/reorder-unions.db.test.ts` pins the semantics against a
+real database. `refuse` in `lib/set-parents.ts` is the idiom for doing it
+correctly. Both are deliberately absent from `lib/gedcom-import.ts` today,
+because it has nothing to refuse: every decision was made before the
+transaction opened, so anything that goes wrong inside it is a genuine fault
+and is left to propagate.
 
 ## Nothing is dropped in silence
 
