@@ -57,51 +57,68 @@ tell which route a date arrived by. A second, GEDCOM-only date grammar would
 break that the first time the two disagreed, and the disagreement would be
 invisible.
 
-## Ranges collapse onto `after`
+## Ranges are stored whole
 
-GEDCOM's range and period forms are two dates, and every event in this schema
-has one date column. `YEO-88` decided what happens to the second one: it is
-not stored.
+GEDCOM's range and period forms are two dates, and since `YEO-88` every event
+in this schema has two date columns to put them in.
 
-| The file says                    | Stored as                     | Reported                   |
-| -------------------------------- | ----------------------------- | -------------------------- |
-| `BET 1890 AND 1900`              | `after 1890`, year precision  | yes — the upper bound goes |
-| `FROM 1912 TO 1918`              | `after 1912`, year precision  | yes — the upper bound goes |
-| `FROM 1912`                      | `after 1912`, year precision  | no — nothing is lost       |
-| `TO 1918`                        | `before 1918`, year precision | no — nothing is lost       |
-| `INT 1890 (from baptism record)` | `about 1890`, year precision  | yes — the phrase goes      |
+| The file says                    | Stored as                                     | Reported                    |
+| -------------------------------- | --------------------------------------------- | --------------------------- |
+| `BET 1890 AND 1900`              | `1890` to `1900`, both year precision         | no — nothing is lost        |
+| `FROM 1912 TO 1918`              | `1912` to `1918`, both year precision         | no — nothing is lost        |
+| `BET MAR 1890 AND 1900`          | `March 1890` to `1900`, month then year       | no — nothing is lost        |
+| `FROM 1912`                      | `after 1912`, year precision, no upper bound  | no — nothing is lost        |
+| `TO 1918`                        | `before 1918`, year precision, no upper bound | no — nothing is lost        |
+| `BET ABT 1890 AND 1900`          | `1890` to `1900` — the `ABT` goes             | yes — the endpoint modifier |
+| `BET 1890 AND (some Tuesday)`    | `after 1890` — the upper bound is unreadable  | yes — the upper bound       |
+| `INT 1890 (from baptism record)` | `about 1890`, year precision                  | yes — the phrase            |
 
-The precision is the lower bound's own. `BET MAR 1890 AND JUN 1890` is `after
-March 1890` at month precision; `FROM 12 MAR 1912 TO 4 JUL 1918` is `after 12
-March 1912` at day precision. Each endpoint goes through `parseDateInput` like
-any other date, so this module learns a _splitter_ and not a second date
-grammar — which is the property the section above defends.
+The two headline rows are the ticket: **the common range forms now raise no
+issue at all**, because nothing about them is dropped. Each endpoint keeps its
+own precision, which is why `BET MAR 1890 AND 1900` does not have to choose
+between throwing the March away and inventing one for 1900.
 
-The lower bound rather than a midpoint, because `after 1890` is a statement
-the file makes and `about 1895` is one it does not. The whole argument is in
-[Date precision](architecture.md#date-precision), and the short version sits
-beside the enum in `db/schema.ts`.
+Each endpoint goes through `parseDateInput` like any other date, so this
+module still learns a _splitter_ and not a second date grammar — the property
+the section above defends. What changed is what the splitter does with the
+halves: it stores both instead of dropping one.
 
-Every collapse raises a **`narrowed`** issue naming the text that was read and
-the value that was written, so the loss lands on the import report at the line
-it happened on. `narrowed` is a different kind from `date` on purpose: a
-`date` issue means the field is **blank** and somebody has to go and fix the
-file, a `narrowed` issue means the field is **populated with something true
-but weaker** and there is nothing to fix. One report cannot answer "how many
-dates could this import not read" if the two are the same word.
+A range's qualifier is `exact`, and there is no `between` member on
+`date_qualifier`. The reasoning is in
+[Ranges, and the columns that hold them](architecture.md#ranges-and-the-columns-that-hold-them),
+and the short version sits beside the enum in `db/schema.ts`.
+
+**`narrowed` survived this ticket with a much smaller remit.** It now means
+what its name says and nothing more: the date was read, and something beside
+it was not stored. Three cases, all in the table above. It stays a different
+kind from `date` for the reason it always did — a `date` issue means the field
+is **blank** and somebody has to go and fix the file, a `narrowed` issue means
+the field is **populated and slightly poorer**, and one report cannot answer
+"how many dates could this import not read" if the two share a word.
 
 A range whose _lower_ bound cannot be read is still refused outright — a
-`date` issue, field blank, text kept. Reading the upper bound instead would be
-picking an endpoint at random, which is the thing this whole decision is
-avoiding. A bare date phrase — `(before the war)`, with no `INT` in front of
-it — has no date in it to store and is refused for the same reason.
+`date` issue, field blank, text kept. A range whose _upper_ bound cannot be
+read is not: the lower bound is a date the file genuinely gave, so it is
+stored as `after` that bound and the upper one is reported. There is no
+arbitrary choice being made in either case, which is the difference.
 
-One consequence worth knowing before E7-T2 (`YEO-52`) is written: **a
-third-party file containing a range does not round-trip byte for byte.** `BET
-1890 AND 1900` comes back out as `AFT 1890`. The round trip that does close is
-export -> import -> export, which is the property the test is actually for — our
-own output is stable, and a foreign file's ranges are narrowed exactly once,
-on the way in, with the report saying so.
+`BET 1900 AND 1890` — a range written backwards — is stored exactly as
+written, with no issue from this module. Reading a file and validating against
+the schema are different jobs; `validateIndividual` is where an inverted range
+is refused, and E6-T2 is what runs it.
+
+Two things a range still does not carry. **`FROM x TO y` and `BET x AND y`
+become the same row** — a period ("it lasted from") and a range ("it happened
+somewhere in") are a distinction this schema has no column for, and for a
+birth or a death the period reading is a data-entry habit rather than a claim.
+And an endpoint's own modifier goes, because a fuzzy edge on a bound of an
+interval has no reader anywhere in this application.
+
+That leaves one thing worth knowing before E7-T2 (`YEO-52`) is written: **a
+third-party file's `FROM 1912 TO 1918` comes back out as `BET 1912 AND
+1918`.** The round trip that closes is export -> import -> export, which is
+what the test is for — our own output only ever writes `BET ... AND`, so it is
+stable from the first pass.
 
 ## Nothing is dropped in silence
 
@@ -163,12 +180,12 @@ that an inline string cannot.
 Malformed input stays inline, in `lib/gedcom.test.ts`. Four broken lines next
 to the assertion about them read better than a file you have to open.
 
-| Fixture                  | What it is for                              |
-| ------------------------ | ------------------------------------------- |
-| `family.ged`             | Two unions, four dates, every qualifier     |
-| `continuations-crlf.ged` | `\r\n`, `CONC`, `GIVN`/`SURN`, unknown tags |
-| `accents-utf8.ged`       | Accented names in UTF-8                     |
-| `accents-ansel.ged`      | The same content, byte for byte, in ANSEL   |
+| Fixture                  | What it is for                                     |
+| ------------------------ | -------------------------------------------------- |
+| `family.ged`             | Two unions, four dates, every qualifier, one range |
+| `continuations-crlf.ged` | `\r\n`, `CONC`, `GIVN`/`SURN`, unknown tags        |
+| `accents-utf8.ged`       | Accented names in UTF-8                            |
+| `accents-ansel.ged`      | The same content, byte for byte, in ANSEL          |
 
 The last two are a matched pair, and that is what makes the binary one
 reviewable: the test asserts the two parse to **identical** individuals, so

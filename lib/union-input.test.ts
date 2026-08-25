@@ -39,9 +39,13 @@ const MINIMAL_FIELDS: UnionFields = {
   startDate: null,
   startDateQualifier: "exact",
   startDatePrecision: "day",
+  startDateUpper: null,
+  startDateUpperPrecision: "day",
   endDate: null,
   endDateQualifier: "exact",
   endDatePrecision: "day",
+  endDateUpper: null,
+  endDateUpperPrecision: "day",
   endReason: "ongoing",
   sequence: null,
   notes: null,
@@ -93,9 +97,13 @@ describe("validateUnion", () => {
       startDate: "1912-06-04",
       startDateQualifier: "about",
       startDatePrecision: "day",
+      startDateUpper: null,
+      startDateUpperPrecision: "day",
       endDate: "1938-02-19",
       endDateQualifier: "exact",
       endDatePrecision: "day",
+      endDateUpper: null,
+      endDateUpperPrecision: "day",
       endReason: "death",
       sequence: 2,
       notes: "Married at St Anne's.",
@@ -336,6 +344,101 @@ describe("the dates", () => {
   });
 });
 
+describe("date ranges (YEO-88)", () => {
+  it("accepts a range's upper bound on the start date", () => {
+    const fields = expectValid({
+      ...MINIMAL,
+      startDate: "1912-01-01",
+      startDateUpper: "1913-01-01",
+      startDateUpperPrecision: "year",
+    });
+
+    expect(fields.startDateUpper).toBe("1913-01-01");
+    expect(fields.startDateUpperPrecision).toBe("year");
+  });
+
+  it("accepts a range's upper bound on the end date — nothing to do with endReason", () => {
+    const fields = expectValid({
+      ...MINIMAL,
+      endDate: "1938-01-01",
+      endDateUpper: "1939-01-01",
+      endDateUpperPrecision: "year",
+      endReason: "divorce",
+    });
+
+    expect(fields.endDateUpper).toBe("1939-01-01");
+    expect(fields.endDateUpperPrecision).toBe("year");
+    expect(fields.endReason).toBe("divorce");
+  });
+
+  it("refuses a non-exact qualifier beside a non-null upper bound, on either date", () => {
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        startDate: "1912-01-01",
+        startDateQualifier: "about",
+        startDateUpper: "1913-01-01",
+      }),
+    ).toEqual(["startDateUpper"]);
+
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        endDate: "1938-01-01",
+        endDateQualifier: "before",
+        endDateUpper: "1939-01-01",
+        endReason: "death",
+      }),
+    ).toEqual(["endDateUpper"]);
+  });
+
+  it("refuses an inverted range, reported against the upper-bound field", () => {
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        startDate: "1913-01-01",
+        startDateUpper: "1912-01-01",
+      }),
+    ).toEqual(["startDateUpper"]);
+
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        endDate: "1939-01-01",
+        endDateUpper: "1938-01-01",
+        endReason: "death",
+      }),
+    ).toEqual(["endDateUpper"]);
+  });
+
+  it("normalises an upper bound to null when there is no lower date", () => {
+    const fields = expectValid({
+      ...MINIMAL,
+      startDateUpper: "1913-01-01",
+      startDateUpperPrecision: "year",
+    });
+
+    expect(fields.startDate).toBeNull();
+    expect(fields.startDateUpper).toBeNull();
+    expect(fields.startDateUpperPrecision).toBe("day");
+  });
+
+  it("catches an ordering error a collapsed reading could never catch", () => {
+    // Under the collapse this ticket reversed, `BET 1912 AND 1913` stored as
+    // `after 1912` has an unbounded `latest`, so a union that ended before
+    // its own start range could never be refused. Stored whole, it can be.
+    expect(
+      expectInvalid({
+        ...MINIMAL,
+        startDate: "1912-01-01",
+        startDateUpper: "1913-01-01",
+        endDate: "1911-01-01",
+        endReason: "divorce",
+      }),
+    ).toEqual(["endDate"]);
+  });
+});
+
 describe("how a union ended", () => {
   it("refuses an end date on a union still described as ongoing", () => {
     expect(expectInvalid({ ...MINIMAL, endDate: "1938-02-19" })).toEqual([
@@ -452,9 +555,13 @@ describe("unionInputFromFormData", () => {
       startDate: "1912-06-04",
       startDateQualifier: "about",
       startDatePrecision: "day",
+      startDateUpper: null,
+      startDateUpperPrecision: "day",
       endDate: "1938-02-19",
       endDateQualifier: "exact",
       endDatePrecision: "day",
+      endDateUpper: null,
+      endDateUpperPrecision: "day",
       endReason: "death",
       sequence: 1,
       notes: "at St Anne's",
@@ -467,6 +574,19 @@ describe("unionInputFromFormData", () => {
     form.set("notes", new File(["x"], "note.txt"));
 
     expect(expectInvalid(unionInputFromFormData(form))).toEqual(["notes"]);
+  });
+
+  it("reads a range's upper bound and its precision (YEO-88)", () => {
+    const form = new FormData();
+    form.set("partnerAId", ROSE);
+    form.set("partnerBId", THOMAS);
+    form.set("startDate", "1912-01-01");
+    form.set("startDateUpper", "1913-01-01");
+    form.set("startDateUpperPrecision", "year");
+
+    const fields = expectValid(unionInputFromFormData(form));
+    expect(fields.startDateUpper).toBe("1913-01-01");
+    expect(fields.startDateUpperPrecision).toBe("year");
   });
 });
 
@@ -656,9 +776,13 @@ describe("addSpouseInputFromFormData", () => {
       startDate: "1946-03-02",
       startDateQualifier: "about",
       startDatePrecision: "day",
+      startDateUpper: null,
+      startDateUpperPrecision: "day",
       endDate: null,
       endDateQualifier: "exact",
       endDatePrecision: "day",
+      endDateUpper: null,
+      endDateUpperPrecision: "day",
       endReason: "ongoing",
       sequence: null,
       notes: null,

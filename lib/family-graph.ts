@@ -28,10 +28,14 @@ export type GraphPerson = {
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
   birthDatePrecision: DatePrecision;
+  birthDateUpper: string | null;
+  birthDateUpperPrecision: DatePrecision;
   birthPlace: string | null;
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
   deathDatePrecision: DatePrecision;
+  deathDateUpper: string | null;
+  deathDateUpperPrecision: DatePrecision;
   deathPlace: string | null;
   notes: string | null;
   pageId: string | null;
@@ -60,9 +64,13 @@ export type GraphUnion = {
   startDate: string | null;
   startDateQualifier: DateQualifier;
   startDatePrecision: DatePrecision;
+  startDateUpper: string | null;
+  startDateUpperPrecision: DatePrecision;
   endDate: string | null;
   endDateQualifier: DateQualifier;
   endDatePrecision: DatePrecision;
+  endDateUpper: string | null;
+  endDateUpperPrecision: DatePrecision;
 };
 
 export type GraphChildLink = {
@@ -119,10 +127,14 @@ export async function getFamilyGraph(
       birthDate: p.birthDate,
       birthDateQualifier: p.birthDateQualifier,
       birthDatePrecision: p.birthDatePrecision,
+      birthDateUpper: p.birthDateUpper,
+      birthDateUpperPrecision: p.birthDateUpperPrecision,
       birthPlace: p.birthPlace,
       deathDate: p.deathDate,
       deathDateQualifier: p.deathDateQualifier,
       deathDatePrecision: p.deathDatePrecision,
+      deathDateUpper: p.deathDateUpper,
+      deathDateUpperPrecision: p.deathDateUpperPrecision,
       deathPlace: p.deathPlace,
       notes: p.notes,
       pageId: p.pageId,
@@ -137,9 +149,13 @@ export async function getFamilyGraph(
       startDate: u.startDate,
       startDateQualifier: u.startDateQualifier,
       startDatePrecision: u.startDatePrecision,
+      startDateUpper: u.startDateUpper,
+      startDateUpperPrecision: u.startDateUpperPrecision,
       endDate: u.endDate,
       endDateQualifier: u.endDateQualifier,
       endDatePrecision: u.endDatePrecision,
+      endDateUpper: u.endDateUpper,
+      endDateUpperPrecision: u.endDateUpperPrecision,
     })),
     childLinks,
   };

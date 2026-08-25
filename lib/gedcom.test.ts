@@ -79,7 +79,13 @@ describe("a whole family, from a fixture file", () => {
 
   it("reads a full date as a day", () => {
     expect(byXref(file, "I1").birth).toEqual({
-      date: { date: "1890-03-12", qualifier: "exact", precision: "day" },
+      date: {
+        date: "1890-03-12",
+        qualifier: "exact",
+        precision: "day",
+        upper: null,
+        upperPrecision: "day",
+      },
       dateText: "12 MAR 1890",
       place: "Whitby, Yorkshire, England",
     });
@@ -103,11 +109,15 @@ describe("a whole family, from a fixture file", () => {
       date: "1885-01-01",
       qualifier: "exact",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(second.divorce?.date).toEqual({
       date: "1889-01-01",
       qualifier: "exact",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -123,6 +133,19 @@ describe("a whole family, from a fixture file", () => {
   it("collects the header tags it has nowhere to put", () => {
     expect(unknownCounts(file)).toEqual({ "HEAD.GEDC": 1, "HEAD.SOUR": 1 });
   });
+
+  it("stores a range from the file whole, raising no issue at file level (YEO-88)", () => {
+    // `clean()` above already asserts `file.issues` is `[]` for this whole
+    // file — that passing, with a range in it, IS the lossless claim made at
+    // file level rather than at the value level `dateIssue` tests below.
+    expect(byXref(file, "I5").birth?.date).toEqual({
+      date: "1880-01-01",
+      qualifier: "exact",
+      precision: "year",
+      upper: "1885-01-01",
+      upperPrecision: "year",
+    });
+  });
 });
 
 describe("the date forms the ticket names", () => {
@@ -133,6 +156,8 @@ describe("the date forms the ticket names", () => {
       date: "1962-01-01",
       qualifier: "about",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -141,6 +166,8 @@ describe("the date forms the ticket names", () => {
       date: "1970-01-01",
       qualifier: "before",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -149,6 +176,8 @@ describe("the date forms the ticket names", () => {
       date: "1913-01-01",
       qualifier: "after",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -160,6 +189,8 @@ describe("the date forms the ticket names", () => {
       date: "1918-01-01",
       qualifier: "about",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -168,6 +199,8 @@ describe("the date forms the ticket names", () => {
       date: "1893-03-01",
       qualifier: "exact",
       precision: "month",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -178,6 +211,8 @@ describe("the date forms the ticket names", () => {
       date: "1915-01-01",
       qualifier: "exact",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -322,63 +357,67 @@ function dateIssue(value: string) {
   return { file, birth: file.individuals[0].birth };
 }
 
-describe("the range and period forms, collapsed", () => {
-  // BET...AND and FROM...TO are two dates and this schema has one column per
-  // event (`YEO-88`). The lower bound is stored as `after`, at its own
-  // precision, and the upper bound survives only on the report — see
-  // db/schema.ts and docs/architecture.md for why the midpoint was not taken
-  // instead.
+describe("the range and period forms, stored whole", () => {
+  // BET...AND and FROM...TO are two dates, and this schema now has two date
+  // columns per event (`YEO-88`). Both bounds are stored, each at its own
+  // precision, and the common forms raise no issue at all — there is nothing
+  // to raise one about. See db/schema.ts and docs/architecture.md for why
+  // this replaces the collapse this ticket reversed.
 
-  it("collapses BET...AND onto the lower bound", () => {
+  it("stores both bounds of BET...AND, losslessly", () => {
     const { file, birth } = dateIssue("BET 1890 AND 1900");
 
     expect(birth?.date).toEqual({
       date: "1890-01-01",
-      qualifier: "after",
+      qualifier: "exact",
       precision: "year",
+      upper: "1900-01-01",
+      upperPrecision: "year",
     });
     expect(birth?.dateText).toBe("BET 1890 AND 1900");
-    expect(file.issues).toHaveLength(1);
+    expect(file.issues).toEqual([]);
   });
 
-  it("raises a narrowed issue, not a date issue", () => {
-    // `date` means the field is blank and somebody has to fix the file;
-    // `narrowed` means the field is populated with something true but
-    // weaker. A collapsed range is the second, not the first.
-    const { file } = dateIssue("BET 1890 AND 1900");
-    expect(file.issues[0].kind).toBe("narrowed");
-  });
-
-  it("collapses FROM...TO the same way", () => {
+  it("stores both bounds of FROM...TO, the same way", () => {
+    // A period ("it lasted from") and a range ("it happened somewhere in")
+    // are a distinction this schema has no column for — both become the same
+    // two-bound interval.
     const { birth, file } = dateIssue("FROM 1912 TO 1918");
 
     expect(birth?.date).toEqual({
       date: "1912-01-01",
-      qualifier: "after",
+      qualifier: "exact",
       precision: "year",
+      upper: "1918-01-01",
+      upperPrecision: "year",
     });
-    expect(file.issues).toHaveLength(1);
-    expect(file.issues[0].kind).toBe("narrowed");
+    expect(file.issues).toEqual([]);
   });
 
-  it("takes precision from the lower bound", () => {
-    const { birth } = dateIssue("BET MAR 1890 AND JUN 1890");
+  it("keeps each endpoint at its own precision — the case that proves precision doubled", () => {
+    const { birth, file } = dateIssue("BET MAR 1890 AND 1900");
 
     expect(birth?.date).toEqual({
       date: "1890-03-01",
-      qualifier: "after",
+      qualifier: "exact",
       precision: "month",
+      upper: "1900-01-01",
+      upperPrecision: "year",
     });
+    expect(file.issues).toEqual([]);
   });
 
-  it("takes day precision from a full lower-bound date", () => {
-    const { birth } = dateIssue("FROM 12 MAR 1912 TO 4 JUL 1918");
+  it("reads a day-precision range on both ends", () => {
+    const { birth, file } = dateIssue("FROM 12 MAR 1912 TO 4 JUL 1918");
 
     expect(birth?.date).toEqual({
       date: "1912-03-12",
-      qualifier: "after",
+      qualifier: "exact",
       precision: "day",
+      upper: "1918-07-04",
+      upperPrecision: "day",
     });
+    expect(file.issues).toEqual([]);
   });
 
   it("reads a real file's lowercase and mixed-case spellings", () => {
@@ -388,51 +427,84 @@ describe("the range and period forms, collapsed", () => {
 
     expect(birth?.date).toEqual({
       date: "1890-01-01",
-      qualifier: "after",
+      qualifier: "exact",
       precision: "year",
+      upper: "1900-01-01",
+      upperPrecision: "year",
     });
   });
 
-  it("stores FROM with no TO losslessly", () => {
-    // One bound, nothing dropped — no issue to raise.
+  it("stores FROM with no TO losslessly, with no upper bound", () => {
     const { file, birth } = dateIssue("FROM 1912");
 
     expect(birth?.date).toEqual({
       date: "1912-01-01",
       qualifier: "after",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(file.issues).toEqual([]);
   });
 
-  it("stores TO with no FROM losslessly", () => {
+  it("stores TO with no FROM losslessly, with no upper bound", () => {
     const { file, birth } = dateIssue("TO 1918");
 
     expect(birth?.date).toEqual({
       date: "1918-01-01",
       qualifier: "before",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(file.issues).toEqual([]);
   });
 
-  it("names both the original text and the dropped bound", () => {
-    const { file } = dateIssue("BET 1890 AND 1900");
+  it("stores an inverted range exactly as written, raising no issue here", () => {
+    // Reading a file and validating against the schema are different jobs.
+    // `validateIndividual`/`validateUnion` are the gate that refuses
+    // `BET 1900 AND 1890` — this module has no opinion on ordering.
+    const { file, birth } = dateIssue("BET 1900 AND 1890");
 
-    expect(file.issues[0].message).toContain("BET 1890 AND 1900");
-    expect(file.issues[0].message).toContain("1900");
+    expect(birth?.date).toEqual({
+      date: "1900-01-01",
+      qualifier: "exact",
+      precision: "year",
+      upper: "1890-01-01",
+      upperPrecision: "year",
+    });
+    expect(file.issues).toEqual([]);
   });
 
-  it("lets after win over an endpoint's own about", () => {
-    // The splitter overrides the endpoint's own modifier — `after` is what
-    // the row means once the second date is gone, whatever the lower bound
-    // said about itself.
+  it("drops an endpoint's own modifier and reports it, with the qualifier still exact", () => {
+    // A fuzzy edge on a bound of an interval has no reader anywhere in this
+    // application — there is no `upper_qualifier` column.
     const { file, birth } = dateIssue("BET ABT 1890 AND 1900");
+
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "exact",
+      precision: "year",
+      upper: "1900-01-01",
+      upperPrecision: "year",
+    });
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0].kind).toBe("narrowed");
+    expect(file.issues[0].message).toContain("about");
+  });
+
+  it("falls back to the old collapse path when the upper bound cannot be read", () => {
+    // The lower bound is still a real date the file gave, so it is kept
+    // rather than losing the whole row — the collapse this ticket reversed
+    // survives as the fallback for exactly this case.
+    const { file, birth } = dateIssue("BET 1890 AND (some Tuesday)");
 
     expect(birth?.date).toEqual({
       date: "1890-01-01",
       qualifier: "after",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(file.issues).toHaveLength(1);
     expect(file.issues[0].kind).toBe("narrowed");
@@ -451,10 +523,16 @@ describe("interpreted dates", () => {
       date: "1890-01-01",
       qualifier: "about",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(file.issues).toHaveLength(1);
     expect(file.issues[0].kind).toBe("narrowed");
     expect(file.issues[0].message).toContain("from baptism record");
+    // Pins the article-bug fix (`YEO-88`): "qualified as ..." has no
+    // indefinite article to get wrong, for any of the four members.
+    expect(file.issues[0].message).not.toContain('an "before"');
+    expect(file.issues[0].message).not.toContain('an "about"');
   });
 
   it("raises no issue for INT with no phrase", () => {
@@ -466,6 +544,8 @@ describe("interpreted dates", () => {
       date: "1890-01-01",
       qualifier: "about",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
     expect(file.issues).toEqual([]);
   });
@@ -477,6 +557,8 @@ describe("interpreted dates", () => {
       date: "1890-01-01",
       qualifier: "before",
       precision: "year",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 
@@ -487,36 +569,43 @@ describe("interpreted dates", () => {
       date: "1890-03-12",
       qualifier: "about",
       precision: "day",
+      upper: null,
+      upperPrecision: "day",
     });
   });
 });
 
-describe("what a collapsed range looks like on screen", () => {
+describe("what a stored range looks like on screen", () => {
   // Written as an assertion rather than assumed: the acceptance criterion is
-  // that a collapsed range never reaches a screen as a plain date.
+  // that a stored range never reaches a screen as a plain date.
 
-  it("formats as 'after 1890', never as '1890'", () => {
+  it("formats as 'between 1890 and 1900', never as a bare year", () => {
     const { birth } = dateIssue("BET 1890 AND 1900");
-    const shown = formatQualifiedDate(
-      birth?.date?.date ?? null,
-      birth?.date?.qualifier ?? "exact",
-      birth?.date?.precision ?? "day",
-    );
+    const shown = formatQualifiedDate({
+      date: birth?.date?.date ?? null,
+      qualifier: birth?.date?.qualifier ?? "exact",
+      precision: birth?.date?.precision ?? "day",
+      upper: birth?.date?.upper ?? null,
+      upperPrecision: birth?.date?.upperPrecision ?? "day",
+    });
 
-    expect(shown).toBe("after 1890");
+    expect(shown).toBe("between 1890 and 1900");
     expect(shown).not.toBe("1890");
+    expect(shown).not.toBe("after 1890");
   });
 
-  it("reads as 'b. after 1890' in a lifespan", () => {
+  it("reads as 'b. 1890–1900' in a lifespan", () => {
     const { birth } = dateIssue("BET 1890 AND 1900");
     const lifespan = formatLifespan({
       birthDate: birth?.date?.date ?? null,
       birthDateQualifier: birth?.date?.qualifier ?? "exact",
+      birthDateUpper: birth?.date?.upper ?? null,
       deathDate: null,
       deathDateQualifier: "exact",
+      deathDateUpper: null,
     });
 
-    expect(lifespan).toBe("b. after 1890");
+    expect(lifespan).toBe("b. 1890–1900");
   });
 });
 

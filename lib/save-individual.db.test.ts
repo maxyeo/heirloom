@@ -129,12 +129,37 @@ describe("createIndividual", () => {
       birthDate: null,
       birthDateQualifier: "exact",
       birthDatePrecision: "day",
+      // A row written without touching the new columns (`YEO-88`) reads back
+      // `upper === null` and `upperPrecision === "day"` — the migration
+      // changes the meaning of nothing.
+      birthDateUpper: null,
+      birthDateUpperPrecision: "day",
       birthPlace: null,
       deathDate: null,
       deathDateQualifier: "exact",
       deathDatePrecision: "day",
+      deathDateUpper: null,
+      deathDateUpperPrecision: "day",
       deathPlace: null,
       notes: null,
+    });
+  });
+
+  it("writes a range's upper bound and its own precision through to the real columns (YEO-88)", async () => {
+    const id = await create({
+      givenName: name("ranged"),
+      birthDate: "1890-01-01",
+      birthDatePrecision: "year",
+      birthDateUpper: "1900-01-01",
+      birthDateUpperPrecision: "year",
+    });
+
+    expect(await readPerson(id)).toMatchObject({
+      birthDate: "1890-01-01",
+      birthDateQualifier: "exact",
+      birthDatePrecision: "year",
+      birthDateUpper: "1900-01-01",
+      birthDateUpperPrecision: "year",
     });
   });
 

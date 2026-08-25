@@ -34,10 +34,17 @@ import { formatQualifiedDate } from "@/lib/format-date";
  * ## Why the parsed values are hidden inputs
  *
  * The visible box has no `name` at all. It is the author's phrasing, and the
- * database has no column for it. What posts is the three hidden inputs below,
+ * database has no column for it. What posts is the five hidden inputs below,
  * named exactly as the columns are — so `individualInputFromFormData` and
  * `unionInputFromFormData` read them with no knowledge that a date field ever
  * became free text, and so a form still submits with JavaScript mid-flight.
+ * Two of the five exist because of `YEO-88`: a range typed as `between 1890
+ * and 1900` has an upper bound as real as its lower one, and if this
+ * component posted only the three it always posted, that upper bound would
+ * vanish on every save with nothing reporting it — the collapse this ticket
+ * reversed, happening again one save at a time. See `IndividualFormField` in
+ * `components/IndividualFieldset.tsx` for the compile-time guard that keeps
+ * the two new fields from being left out of a form's values.
  *
  * The one case worth reading twice is unparseable text: it is posted *raw*,
  * into the date field. That looks odd until you consider the alternative,
@@ -54,8 +61,9 @@ export interface DateFieldProps {
   legend: string;
   /**
    * The `name` of the hidden date input. The qualifier and precision post as
-   * `${name}Qualifier` and `${name}Precision`, matching the column names the
-   * validators read.
+   * `${name}Qualifier` and `${name}Precision`, and — since `YEO-88` — a
+   * range's upper bound posts as `${name}Upper` and `${name}UpperPrecision`,
+   * matching the column names the validators read.
    */
   name: string;
   /** The raw text, exactly as typed. Held by the caller. */
@@ -107,13 +115,7 @@ export function DateField({
 
   const parsed = parseDateInput(value);
   const understood =
-    parsed.ok && parsed.value
-      ? formatQualifiedDate(
-          parsed.value.date,
-          parsed.value.qualifier,
-          parsed.value.precision,
-        )
-      : null;
+    parsed.ok && parsed.value ? formatQualifiedDate(parsed.value) : null;
 
   const message = (!parsed.ok && blurred ? parsed.message : undefined) ?? error;
 
@@ -160,6 +162,16 @@ export function DateField({
         type="hidden"
         name={`${name}Precision`}
         value={parsed.ok && parsed.value ? parsed.value.precision : "day"}
+      />
+      <input
+        type="hidden"
+        name={`${name}Upper`}
+        value={parsed.ok && parsed.value ? (parsed.value.upper ?? "") : ""}
+      />
+      <input
+        type="hidden"
+        name={`${name}UpperPrecision`}
+        value={parsed.ok && parsed.value ? parsed.value.upperPrecision : "day"}
       />
 
       {/*

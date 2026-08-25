@@ -4,6 +4,7 @@ import {
   type DatePrecision,
   type DateQualifier,
   isImpossibleOrder,
+  isInvertedRange,
   MAX_NOTES_LENGTH,
   readDate,
   readEnum,
@@ -121,10 +122,24 @@ export type UnionFields = {
   startDate: string | null;
   startDateQualifier: DateQualifier;
   startDatePrecision: DatePrecision;
+  /**
+   * The upper bound of a range (`YEO-88`) — `startDate` is the lower bound.
+   * `null` when the start date is a single point, which is every union
+   * recorded before this ticket. `_upper` names the bound, not the event —
+   * this has nothing to do with `endDate`.
+   */
+  startDateUpper: string | null;
+  startDateUpperPrecision: DatePrecision;
   /** ISO `YYYY-MM-DD`, or null when unknown. An anchor, as `startDate` is. */
   endDate: string | null;
   endDateQualifier: DateQualifier;
   endDatePrecision: DatePrecision;
+  /**
+   * The upper bound of the *end date's* range, as `startDateUpper` is for the
+   * start date — nothing to do with `endReason`.
+   */
+  endDateUpper: string | null;
+  endDateUpperPrecision: DatePrecision;
   endReason: UnionEndReason;
   /** Explicit display order, or null to be placed after the existing unions. */
   sequence: number | null;
@@ -315,6 +330,48 @@ export function validateUnion(input: UnionInput): UnionValidation {
     );
   }
 
+  const startDateUpper = readDate(input.startDateUpper);
+  if (startDateUpper === undefined) {
+    add(
+      "startDateUpper",
+      "That start date's upper bound could not be read. Try a year like 1913, or a full date like 4 June 1913.",
+    );
+  }
+
+  const startDateUpperPrecision = readEnum(
+    input.startDateUpperPrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (startDateUpperPrecision === undefined) {
+    add(
+      "startDateUpper",
+      "That is not one of the options for how much of a date is known.",
+    );
+  }
+
+  if (
+    startDateUpper &&
+    startDateQualifier !== undefined &&
+    startDateQualifier !== "exact"
+  ) {
+    add(
+      "startDateUpper",
+      `A range's date cannot also be qualified "${startDateQualifier}" — a range already says how uncertain the date is.`,
+    );
+  }
+
+  if (
+    startDate &&
+    startDateUpper &&
+    isInvertedRange(startDate, startDateUpper)
+  ) {
+    add(
+      "startDateUpper",
+      "The upper bound of the start date is before the lower bound. Check whether one of them has the wrong year.",
+    );
+  }
+
   const endDate = readDate(input.endDate);
   if (endDate === undefined) {
     add(
@@ -341,6 +398,44 @@ export function validateUnion(input: UnionInput): UnionValidation {
     add(
       "endDatePrecision",
       "That is not one of the options for how much of a date is known.",
+    );
+  }
+
+  const endDateUpper = readDate(input.endDateUpper);
+  if (endDateUpper === undefined) {
+    add(
+      "endDateUpper",
+      "That end date's upper bound could not be read. Try a year like 1939, or a full date like 19 February 1939.",
+    );
+  }
+
+  const endDateUpperPrecision = readEnum(
+    input.endDateUpperPrecision,
+    DATE_PRECISIONS,
+    "day",
+  );
+  if (endDateUpperPrecision === undefined) {
+    add(
+      "endDateUpper",
+      "That is not one of the options for how much of a date is known.",
+    );
+  }
+
+  if (
+    endDateUpper &&
+    endDateQualifier !== undefined &&
+    endDateQualifier !== "exact"
+  ) {
+    add(
+      "endDateUpper",
+      `A range's date cannot also be qualified "${endDateQualifier}" — a range already says how uncertain the date is.`,
+    );
+  }
+
+  if (endDate && endDateUpper && isInvertedRange(endDate, endDateUpper)) {
+    add(
+      "endDateUpper",
+      "The upper bound of the end date is before the lower bound. Check whether one of them has the wrong year.",
     );
   }
 
@@ -390,11 +485,15 @@ export function validateUnion(input: UnionInput): UnionValidation {
         date: startDate,
         qualifier: startDateQualifier,
         precision: startDatePrecision,
+        upper: startDateUpper ?? null,
+        upperPrecision: startDateUpperPrecision ?? "day",
       },
       {
         date: endDate,
         qualifier: endDateQualifier,
         precision: endDatePrecision,
+        upper: endDateUpper ?? null,
+        upperPrecision: endDateUpperPrecision ?? "day",
       },
     )
   ) {
@@ -459,9 +558,21 @@ export function validateUnion(input: UnionInput): UnionValidation {
       startDateQualifier: startDate ? (startDateQualifier ?? "exact") : "exact",
       /** Normalised away with no date beside it, for the reason above. */
       startDatePrecision: startDate ? (startDatePrecision ?? "day") : "day",
+      /**
+       * An upper bound with no lower bound is normalised away the same way a
+       * qualifier with no date is, above (`YEO-88`).
+       */
+      startDateUpper: startDate ? (startDateUpper ?? null) : null,
+      startDateUpperPrecision:
+        startDate && startDateUpper
+          ? (startDateUpperPrecision ?? "day")
+          : "day",
       endDate: endDate ?? null,
       endDateQualifier: endDate ? (endDateQualifier ?? "exact") : "exact",
       endDatePrecision: endDate ? (endDatePrecision ?? "day") : "day",
+      endDateUpper: endDate ? (endDateUpper ?? null) : null,
+      endDateUpperPrecision:
+        endDate && endDateUpper ? (endDateUpperPrecision ?? "day") : "day",
       endReason: endReason ?? "ongoing",
       sequence: sequence ?? null,
       notes: notes ?? null,
@@ -508,9 +619,13 @@ export function unionInputFromFormData(form: FormData): UnionInput {
     startDate: form.get("startDate"),
     startDateQualifier: form.get("startDateQualifier"),
     startDatePrecision: form.get("startDatePrecision"),
+    startDateUpper: form.get("startDateUpper"),
+    startDateUpperPrecision: form.get("startDateUpperPrecision"),
     endDate: form.get("endDate"),
     endDateQualifier: form.get("endDateQualifier"),
     endDatePrecision: form.get("endDatePrecision"),
+    endDateUpper: form.get("endDateUpper"),
+    endDateUpperPrecision: form.get("endDateUpperPrecision"),
     endReason: form.get("endReason"),
     sequence: form.get("sequence"),
     notes: form.get("notes"),

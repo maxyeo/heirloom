@@ -45,32 +45,43 @@ export const sex = pgEnum("sex", ["male", "female", "other", "unknown"]);
  * ever read alongside its date, so "no date at all" is already expressed by
  * the `date` column being null and needs no second way of saying it.
  *
- * ## Ranges collapse onto `after`, deliberately (`YEO-88`)
+ * ## A range is stored whole, in two columns (`YEO-88`)
  *
  * GEDCOM has two forms this list has no member for: `BET 1890 AND 1900` and
- * `FROM 1912 TO 1918`. A range is two points and every event here has one
- * date column, so something has to give, and what gives is the upper bound.
- * Such a date is stored as `after` the **lower** bound, at whatever precision
- * that bound itself carries, and the whole original text is named on the
- * import report at the line it came from.
+ * `FROM 1912 TO 1918`. They are two points, and until this ticket every event
+ * here had one date column, so one of the two had nowhere to go. The answer
+ * taken is the widening one: every event gets a `_date_upper` column and a
+ * `_date_upper_precision` beside it, and both bounds are stored.
  *
- * Not `about` at the midpoint, which was the obvious alternative. `after
- * 1890` is a statement the file actually makes; `about 1895` is arithmetic on
- * two of its numbers producing a third that appears nowhere in it — a guess
- * wearing the clothes of a record, which is the same failure the anchor
- * convention beside this column exists to prevent. The difference is
- * mechanical as well as moral: `dateRange` in `lib/field-input.ts` reads
- * `after` as a real one-sided interval and `about` as no constraint at all,
- * so the midpoint reading would have discarded the ordering check along with
- * the bound.
+ * `null` in `_date_upper` means "this date is a single point", which is what
+ * every row written before these columns existed is — so the migration
+ * changes the meaning of nothing. The upper precision is `not null default
+ * 'day'` for the same reason the other two precision columns are: it is only
+ * ever read alongside a non-null upper date, and "not a range" is already
+ * said once, by that date being null.
  *
- * What it costs is the upper bound, and the cost is real: `AFT 1890` and `BET
- * 1890 AND 1900` become the same three column values, nothing queried out of
- * this database can tell them apart afterwards, and a GEDCOM export writes
- * both back as `AFT 1890` — true of both files, weaker than one of them. A
- * fifth enum member or a second date column would each have held it; see
- * docs/architecture.md for why neither was worth the width, and note that
- * either remains available later without any existing row changing meaning.
+ * Both endpoints carry their own precision, and they routinely differ. `BET
+ * MAR 1890 AND 1900` is a baptism in March and a census in 1900 — two
+ * sources, two precisions. One precision column for both would have to
+ * coarsen the better-known bound or sharpen the looser one, and either is the
+ * invented-fact failure the anchor convention beside this column exists to
+ * prevent.
+ *
+ * **This list gains no fifth member, and that is the point.** A stored range
+ * carries `exact`, because `exact` already means "the value is as given,
+ * widened by its precision" and that reading extends to two bounds without
+ * changing a word: `[1890-01-01, 1900-12-31]` instead of `[1890-01-01,
+ * 1890-12-31]`. A `between` member was the alternative, and it would have let
+ * the two columns contradict each other — `('between', null)` and `('exact',
+ * 1900-01-01)` are both writable and one of them is nonsense. With no new
+ * member there is exactly one representation of every state.
+ *
+ * What it costs is width: seventeen columns on `individuals`, sixteen on
+ * `unions`, eight of them inert on almost every row. That was judged worth
+ * paying, because the alternative — collapsing a range onto `after` its lower
+ * bound — made `AFT 1890` and `BET 1890 AND 1900` the same three values, and
+ * nothing queried out of this database could have told them apart afterwards.
+ * See docs/architecture.md for the argument in full.
  */
 export const dateQualifier = pgEnum("date_qualifier", [
   "exact",
@@ -318,12 +329,20 @@ export const individuals = pgTable(
     birthDatePrecision: datePrecision("birth_date_precision")
       .notNull()
       .default("day"),
+    birthDateUpper: date("birth_date_upper"),
+    birthDateUpperPrecision: datePrecision("birth_date_upper_precision")
+      .notNull()
+      .default("day"),
     birthPlace: text("birth_place"),
     deathDate: date("death_date"),
     deathDateQualifier: dateQualifier("death_date_qualifier")
       .notNull()
       .default("exact"),
     deathDatePrecision: datePrecision("death_date_precision")
+      .notNull()
+      .default("day"),
+    deathDateUpper: date("death_date_upper"),
+    deathDateUpperPrecision: datePrecision("death_date_upper_precision")
       .notNull()
       .default("day"),
     deathPlace: text("death_place"),
@@ -356,11 +375,19 @@ export const unions = pgTable("unions", {
   startDatePrecision: datePrecision("start_date_precision")
     .notNull()
     .default("day"),
+  startDateUpper: date("start_date_upper"),
+  startDateUpperPrecision: datePrecision("start_date_upper_precision")
+    .notNull()
+    .default("day"),
   endDate: date("end_date"),
   endDateQualifier: dateQualifier("end_date_qualifier")
     .notNull()
     .default("exact"),
   endDatePrecision: datePrecision("end_date_precision")
+    .notNull()
+    .default("day"),
+  endDateUpper: date("end_date_upper"),
+  endDateUpperPrecision: datePrecision("end_date_upper_precision")
     .notNull()
     .default("day"),
   endReason: unionEndReason("end_reason").notNull().default("ongoing"),

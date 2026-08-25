@@ -5,30 +5,44 @@ import {
   formatQualifiedDate,
   formatQualifiedYear,
   type Lifespan,
+  type QualifiedDate,
 } from "@/lib/format-date";
 
 /**
- * A lifespan fixture whose qualifiers default to `exact`.
+ * A lifespan fixture whose qualifiers default to `exact` and whose dates
+ * default to single points.
  *
- * Every test that cares about a qualifier states it. Everything else reads as
- * the ordinary case, which is what keeps the qualified assertions below
- * visibly different from the unqualified ones.
+ * Every test that cares about a qualifier or a range states it. Everything
+ * else reads as the ordinary case, which is what keeps the qualified and
+ * ranged assertions below visibly different from the unqualified ones.
  */
 function lifespan(overrides: Partial<Lifespan> = {}): Lifespan {
   return {
     birthDate: null,
     birthDateQualifier: "exact",
+    birthDateUpper: null,
     deathDate: null,
     deathDateQualifier: "exact",
+    deathDateUpper: null,
+    ...overrides,
+  };
+}
+
+/** A `QualifiedDate` fixture, single-point by default (`YEO-88`). */
+function qd(overrides: Partial<QualifiedDate> = {}): QualifiedDate {
+  return {
+    date: "1912-03-12",
+    qualifier: "exact",
+    precision: "day",
+    upper: null,
+    upperPrecision: "day",
     ...overrides,
   };
 }
 
 describe("formatQualifiedDate", () => {
   it("renders an exact date with no qualifier at all", () => {
-    expect(formatQualifiedDate("1912-03-12", "exact", "day")).toBe(
-      "12 March 1912",
-    );
+    expect(formatQualifiedDate(qd())).toBe("12 March 1912");
   });
 
   it.each([
@@ -39,7 +53,7 @@ describe("formatQualifiedDate", () => {
     // The four values are GEDCOM 5.5.1's date modifiers. They exist so that
     // imprecision has somewhere to live other than the notes field, which
     // means the imprecision has to actually reach the page.
-    expect(formatQualifiedDate("1912-03-12", qualifier, "day")).toBe(expected);
+    expect(formatQualifiedDate(qd({ qualifier }))).toBe(expected);
   });
 
   it("renders nothing at all when there is no date", () => {
@@ -48,8 +62,12 @@ describe("formatQualifiedDate", () => {
     // out of here is what lets every surface omit the row rather than print
     // "unknown" or a dash — a missing date is the ordinary state of a
     // nineteenth-century record, not a defect to be marked as one.
-    expect(formatQualifiedDate(null, "about", "year")).toBeNull();
-    expect(formatQualifiedDate(null, "exact", "day")).toBeNull();
+    expect(
+      formatQualifiedDate(
+        qd({ date: null, qualifier: "about", precision: "year" }),
+      ),
+    ).toBeNull();
+    expect(formatQualifiedDate(qd({ date: null }))).toBeNull();
   });
 
   it("does not slide a date into the previous day west of Greenwich", () => {
@@ -62,7 +80,7 @@ describe("formatQualifiedDate", () => {
     try {
       for (const zone of ["UTC", "America/Los_Angeles", "Pacific/Kiritimati"]) {
         process.env.TZ = zone;
-        expect(formatQualifiedDate("1912-03-01", "exact", "day")).toBe(
+        expect(formatQualifiedDate(qd({ date: "1912-03-01" }))).toBe(
           "1 March 1912",
         );
       }
@@ -74,9 +92,7 @@ describe("formatQualifiedDate", () => {
   it("falls back to the stored string rather than printing Invalid Date", () => {
     // Nothing should ever put this in the column, but "Invalid Date" tells a
     // reader nothing about what the row actually holds.
-    expect(formatQualifiedDate("not-a-date", "exact", "day")).toBe(
-      "not-a-date",
-    );
+    expect(formatQualifiedDate(qd({ date: "not-a-date" }))).toBe("not-a-date");
   });
 
   describe("precision", () => {
@@ -85,25 +101,33 @@ describe("formatQualifiedDate", () => {
       // year read off a headstone is stored on 1 January because a `date`
       // column has to hold a day, and printing that day back would be
       // inventing a fact and then attributing it to the author.
-      expect(formatQualifiedDate("1912-01-01", "exact", "year")).toBe("1912");
-      expect(formatQualifiedDate("1912-03-01", "exact", "month")).toBe(
-        "March 1912",
-      );
-      expect(formatQualifiedDate("1912-03-12", "exact", "day")).toBe(
-        "12 March 1912",
-      );
+      expect(
+        formatQualifiedDate(qd({ date: "1912-01-01", precision: "year" })),
+      ).toBe("1912");
+      expect(
+        formatQualifiedDate(qd({ date: "1912-03-01", precision: "month" })),
+      ).toBe("March 1912");
+      expect(
+        formatQualifiedDate(qd({ date: "1912-03-12", precision: "day" })),
+      ).toBe("12 March 1912");
     });
 
     it("keeps the qualifier in front of a coarse date", () => {
-      expect(formatQualifiedDate("1890-01-01", "about", "year")).toBe(
-        "about 1890",
-      );
-      expect(formatQualifiedDate("1920-01-01", "before", "year")).toBe(
-        "before 1920",
-      );
-      expect(formatQualifiedDate("1890-03-01", "after", "month")).toBe(
-        "after March 1890",
-      );
+      expect(
+        formatQualifiedDate(
+          qd({ date: "1890-01-01", qualifier: "about", precision: "year" }),
+        ),
+      ).toBe("about 1890");
+      expect(
+        formatQualifiedDate(
+          qd({ date: "1920-01-01", qualifier: "before", precision: "year" }),
+        ),
+      ).toBe("before 1920");
+      expect(
+        formatQualifiedDate(
+          qd({ date: "1890-03-01", qualifier: "after", precision: "month" }),
+        ),
+      ).toBe("after March 1890");
     });
 
     it("never prints the anchor day of a coarse date", () => {
@@ -113,12 +137,118 @@ describe("formatQualifiedDate", () => {
       // author never typed, printed in the voice of one they did.
       for (const qualifier of ["exact", "about", "before", "after"] as const) {
         expect(
-          formatQualifiedDate("1890-01-01", qualifier, "year"),
+          formatQualifiedDate(
+            qd({ date: "1890-01-01", qualifier, precision: "year" }),
+          ),
         ).not.toMatch(/January/);
         expect(
-          formatQualifiedDate("1890-06-01", qualifier, "month"),
+          formatQualifiedDate(
+            qd({ date: "1890-06-01", qualifier, precision: "month" }),
+          ),
         ).not.toMatch(/\b1\b/);
       }
+    });
+  });
+
+  describe("ranges (YEO-88)", () => {
+    it("renders between the two endpoints, each at its own precision", () => {
+      expect(
+        formatQualifiedDate(
+          qd({
+            date: "1890-01-01",
+            precision: "year",
+            upper: "1900-01-01",
+            upperPrecision: "year",
+          }),
+        ),
+      ).toBe("between 1890 and 1900");
+    });
+
+    it("keeps a mixed-precision range honest — the case that proves precision doubled", () => {
+      expect(
+        formatQualifiedDate(
+          qd({
+            date: "1890-03-01",
+            precision: "month",
+            upper: "1900-01-01",
+            upperPrecision: "year",
+          }),
+        ),
+      ).toBe("between March 1890 and 1900");
+    });
+
+    it("renders a day-precision range on both ends", () => {
+      expect(
+        formatQualifiedDate(
+          qd({
+            date: "1912-03-12",
+            precision: "day",
+            upper: "1918-07-04",
+            upperPrecision: "day",
+          }),
+        ),
+      ).toBe("between 12 March 1912 and 4 July 1918");
+    });
+
+    it("never renders a range as a bare single date", () => {
+      const ranges = [
+        qd({
+          date: "1890-01-01",
+          precision: "year",
+          upper: "1900-01-01",
+          upperPrecision: "year",
+        }),
+        qd({
+          date: "1890-03-01",
+          precision: "month",
+          upper: "1900-01-01",
+          upperPrecision: "year",
+        }),
+        qd({
+          date: "1912-03-12",
+          precision: "day",
+          upper: "1918-07-04",
+          upperPrecision: "day",
+        }),
+      ];
+
+      for (const value of ranges) {
+        const shown = formatQualifiedDate(value);
+        expect(shown).not.toBe("1890");
+        expect(shown).not.toBe("after 1890");
+        expect(shown).toContain("between");
+      }
+    });
+
+    it("renders an illegal-but-representable row honestly, leaving the refusal to the validator", () => {
+      // `validateIndividual`/`validateUnion` are the gate that keeps a
+      // non-`exact` qualifier beside a non-null upper from ever being
+      // written — but a hand-made `INSERT` can still produce one, and this
+      // function renders it rather than hiding a word.
+      expect(
+        formatQualifiedDate(
+          qd({
+            qualifier: "about",
+            date: "1890-01-01",
+            precision: "year",
+            upper: "1900-01-01",
+            upperPrecision: "year",
+          }),
+        ),
+      ).toBe("about between 1890 and 1900");
+    });
+
+    it("renders a malformed upper bound verbatim, on the upper side only", () => {
+      expect(
+        formatQualifiedDate(
+          qd({
+            date: "1890-01-01",
+            precision: "year",
+            upper: "not-a-date",
+            upperPrecision: "year",
+          }),
+        ),
+      ).toBe("between 1890 and not-a-date");
     });
   });
 });
@@ -231,6 +361,61 @@ describe("formatLifespan", () => {
       ).not.toMatch(/January|\b1\b/);
     });
   });
+
+  describe("ranges (YEO-88)", () => {
+    it("labels both dates when the birth is a range and the death is not", () => {
+      expect(
+        formatLifespan(
+          lifespan({
+            birthDate: "1890-01-01",
+            birthDateUpper: "1900-01-01",
+            deathDate: "1962-01-01",
+          }),
+        ),
+      ).toBe("b. 1890–1900, d. 1962");
+    });
+
+    it("labels both dates when the death is a range and the birth is not", () => {
+      expect(
+        formatLifespan(
+          lifespan({
+            birthDate: "1890-01-01",
+            deathDate: "1950-01-01",
+            deathDateUpper: "1955-01-01",
+          }),
+        ),
+      ).toBe("b. 1890, d. 1950–1955");
+    });
+
+    it("labels both dates when both are ranges", () => {
+      expect(
+        formatLifespan(
+          lifespan({
+            birthDate: "1890-01-01",
+            birthDateUpper: "1895-01-01",
+            deathDate: "1950-01-01",
+            deathDateUpper: "1955-01-01",
+          }),
+        ),
+      ).toBe("b. 1890–1895, d. 1950–1955");
+    });
+
+    it("labels a ranged birth alone", () => {
+      expect(
+        formatLifespan(
+          lifespan({ birthDate: "1890-01-01", birthDateUpper: "1900-01-01" }),
+        ),
+      ).toBe("b. 1890–1900");
+    });
+
+    it("keeps the compact form when neither date is a range — the regression guard", () => {
+      expect(
+        formatLifespan(
+          lifespan({ birthDate: "1890-01-01", deathDate: "1962-01-01" }),
+        ),
+      ).toBe("1890–1962");
+    });
+  });
 });
 
 /**
@@ -240,19 +425,53 @@ describe("formatLifespan", () => {
  */
 describe("formatQualifiedYear", () => {
   it("gives the year, with no anchor day and no month", () => {
-    expect(formatQualifiedYear("1933-02-11", "exact")).toBe("1933");
-    expect(formatQualifiedYear("1948-01-01", "exact")).toBe("1948");
+    expect(
+      formatQualifiedYear({
+        date: "1933-02-11",
+        qualifier: "exact",
+        upper: null,
+      }),
+    ).toBe("1933");
+    expect(
+      formatQualifiedYear({
+        date: "1948-01-01",
+        qualifier: "exact",
+        upper: null,
+      }),
+    ).toBe("1948");
   });
 
   it("keeps the qualifier, because a guess is not a fact", () => {
-    expect(formatQualifiedYear("1948-07-03", "about")).toBe("about 1948");
-    expect(formatQualifiedYear("1920-01-01", "before")).toBe("before 1920");
-    expect(formatQualifiedYear("1890-06-14", "after")).toBe("after 1890");
+    expect(
+      formatQualifiedYear({
+        date: "1948-07-03",
+        qualifier: "about",
+        upper: null,
+      }),
+    ).toBe("about 1948");
+    expect(
+      formatQualifiedYear({
+        date: "1920-01-01",
+        qualifier: "before",
+        upper: null,
+      }),
+    ).toBe("before 1920");
+    expect(
+      formatQualifiedYear({
+        date: "1890-06-14",
+        qualifier: "after",
+        upper: null,
+      }),
+    ).toBe("after 1890");
   });
 
   it("is null when there is no date, never a dash or a word", () => {
-    expect(formatQualifiedYear(null, "exact")).toBeNull();
-    expect(formatQualifiedYear(null, "about")).toBeNull();
+    expect(
+      formatQualifiedYear({ date: null, qualifier: "exact", upper: null }),
+    ).toBeNull();
+    expect(
+      formatQualifiedYear({ date: null, qualifier: "about", upper: null }),
+    ).toBeNull();
   });
 
   it("reads the same year whatever precision the date was stored at", () => {
@@ -261,7 +480,31 @@ describe("formatQualifiedYear", () => {
     // recorded — which is why it needs no `precision` argument where
     // `formatQualifiedDate` requires one.
     for (const date of ["1908-01-01", "1908-05-01", "1908-05-30"]) {
-      expect(formatQualifiedYear(date, "exact")).toBe("1908");
+      expect(
+        formatQualifiedYear({ date, qualifier: "exact", upper: null }),
+      ).toBe("1908");
     }
+  });
+
+  describe("ranges (YEO-88)", () => {
+    it("renders a range as two years joined by an en dash", () => {
+      expect(
+        formatQualifiedYear({
+          date: "1890-03-01",
+          qualifier: "exact",
+          upper: "1900-01-01",
+        }),
+      ).toBe("1890–1900");
+    });
+
+    it("collapses a same-year range to one year — it says nothing a bare year does not", () => {
+      expect(
+        formatQualifiedYear({
+          date: "1890-03-01",
+          qualifier: "exact",
+          upper: "1890-06-01",
+        }),
+      ).toBe("1890");
+    });
   });
 });

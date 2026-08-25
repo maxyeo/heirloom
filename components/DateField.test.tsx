@@ -97,6 +97,33 @@ describe("what it posts", () => {
     expect(box(mount()).hasAttribute("name")).toBe(false);
   });
 
+  it("posts a typed range as five columns, upper bound and all (YEO-88)", () => {
+    // The highest-consequence guard in this ticket: without these two, a
+    // range typed into this box would have its upper bound silently dropped
+    // on every save.
+    const host = mount({ value: "between 1890 and 1900" });
+
+    expect(posted(host, "birthDate")).toBe("1890-01-01");
+    expect(posted(host, "birthDateQualifier")).toBe("exact");
+    expect(posted(host, "birthDatePrecision")).toBe("year");
+    expect(posted(host, "birthDateUpper")).toBe("1900-01-01");
+    expect(posted(host, "birthDateUpperPrecision")).toBe("year");
+  });
+
+  it("posts an empty upper bound for a single-point date", () => {
+    const host = mount({ value: "about 1890" });
+
+    expect(posted(host, "birthDateUpper")).toBe("");
+    expect(posted(host, "birthDateUpperPrecision")).toBe("day");
+  });
+
+  it("clearing the field posts an empty upper bound too", () => {
+    const host = mount({ value: "" });
+
+    expect(posted(host, "birthDateUpper")).toBe("");
+    expect(posted(host, "birthDateUpperPrecision")).toBe("day");
+  });
+
   it("reports what was typed, unparsed", () => {
     const onChange = vi.fn();
     const host = mount({ onChange });
@@ -164,6 +191,12 @@ describe("showing the author they were understood", () => {
 
     expect(host.textContent).toContain("about 1890");
     expect(host.textContent).toContain("12 March 1890");
+  });
+
+  it("echoes a range as 'between x and y' (YEO-88)", () => {
+    const host = mount({ value: "between 1890 and 1900" });
+
+    expect(host.textContent).toContain("Understood as between 1890 and 1900");
   });
 });
 

@@ -88,8 +88,10 @@ describe("searchPeople", () => {
         surname: "Reed",
         birthDate: "1888-01-01",
         birthDateQualifier: "exact",
+        birthDateUpper: null,
         deathDate: null,
         deathDateQualifier: "exact",
+        deathDateUpper: null,
       },
     ];
 
@@ -115,8 +117,10 @@ describe("searchPeople", () => {
         surname: "Bennett",
         birthDate: null,
         birthDateQualifier: "exact",
+        birthDateUpper: null,
         deathDate: null,
         deathDateQualifier: "exact",
+        deathDateUpper: null,
       },
       seedPerson.rose,
     ];
@@ -153,8 +157,10 @@ describe("searchPeople", () => {
         surname: null,
         birthDate: null,
         birthDateQualifier: "exact",
+        birthDateUpper: null,
         deathDate: null,
         deathDateQualifier: "exact",
+        deathDateUpper: null,
       },
       {
         id: "a",
@@ -162,8 +168,10 @@ describe("searchPeople", () => {
         surname: null,
         birthDate: null,
         birthDateQualifier: "exact",
+        birthDateUpper: null,
         deathDate: null,
         deathDateQualifier: "exact",
+        deathDateUpper: null,
       },
     ];
 

@@ -4,7 +4,14 @@ import type {
   GraphPerson,
   GraphUnion,
 } from "./family-graph";
-import { formatLifespan, formatQualifiedDate } from "./format-date";
+import {
+  birthOf,
+  deathOf,
+  formatLifespan,
+  formatQualifiedDate,
+  unionEnd,
+  unionStart,
+} from "./format-date";
 import { formatPersonName } from "./person-format";
 
 /**
@@ -159,16 +166,8 @@ export function derivePersonDetail(
     ),
     type: union.type,
     endReason: union.endReason,
-    start: formatQualifiedDate(
-      union.startDate,
-      union.startDateQualifier,
-      union.startDatePrecision,
-    ),
-    end: formatQualifiedDate(
-      union.endDate,
-      union.endDateQualifier,
-      union.endDatePrecision,
-    ),
+    start: formatQualifiedDate(unionStart(union)),
+    end: formatQualifiedDate(unionEnd(union)),
   }));
 
   // Grouped by union and in the same order as the spouse list above, which is
@@ -216,22 +215,8 @@ export function derivePersonDetail(
     name: formatPersonName(person.givenName, person.surname),
     lifespan: formatLifespan(person),
     sex: person.sex,
-    birth: toLifeEvent(
-      formatQualifiedDate(
-        person.birthDate,
-        person.birthDateQualifier,
-        person.birthDatePrecision,
-      ),
-      person.birthPlace,
-    ),
-    death: toLifeEvent(
-      formatQualifiedDate(
-        person.deathDate,
-        person.deathDateQualifier,
-        person.deathDatePrecision,
-      ),
-      person.deathPlace,
-    ),
+    birth: toLifeEvent(formatQualifiedDate(birthOf(person)), person.birthPlace),
+    death: toLifeEvent(formatQualifiedDate(deathOf(person)), person.deathPlace),
     notes: person.notes,
     pageId: person.pageId,
     spouses,

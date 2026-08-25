@@ -53,10 +53,14 @@ export type EntryPerson = {
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
   birthDatePrecision: DatePrecision;
+  birthDateUpper: string | null;
+  birthDateUpperPrecision: DatePrecision;
   birthPlace: string | null;
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
   deathDatePrecision: DatePrecision;
+  deathDateUpper: string | null;
+  deathDateUpperPrecision: DatePrecision;
   deathPlace: string | null;
 };
 
@@ -91,10 +95,14 @@ export async function getEntryPerson(
       birthDate: schema.individuals.birthDate,
       birthDateQualifier: schema.individuals.birthDateQualifier,
       birthDatePrecision: schema.individuals.birthDatePrecision,
+      birthDateUpper: schema.individuals.birthDateUpper,
+      birthDateUpperPrecision: schema.individuals.birthDateUpperPrecision,
       birthPlace: schema.individuals.birthPlace,
       deathDate: schema.individuals.deathDate,
       deathDateQualifier: schema.individuals.deathDateQualifier,
       deathDatePrecision: schema.individuals.deathDatePrecision,
+      deathDateUpper: schema.individuals.deathDateUpper,
+      deathDateUpperPrecision: schema.individuals.deathDateUpperPrecision,
       deathPlace: schema.individuals.deathPlace,
     })
     .from(schema.individuals)

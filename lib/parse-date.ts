@@ -43,6 +43,37 @@
  * because both readings are plausible dates. Refusing with a sentence that
  * names both readings costs the author one retype; guessing costs somebody a
  * wrong birthday they may never notice.
+ *
+ * ## Ranges, in the same one text box (`YEO-88`)
+ *
+ * A range used to be refused here entirely — collapsed onto `after` its lower
+ * bound was a decision `lib/gedcom.ts` made for a *file*, one nobody was
+ * sitting in front of. This module is a text box a person is looking at, and
+ * `formatQualifiedDate` renders a stored range as `between 1890 and 1900` —
+ * so once that string can come back out of a person's own record, this module
+ * has to be able to read it back in, or opening an imported person and
+ * pressing Save becomes a dead end for every ranged date on the tree.
+ *
+ * `between X and Y` and `X to Y`, case-insensitive, are the only two accepted
+ * shapes — the same two words `formatQualifiedDate` writes and a genealogist
+ * already reaches for. `1890-1900` is refused on purpose even though it looks
+ * obvious: the hyphen already means "ISO field separator" in this module
+ * (`ISO_YEAR_MONTH`, `ISO_FULL`), and a second meaning for one character is
+ * exactly the `12/03/1890` failure above, not a different one. `1890–1900`
+ * (en dash) is refused for the same reason from the other side: that
+ * character is `formatLifespan`'s birth/death joiner, and letting it also
+ * mean "a range" would make `1890–1962` ambiguous between a life and a span.
+ * Both get a sentence that teaches the two words this module does accept,
+ * rather than the generic "could not be read".
+ *
+ * Each endpoint goes through the same single-date reading as everything else
+ * in this module — `between March 1890 and 1900` is a month and a year, each
+ * kept at its own precision, which is what lets a range whose two bounds came
+ * from two different sources round-trip without inventing or discarding
+ * either one. A qualifier in front of a range is refused rather than guessed
+ * at: a range already says how uncertain a date is, so `about between 1890
+ * and 1900` names a state `validateIndividual`/`validateUnion` will never
+ * accept, and this module says so rather than silently parsing half of it.
  */
 
 import {
@@ -52,7 +83,8 @@ import {
 } from "./field-input";
 
 /**
- * One date, as this module understands it: the three columns a date occupies.
+ * One date, as this module understands it: the three columns a single date
+ * occupies, and — since `YEO-88` — the upper bound that makes it a range.
  *
  * `date` is always a real ISO `YYYY-MM-DD` day, because that is the only thing
  * a Postgres `date` column can hold. When `precision` is coarser than `day`
@@ -60,12 +92,21 @@ import {
  * named — and it is never to be read as the day itself. See `DATE_PRECISIONS`
  * in `lib/field-input.ts` for why the pair is stored this way and what keeps
  * the anchor from leaking out as an assertion.
+ *
+ * `upper` is null on every date that is a single point, which is everything
+ * this module read before `YEO-88` and everything it reads today unless the
+ * text was written as a range. `upperPrecision` is `"day"` alongside a null
+ * `upper` — inert, and never read — for the same reason the schema's own
+ * `*_date_upper_precision` columns default that way.
  */
 export type ParsedDate = {
   /** ISO `YYYY-MM-DD`. An anchor, not a claim, unless `precision` is `day`. */
   date: string;
   qualifier: DateQualifier;
   precision: DatePrecision;
+  /** The upper bound of a range, or null when this date is a single point. */
+  upper: string | null;
+  upperPrecision: DatePrecision;
 };
 
 /**
@@ -177,8 +218,42 @@ const NO_YEAR = "A date needs a year. Try 1890, March 1890, or 12 March 1890.";
 const NO_SUCH_DAY =
   "That is not a day the calendar has. Check the day against the month.";
 
+/**
+ * Shown for the two range spellings this module refuses on purpose
+ * (`YEO-88`) — the hyphen and the en dash both already mean something else
+ * here, see the module docblock.
+ */
+const RANGE_SYNTAX =
+  'Write a range with "between" or "to" — between 1890 and 1900, or 1890 to 1900.';
+
+/**
+ * Shown when a qualifier sits in front of a range, `about between 1890 and
+ * 1900` — a state `validateIndividual`/`validateUnion` never accept, because
+ * a stored range's qualifier is always `exact` (`YEO-88`, see `db/schema.ts`).
+ */
+const QUALIFIED_RANGE =
+  'A range already says how uncertain a date is — write between 1890 and 1900, without "about".';
+
 /** `12/03/1890`, `12.03.1890` — day and month in an order nobody can recover. */
 const AMBIGUOUS_NUMERIC = /^\d{1,2}[/.]\d{1,2}[/.]\d{2,4}$/;
+
+/**
+ * `1890-1900`, `1890–1900` — two years joined by a character that already
+ * means something else in this module (`YEO-88`). Checked ahead of the
+ * ordinary date patterns so this gets the teaching message in `RANGE_SYNTAX`
+ * rather than the generic `UNREADABLE`.
+ */
+const HYPHEN_OR_DASH_RANGE = /^\d{4}[-–]\d{4}$/;
+
+/** `between 1890 and 1900`, case-insensitive. */
+const BETWEEN_RANGE = /^between\s+(.+?)\s+and\s+(.+)$/i;
+
+/**
+ * `1890 to 1900`, case-insensitive. Requires `to` bounded by spaces on both
+ * sides, which is what keeps it from matching inside a word like `October`
+ * — no single-date pattern in this module contains a space-delimited `to`.
+ */
+const TO_RANGE = /^(.+?)\s+to\s+(.+)$/i;
 
 /** `1890`, and nothing else. */
 const YEAR_ONLY = /^(\d{4})$/;
@@ -217,8 +292,22 @@ export function parseDateInput(input: string): DateParse {
   const text = input.replace(/\s+/g, " ").trim();
   if (text === "") return { ok: true, value: null };
 
+  // The qualifier is split off first, exactly as it always was — a range's
+  // own qualifier is always `exact` (`YEO-88`), so a qualifier in front of
+  // one is refused below rather than silently discarded or silently kept.
   const { qualifier, rest } = splitQualifier(text);
   if (rest === "") return { ok: false, message: UNREADABLE };
+
+  const range = readRangeParts(rest);
+  if (range !== null) {
+    if (!range.ok) return range;
+    if (qualifier !== "exact") return { ok: false, message: QUALIFIED_RANGE };
+    return { ok: true, value: range.value };
+  }
+
+  if (HYPHEN_OR_DASH_RANGE.test(rest)) {
+    return { ok: false, message: RANGE_SYNTAX };
+  }
 
   const parts = readDateParts(rest);
   if (!parts.ok) return parts;
@@ -231,7 +320,70 @@ export function parseDateInput(input: string): DateParse {
     return { ok: false, message: NO_SUCH_DAY };
   }
 
-  return { ok: true, value: { date, qualifier, precision: parts.precision } };
+  return {
+    ok: true,
+    value: {
+      date,
+      qualifier,
+      precision: parts.precision,
+      upper: null,
+      upperPrecision: "day",
+    },
+  };
+}
+
+/**
+ * Split `between X and Y` or `X to Y` into two date texts and read each
+ * through `readDateParts` — the same single-date grammar every other date in
+ * this module goes through, so `between March 1890 and 1900` keeps its two
+ * endpoints at their own precisions rather than forcing one onto the other
+ * (`YEO-88`).
+ *
+ * Returns `null` when `rest` is neither shape, in which case it belongs to
+ * `readDateParts` unchanged, as a single date — this is what lets
+ * `BET 1890 AND 1900` and `FROM 1912 TO 1918` (GEDCOM's own spellings, not
+ * this module's) still fall through to `UNREADABLE` rather than being
+ * half-read as a range: `lib/gedcom.ts` translates them before they ever
+ * reach here, and this module's job is the typed grammar, not the file one.
+ *
+ * The far endpoint is not deliberately unparsed the way `lib/gedcom.ts`'s
+ * splitter leaves it — both sides are real text a person is looking at, so
+ * both are read, and a problem with either one is reported.
+ */
+function readRangeParts(
+  rest: string,
+): { ok: true; value: ParsedDate } | { ok: false; message: string } | null {
+  const match = BETWEEN_RANGE.exec(rest) ?? TO_RANGE.exec(rest);
+  if (!match) return null;
+
+  const [, lowerText, upperText] = match;
+
+  const lower = readDateParts(lowerText.trim());
+  if (!lower.ok) return lower;
+
+  const upper = readDateParts(upperText.trim());
+  if (!upper.ok) return upper;
+
+  const lowerDate = readDate(lower.iso);
+  if (typeof lowerDate !== "string") {
+    return { ok: false, message: NO_SUCH_DAY };
+  }
+
+  const upperDate = readDate(upper.iso);
+  if (typeof upperDate !== "string") {
+    return { ok: false, message: NO_SUCH_DAY };
+  }
+
+  return {
+    ok: true,
+    value: {
+      date: lowerDate,
+      qualifier: "exact",
+      precision: lower.precision,
+      upper: upperDate,
+      upperPrecision: upper.precision,
+    },
+  };
 }
 
 /**

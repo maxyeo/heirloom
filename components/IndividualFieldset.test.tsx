@@ -41,9 +41,11 @@ beforeAll(() => {
  *
  * Since E4-T2 (`YEO-39`) four of them belong to no visible control: each
  * date's qualifier and precision are worked out from what the author typed and
- * posted as hidden inputs. They are still listed here, because the promise
- * this array is making is about the *submission*, and that promise did not
- * change when the controls did.
+ * posted as hidden inputs. Since `YEO-88` four more join them: a range's upper
+ * bound and its own precision, worked out of the same one text box. They are
+ * still listed here, because the promise this array is making is about the
+ * *submission*, and that promise did not change when the controls did — this
+ * is the guard that would have caught the upper bound leaking away silently.
  */
 const POSTED_NAMES = [
   "givenName",
@@ -52,10 +54,14 @@ const POSTED_NAMES = [
   "birthDate",
   "birthDateQualifier",
   "birthDatePrecision",
+  "birthDateUpper",
+  "birthDateUpperPrecision",
   "birthPlace",
   "deathDate",
   "deathDateQualifier",
   "deathDatePrecision",
+  "deathDateUpper",
+  "deathDateUpperPrecision",
   "deathPlace",
   "notes",
 ] as const;
@@ -212,6 +218,34 @@ describe("the fields", () => {
     ).toBe("year");
   });
 
+  it("posts a typed range as five columns, upper bound and all (YEO-88)", () => {
+    // The highest-consequence guard in this ticket: if `DateField` did not
+    // post these two, a range would come back through the form with its
+    // upper bound silently gone.
+    const host = mount({
+      values: {
+        ...emptyIndividualFormValues,
+        birthDate: "between 1890 and 1900",
+      },
+    });
+
+    expect((control(host, "birthDate") as HTMLInputElement).value).toBe(
+      "1890-01-01",
+    );
+    expect(
+      (control(host, "birthDateQualifier") as HTMLInputElement).value,
+    ).toBe("exact");
+    expect(
+      (control(host, "birthDatePrecision") as HTMLInputElement).value,
+    ).toBe("year");
+    expect((control(host, "birthDateUpper") as HTMLInputElement).value).toBe(
+      "1900-01-01",
+    );
+    expect(
+      (control(host, "birthDateUpperPrecision") as HTMLInputElement).value,
+    ).toBe("year");
+  });
+
   it("posts a date it could not read unchanged, rather than nothing", () => {
     const host = mount({
       values: {
@@ -313,10 +347,14 @@ describe("prefilling from a record", () => {
     birthDate: null,
     birthDateQualifier: "exact",
     birthDatePrecision: "day",
+    birthDateUpper: null,
+    birthDateUpperPrecision: "day",
     birthPlace: null,
     deathDate: null,
     deathDateQualifier: "exact",
     deathDatePrecision: "day",
+    deathDateUpper: null,
+    deathDateUpperPrecision: "day",
     deathPlace: null,
     notes: null,
   };
@@ -336,10 +374,14 @@ describe("prefilling from a record", () => {
       birthDate: "1890-01-01",
       birthDateQualifier: "about",
       birthDatePrecision: "year",
+      birthDateUpper: null,
+      birthDateUpperPrecision: "day",
       birthPlace: "Cork",
       deathDate: "1953-11-02",
       deathDateQualifier: "exact",
       deathDatePrecision: "day",
+      deathDateUpper: null,
+      deathDateUpperPrecision: "day",
       deathPlace: "Dublin",
       notes: "From the 1911 census.",
     };
@@ -356,6 +398,20 @@ describe("prefilling from a record", () => {
       deathPlace: "Dublin",
       notes: "From the 1911 census.",
     });
+  });
+
+  it("writes a stored range back as 'between x and y' — the round trip the edit form depends on (YEO-88)", () => {
+    const ranged: IndividualFields = {
+      ...unknown,
+      birthDate: "1890-01-01",
+      birthDatePrecision: "year",
+      birthDateUpper: "1900-01-01",
+      birthDateUpperPrecision: "year",
+    };
+
+    expect(individualFormValuesFrom(ranged).birthDate).toBe(
+      "between 1890 and 1900",
+    );
   });
 
   it("fills every field the fieldset renders", () => {

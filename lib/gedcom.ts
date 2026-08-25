@@ -521,25 +521,26 @@ function readEvent(
  * The text is kept whatever happens, because the shared grammar cannot hold
  * everything GEDCOM writes and the report is where the difference goes.
  *
- * Ranges are the **settled** case now (`YEO-88`), not the open one this
- * comment used to describe. `BET 1890 AND 1900` and `FROM 1912 TO 1918` are
- * two dates and this schema has one column per event, so they are stored as
- * `after` the lower bound — at whatever precision that bound itself carries —
- * and the upper bound is reported rather than stored. `after 1890` is a claim
- * the file makes; `about 1895`, the midpoint, is one it does not, and
- * `dateRange` in `lib/field-input.ts` reads `after` as a real one-sided
- * interval where it reads `about` as no constraint at all. The loss is the
- * upper bound, it is deliberate, and docs/architecture.md is where it is
- * written down rather than hidden.
+ * Ranges are stored whole (`YEO-88`). `BET 1890 AND 1900` and `FROM 1912 TO
+ * 1918` are two dates and this schema now has two date columns per event, so
+ * both bounds land in the row, each at its own precision, and neither raises
+ * an issue — there is nothing to raise one about. This comment used to
+ * describe a collapse onto `after` the lower bound; that was built and
+ * rejected, and docs/architecture.md records why.
  *
- * What must still never happen is a range being read as a *plain* date. The
- * qualifier is what prevents it: every formatter prefixes `after`, so a
- * collapsed range reaches a screen as "after 1890" and never as "1890".
+ * `narrowed` still exists, for the three cases where something genuinely goes:
+ * an endpoint's own modifier (`BET ABT 1890 AND 1900`), an unreadable upper
+ * bound, and an `INT` interpretation phrase. Each names the text it read and
+ * what it wrote.
  *
- * Anything the grammar genuinely cannot read — including a range whose lower
- * bound is unreadable, where taking the upper one would be choosing an
- * endpoint at random — still arrives as a `date` issue with the text intact
- * and the field left blank.
+ * What must never happen is a range being read as a *single* date. Under the
+ * old collapse the qualifier prevented it; now the upper bound does, and
+ * `formatQualifiedDate` renders any row that has one as "between ... and ...".
+ *
+ * Anything the grammar cannot read — including a range whose *lower* bound is
+ * unreadable, where taking the upper one would be choosing an endpoint at
+ * random — still arrives as a `date` issue with the text intact and the field
+ * left blank.
  */
 function readEventDate(
   node: GedcomNode,
@@ -600,22 +601,25 @@ const TO_ONLY = /^TO\s+(.+)$/i;
 const INTERPRETED = /^INT\s+(.+?)(?:\s*\((.*)\))?$/i;
 
 /**
- * GEDCOM's multi-date forms, flattened onto one qualified date.
+ * GEDCOM's multi-date forms, split into the two bounds a range now has
+ * (`YEO-88`).
  *
- * Returns the date to store and, when something was dropped, the sentence
- * that says so — or `null` when the text is none of these forms and belongs
- * to `parseDateInput` unchanged.
+ * Returns the date to store — both bounds, for a two-point form — and, when
+ * something was still dropped, the sentence that says so. Returns `null` when
+ * the text is none of these forms and belongs to `parseDateInput` unchanged.
  *
- * The endpoints are not parsed here. Each is handed to `parseDateInput` like
- * any other date, which is what keeps `1890`, `MAR 1890` and `12 MAR 1890`
- * meaning the same three things inside a range as outside one. A second
- * endpoint grammar would drift from the first the day somebody fixed a bug in
- * only one of them, and the drift would be invisible.
+ * Neither endpoint is parsed by a grammar of its own. Each is handed to
+ * `parseDateInput` like any other date, which is what keeps `1890`,
+ * `MAR 1890` and `12 MAR 1890` meaning the same three things inside a range as
+ * outside one — and what lets `BET MAR 1890 AND 1900` keep the March on one
+ * side and the plain year on the other, rather than forcing one bound's
+ * precision onto both. A second endpoint grammar would drift from the first
+ * the day somebody fixed a bug in only one of them, and the drift would be
+ * invisible.
  *
- * The far endpoint is deliberately never parsed at all. It is not stored, so
- * whether it is readable changes nothing about the row, and quoting the whole
- * original text in the issue already puts it in front of the person who can
- * judge it.
+ * Both endpoints are read now, where under the collapse this ticket reversed
+ * only the lower one was. The upper bound is stored, not just quoted in an
+ * issue — see `readTwoPointSpan`.
  */
 function readGedcomDateSpan(
   text: string,
@@ -650,10 +654,18 @@ function readGedcomDateSpan(
 }
 
 /**
- * `BET x AND y` / `FROM x TO y`: stored as `after` the lower bound, at that
- * bound's own precision. The upper bound is quoted in the issue and nowhere
- * else — see the `readEventDate` docblock for why the midpoint was not taken
- * instead.
+ * `BET x AND y` / `FROM x TO y`: both bounds stored, each at its own
+ * precision, with the whole date's qualifier `exact` — the reading
+ * `db/schema.ts` settles for a stored range (`YEO-88`).
+ *
+ * A modifier on either endpoint (`BET ABT 1890 AND 1900`) has no column to
+ * go in — a fuzzy edge on a bound of an interval has no reader anywhere in
+ * this application — so it is dropped and reported, the same trade an `INT`
+ * phrase makes below. An unreadable *upper* bound falls back to the old
+ * collapse path: the lower bound is a real date the file gave, so it is
+ * stored as `after` it and the upper text is reported rather than losing the
+ * whole row. An unreadable *lower* bound is refused outright — see the
+ * caller.
  */
 function readTwoPointSpan(
   text: string,
@@ -674,15 +686,56 @@ function readTwoPointSpan(
     };
   }
 
+  const parsedUpper = parseDateInput(upper);
+
+  // The upper bound could not be read at all — the collapse this ticket
+  // reversed survives as the fallback here, because a lower bound the file
+  // genuinely gave is still worth keeping.
+  if (!parsedUpper.ok || parsedUpper.value === null) {
+    return {
+      ok: true,
+      value: {
+        date: parsedLower.value.date,
+        qualifier: "after",
+        precision: parsedLower.value.precision,
+        upper: null,
+        upperPrecision: "day",
+      },
+      narrowed: `The ${label} date "${text}" is a ${form} whose upper bound could not be read. Only "${lower}" was stored, as an "after" date; "${upper}" is not stored.`,
+    };
+  }
+
+  // A range's qualifier is always `exact` (`db/schema.ts`); an endpoint's own
+  // modifier is dropped, and, when one was, reported by name.
+  const droppedModifiers = [
+    parsedLower.value.qualifier === "exact"
+      ? null
+      : { qualifier: parsedLower.value.qualifier, text: lower },
+    parsedUpper.value.qualifier === "exact"
+      ? null
+      : { qualifier: parsedUpper.value.qualifier, text: upper },
+  ].filter((modifier) => modifier !== null);
+
+  const value: ParsedDate = {
+    date: parsedLower.value.date,
+    qualifier: "exact",
+    precision: parsedLower.value.precision,
+    upper: parsedUpper.value.date,
+    upperPrecision: parsedUpper.value.precision,
+  };
+
+  if (droppedModifiers.length === 0) {
+    return { ok: true, value, narrowed: null };
+  }
+
+  const modifierClause = droppedModifiers
+    .map((modifier) => `the "${modifier.qualifier}" on "${modifier.text}"`)
+    .join(" and ");
+
   return {
     ok: true,
-    // `after`, never the endpoint's own qualifier — `BET ABT 1890 AND 1900`
-    // collapses to `after 1890`, not `after about 1890`; there is no member
-    // of `date_qualifier` for the second.
-    value: { ...parsedLower.value, qualifier: "after" },
-    // `lower` is quoted verbatim, not re-rendered, so the sentence stays
-    // correct even when the endpoint carried its own modifier.
-    narrowed: `The ${label} date "${text}" is a ${form}, and this application stores one date per event. Only "${lower}" was stored, as an "after" date; "${upper}" is not stored.`,
+    value,
+    narrowed: `The ${label} date "${text}" is a ${form}, and a range's endpoints are already bounds. "${lower}" and "${upper}" were stored as the two ends; ${modifierClause} is not stored.`,
   };
 }
 
@@ -747,7 +800,14 @@ function readInterpretedDate(
   return {
     ok: true,
     value,
-    narrowed: `The ${label} date "${text}" was interpreted from a phrase. "${inner}" was stored as an "${qualifier}" date; the note "${phrase}" is not stored.`,
+    // `qualified as "${qualifier}"` rather than `stored as an "${qualifier}"
+    // date`: the latter needs an indefinite article that depends on the word
+    // that follows it, and `about`/`before`/`after` do not all take the same
+    // one — "an \"before\" date" was the bug this phrasing has no way to
+    // reintroduce, for any of the four members, forever. A ternary picking
+    // "a" or "an" would fix today's three words and break the day a fifth
+    // arrives.
+    narrowed: `The ${label} date "${text}" was interpreted from a phrase. Only "${inner}" was stored, qualified as "${qualifier}"; the note "${phrase}" is not stored.`,
   };
 }
 

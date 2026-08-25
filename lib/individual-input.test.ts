@@ -30,10 +30,14 @@ const MINIMAL_FIELDS: IndividualFields = {
   birthDate: null,
   birthDateQualifier: "exact",
   birthDatePrecision: "day",
+  birthDateUpper: null,
+  birthDateUpperPrecision: "day",
   birthPlace: null,
   deathDate: null,
   deathDateQualifier: "exact",
   deathDatePrecision: "day",
+  deathDateUpper: null,
+  deathDateUpperPrecision: "day",
   deathPlace: null,
   notes: null,
 };
@@ -84,10 +88,14 @@ describe("validateIndividual", () => {
       birthDate: "1815-12-10",
       birthDateQualifier: "exact",
       birthDatePrecision: "day",
+      birthDateUpper: null,
+      birthDateUpperPrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "exact",
       deathDatePrecision: "day",
+      deathDateUpper: null,
+      deathDateUpperPrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });
@@ -438,6 +446,137 @@ describe("validateIndividual", () => {
     expect(fields).not.toHaveProperty("pageId");
     expect(fields).toEqual(MINIMAL_FIELDS);
   });
+
+  describe("date ranges (YEO-88)", () => {
+    it("accepts a range's upper bound and its own precision", () => {
+      const fields = expectValid({
+        ...MINIMAL,
+        birthDate: "1890-03-01",
+        birthDatePrecision: "month",
+        birthDateUpper: "1900-01-01",
+        birthDateUpperPrecision: "year",
+      });
+
+      expect(fields.birthDateUpper).toBe("1900-01-01");
+      expect(fields.birthDateUpperPrecision).toBe("year");
+    });
+
+    it("refuses a non-exact qualifier beside a non-null upper bound", () => {
+      // A stored range's qualifier is always `exact` (`db/schema.ts`) — the
+      // qualifier describes the whole date expression, not either endpoint.
+      expect(
+        expectInvalid({
+          ...MINIMAL,
+          birthDate: "1890-01-01",
+          birthDateQualifier: "about",
+          birthDateUpper: "1900-01-01",
+        }),
+      ).toEqual(["birthDateUpper"]);
+    });
+
+    it("refuses an inverted range, reported against the upper-bound field", () => {
+      expect(
+        expectInvalid({
+          ...MINIMAL,
+          birthDate: "1900-01-01",
+          birthDateUpper: "1890-01-01",
+        }),
+      ).toEqual(["birthDateUpper"]);
+    });
+
+    it("normalises an upper bound to null when there is no lower date", () => {
+      const fields = expectValid({
+        ...MINIMAL,
+        birthDateUpper: "1900-01-01",
+        birthDateUpperPrecision: "year",
+      });
+
+      expect(fields.birthDate).toBeNull();
+      expect(fields.birthDateUpper).toBeNull();
+      expect(fields.birthDateUpperPrecision).toBe("day");
+    });
+
+    it("normalises the upper precision to day beside a null upper bound", () => {
+      const fields = expectValid({
+        ...MINIMAL,
+        birthDate: "1890-01-01",
+        birthDateUpperPrecision: "year",
+      });
+
+      expect(fields.birthDateUpper).toBeNull();
+      expect(fields.birthDateUpperPrecision).toBe("day");
+    });
+
+    it("refuses the same rules on the death date", () => {
+      expect(
+        expectInvalid({
+          ...MINIMAL,
+          deathDate: "1900-01-01",
+          deathDateUpper: "1890-01-01",
+        }),
+      ).toEqual(["deathDateUpper"]);
+
+      expect(
+        expectInvalid({
+          ...MINIMAL,
+          deathDate: "1890-01-01",
+          deathDateQualifier: "before",
+          deathDateUpper: "1900-01-01",
+        }),
+      ).toEqual(["deathDateUpper"]);
+    });
+
+    describe("isImpossibleOrder against a range", () => {
+      it("refuses a birth after a death range's upper bound — the collapsed reading could never catch this", () => {
+        // Under the collapse this ticket reversed, `BET 1890 AND 1900`
+        // stored as `after 1890` has an unbounded `latest`, so "born 1950,
+        // died between 1890 and 1900" could never be refused. Stored whole,
+        // `latest` is 1900-12-31, and the refusal is exactly what a
+        // genealogist would expect.
+        expect(
+          expectInvalid({
+            ...MINIMAL,
+            birthDate: "1950-01-01",
+            deathDate: "1890-01-01",
+            deathDateUpper: "1900-01-01",
+          }),
+        ).toEqual(["deathDate"]);
+      });
+
+      it("accepts a birth range that could overlap a later death", () => {
+        expect(
+          expectValid({
+            ...MINIMAL,
+            birthDate: "1890-01-01",
+            birthDateUpper: "1900-01-01",
+            deathDate: "1895-01-01",
+          }).deathDate,
+        ).toBe("1895-01-01");
+      });
+
+      it("refuses a death before every possible reading of a birth range", () => {
+        expect(
+          expectInvalid({
+            ...MINIMAL,
+            birthDate: "1890-01-01",
+            birthDateUpper: "1900-01-01",
+            deathDate: "1889-01-01",
+          }),
+        ).toEqual(["deathDate"]);
+      });
+
+      it("accepts a death range that could overlap a birth", () => {
+        expect(
+          expectValid({
+            ...MINIMAL,
+            birthDate: "1890-01-01",
+            deathDate: "1889-01-01",
+            deathDateUpper: "1895-01-01",
+          }).deathDate,
+        ).toBe("1889-01-01");
+      });
+    });
+  });
 });
 
 describe("fieldErrorsFrom", () => {
@@ -486,13 +625,31 @@ describe("individualInputFromFormData", () => {
       birthDate: "1815-12-10",
       birthDateQualifier: "about",
       birthDatePrecision: "day",
+      birthDateUpper: null,
+      birthDateUpperPrecision: "day",
       birthPlace: "London",
       deathDate: "1852-11-27",
       deathDateQualifier: "exact",
       deathDatePrecision: "day",
+      deathDateUpper: null,
+      deathDateUpperPrecision: "day",
       deathPlace: "Marylebone",
       notes: "Countess of Lovelace.",
     });
+  });
+
+  it("reads a range's upper bound and its precision (YEO-88)", () => {
+    // The highest-consequence guard in this ticket: if this field were left
+    // out, every edit-form save would silently drop the upper bound.
+    const form = new FormData();
+    form.set("givenName", "Ada");
+    form.set("birthDate", "1890-01-01");
+    form.set("birthDateUpper", "1900-01-01");
+    form.set("birthDateUpperPrecision", "year");
+
+    const fields = expectValid(individualInputFromFormData(form));
+    expect(fields.birthDateUpper).toBe("1900-01-01");
+    expect(fields.birthDateUpperPrecision).toBe("year");
   });
 
   it("passes a missing field through as absent, not as a string", () => {

@@ -69,8 +69,12 @@ export type PersonSearchRow = {
   surname: string | null;
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
+  /** The upper bound of a birth-date range (`YEO-88`); `formatLifespan` needs it too. */
+  birthDateUpper: string | null;
   deathDate: string | null;
   deathDateQualifier: DateQualifier;
+  /** The upper bound of a death-date range, as `birthDateUpper` is. */
+  deathDateUpper: string | null;
 };
 
 /**

@@ -215,7 +215,8 @@ export function readEnum<T extends string>(
 }
 
 /**
- * The earliest and latest day a date-plus-qualifier could actually mean.
+ * The earliest and latest day a date-plus-qualifier — and, since `YEO-88`,
+ * its optional upper bound — could actually mean.
  *
  * This is what makes "death not before birth" — and "a marriage did not end
  * before it began" — defensible rather than annoying. A qualifier is not
@@ -235,12 +236,28 @@ export function readEnum<T extends string>(
  * | `month` | `[1890-01-01, 1890-01-31]` |
  * | `year` | `[1890-01-01, 1890-12-31]` |
  *
- * | qualifier | means | interval, over that span `[s, e]` |
+ * `earliest` always comes from the lower anchor's own span, exactly as it did
+ * before `YEO-88` — a stored upper bound only ever widens what a date could
+ * mean, never moves where it could start. `latest` is where the upper bound
+ * acts: it comes from `upper`'s own precision span when `upper` is non-null,
+ * and from the lower anchor's span otherwise, which is the single-point
+ * behaviour unchanged:
+ *
+ * | qualifier | `upper` | interval, `[s, e]` lower's span, `E` upper's span end |
  * | --- | --- | --- |
- * | `exact` | somewhere in the span | `[s, e]` |
- * | `before` | at some point up to then | `(−∞, e]` |
- * | `after` | at some point from then on | `[s, +∞)` |
- * | `about` | roughly then, unquantified | `(−∞, +∞)` |
+ * | `exact` | null | `[s, e]` |
+ * | `exact` | non-null | `[s, E]` |
+ * | `before` | null | `(−∞, e]` |
+ * | `before` | non-null | `(−∞, E]` |
+ * | `after` | any | `[s, +∞)` |
+ * | `about` | any | `(−∞, +∞)` |
+ *
+ * This stays total rather than refusing an illegal combination — a
+ * non-`exact` qualifier beside a non-null `upper`, which `validateIndividual`
+ * and `validateUnion` refuse before a row is ever written, but a hand-made
+ * `INSERT` can still produce. Every such row degrades to a weaker-but-true
+ * reading instead of throwing, the posture `precisionSpan` below already
+ * takes for a malformed anchor.
  *
  * Widening by precision is not a nicety. A year-only date is stored on the
  * first of January (see `DATE_PRECISIONS`), so without it a person born
@@ -258,14 +275,17 @@ function dateRange(
   date: string,
   qualifier: DateQualifier,
   precision: DatePrecision,
+  upper: string | null,
+  upperPrecision: DatePrecision,
 ): { earliest: string | null; latest: string | null } {
   const { start, end } = precisionSpan(date, precision);
+  const latestEnd = upper ? precisionSpan(upper, upperPrecision).end : end;
 
   switch (qualifier) {
     case "exact":
-      return { earliest: start, latest: end };
+      return { earliest: start, latest: latestEnd };
     case "before":
-      return { earliest: null, latest: end };
+      return { earliest: null, latest: latestEnd };
     case "after":
       return { earliest: start, latest: null };
     case "about":
@@ -307,7 +327,8 @@ function precisionSpan(
 
 /**
  * A date column read together with its `date_qualifier` and `date_precision`
- * siblings.
+ * siblings — and, since `YEO-88`, the upper bound that makes it a range,
+ * with its own precision.
  *
  * `precision` is **required, and deliberately has no default** — the same
  * decision `formatQualifiedDate` documents in `lib/format-date.ts`, made here
@@ -323,12 +344,17 @@ function precisionSpan(
  * validation rule, from a caller that only forgot a field. Both call sites
  * (`lib/individual-input.ts`, `lib/union-input.ts`) already pass it, so
  * requiring it costs nothing and is checked by the compiler rather than by a
- * reviewer.
+ * reviewer. `upper` and `upperPrecision` are required for the identical
+ * reason: `null` for `upper` is how "this date is a single point" is said, so
+ * there is always a real value to pass, never a case for a default to paper
+ * over.
  */
 export type QualifiedDate = {
   date: string;
   qualifier: DateQualifier;
   precision: DatePrecision;
+  upper: string | null;
+  upperPrecision: DatePrecision;
 };
 
 /**
@@ -346,6 +372,15 @@ export type QualifiedDate = {
  *
  * ISO `YYYY-MM-DD` is fixed-width and zero-padded, so its lexicographic order
  * is its chronological order and no parsing is needed to compare two of them.
+ *
+ * **A stored range only ever narrows this check, never loosens it (`YEO-88`).**
+ * An upper bound moves `latest` outward and never touches `earliest`, so a
+ * death recorded `BET 1890 AND 1900` now has a `latest` of 1900-12-31 rather
+ * than the unbounded one an `after`-only reading would have given it — "born
+ * 1950, died between 1890 and 1900" is refused here where it could not have
+ * been refused before this ticket. Every date this function accepted before
+ * `YEO-88` still has `upper === null`, so nothing it used to accept is newly
+ * refused.
  */
 export function isImpossibleOrder(
   first: QualifiedDate,
@@ -355,15 +390,36 @@ export function isImpossibleOrder(
     first.date,
     first.qualifier,
     first.precision,
+    first.upper,
+    first.upperPrecision,
   ).earliest;
   const laterLatest = dateRange(
     later.date,
     later.qualifier,
     later.precision,
+    later.upper,
+    later.upperPrecision,
   ).latest;
 
   if (firstEarliest === null || laterLatest === null) return false;
   return laterLatest < firstEarliest;
+}
+
+/**
+ * Whether a range's upper bound is written before its lower bound —
+ * `BET 1900 AND 1890`, a range backwards (`YEO-88`).
+ *
+ * `lib/gedcom.ts` stores such a range exactly as written, because reading a
+ * file and validating against the schema are different jobs; this is the
+ * function `validateIndividual`/`validateUnion` call to be the gate, reported
+ * against the upper-bound field so the author looking at the message is
+ * looking at the one date most likely to be the typo.
+ *
+ * ISO `YYYY-MM-DD` compares lexicographically, exactly as `isImpossibleOrder`
+ * above relies on, so no parsing is needed here either.
+ */
+export function isInvertedRange(date: string, upper: string): boolean {
+  return upper < date;
 }
 
 /**
