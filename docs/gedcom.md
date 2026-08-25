@@ -5,15 +5,16 @@ is how a family tree gets into this application and how it gets back out
 again, and being able to get it back out again is the promise that makes it
 reasonable to put decades of somebody's work in here in the first place.
 
-This page covers the **parser** — E6-T1 (`YEO-46`), the read half — and the
+This page covers the **parser** — E6-T1 (`YEO-46`), the read half — the
 **mapping** onto `individuals`, `unions` and `union_children`, which is E6-T2
-(`YEO-47`), and the **preview** somebody reads before an import happens, which
-is E6-T3 (`YEO-48`). Writing the rows is E6-T4 and reporting on them
-afterwards is E6-T5.
+(`YEO-47`), the **preview** somebody reads before an import happens, which is
+E6-T3 (`YEO-48`), and the **export** back out, which is E7-T1 (`YEO-51`).
+Writing the rows is E6-T4 and reporting on them afterwards is E6-T5.
 
 ## The pipeline
 
-Six modules, each with one job, in the order the bytes move through them:
+Six modules on the way in, each with one job, in the order the bytes move
+through them:
 
 | Module                   | Takes         | Gives                                   |
 | ------------------------ | ------------- | --------------------------------------- |
@@ -24,8 +25,16 @@ Six modules, each with one job, in the order the bytes move through them:
 | `lib/gedcom-map.ts`      | that          | rows for the three tables, and a report |
 | `lib/gedcom-import.ts`   | those rows    | three tables written, or nothing at all |
 
-`lib/gedcom-report.ts` holds the vocabulary the last three use to say what they
-could not use.
+And two on the way back out:
+
+| Module                 | Takes                     | Gives       |
+| ---------------------- | ------------------------- | ----------- |
+| `lib/export-tree.ts`   | the database              | rows        |
+| `lib/gedcom-export.ts` | rows for the three tables | GEDCOM text |
+
+`lib/gedcom-report.ts` holds the vocabulary the reading modules use to say what
+they could not use. The export has no equivalent and needs none: it is writing
+a format it chose, not reading one somebody else wrote.
 
 The line between the last two is where the vocabulary changes hands.
 `lib/gedcom.ts` stops at the last point that is still true of the **file** —
@@ -41,8 +50,9 @@ grammar, whole files for the parser.
 ## The one thing that must stay true
 
 **Nothing here reaches the database.** No `@/db`, no React, no `next/*`, no
-npm package at all — see `lib/gedcom.purity.test.ts`, which walks both import
-closures, the parser's and the mapper's, and asserts it.
+npm package at all — see `lib/gedcom.purity.test.ts`, which walks all four
+import closures — the parser's, the mapper's, the preview's and, since E7-T1
+(`YEO-51`), the exporter's — and asserts it.
 
 The mapper's closure is the parser's plus the three E3-T1 validation modules
 (`lib/individual-input.ts`, `lib/union-input.ts`, `lib/child-input.ts`) and
@@ -363,6 +373,142 @@ correctly. Both are deliberately absent from `lib/gedcom-import.ts` today,
 because it has nothing to refuse: every decision was made before the
 transaction opened, so anything that goes wrong inside it is a genuine fault
 and is left to propagate.
+
+## Writing it back out
+
+`lib/gedcom-export.ts` (E7-T1, `YEO-51`) is the mapping run backwards: rows for
+the three tables in, a GEDCOM 5.5.1 file out. `lib/export-tree.ts` is the thin
+half that reads the rows, and it is the only part of the export that knows
+`@/db` exists — the serialiser itself is under the same purity rule as the
+parser and the mapper, and `lib/gedcom.purity.test.ts` walks its closure too.
+
+Being able to get a tree back out again is the promise that makes it reasonable
+to put decades of somebody's work in here in the first place, so this is a
+feature of the data model rather than a convenience on top of it.
+
+### It reverses the mapping rather than restating it
+
+That is an acceptance criterion, and it is the kind that decays quietly: a
+second table saying `adopted` -> `adopted` typechecks forever and stops
+agreeing with the first the day somebody adds a member to one of them.
+
+So the two vocabulary tables are **imported and inverted**. `SEX_CODES` lives
+in `lib/gedcom.ts` and `PEDIGREES` in `lib/gedcom-map.ts`; the exporter reads
+each one backwards, and the test drives every member of `Sex` and of
+`ChildRelation` out through the file and back in through the mapper — so a new
+enum member without a spelling is a test failure rather than a line quietly
+missing from somebody's export.
+
+Two things genuinely cannot be inverted, and they are the two the import side
+reads _many_ spellings of: `QUALIFIER_PREFIXES` maps sixteen words onto four
+qualifiers, and `MONTHS` maps twenty-two onto twelve. An inverse would have to
+pick one spelling per member, which is a choice about output rather than a
+fact recoverable from the input table. The exporter makes that choice
+explicitly — `ABT`, `BEF`, `AFT`, and `JAN` to `DEC` — and the test holds it to
+the same standard by round-tripping every string it can emit.
+
+### Deterministic, because E7-T2 compares bytes
+
+E7-T2 (`YEO-52`) round-trips export -> import -> export and requires the two
+texts to be identical. Three things follow.
+
+- **No clock, no randomness, no environment.** The header's `DATE` is optional
+  in 5.5.1 and is not written. A timestamp would make every export of an
+  unchanged tree a different file, which defeats the round trip and also
+  defeats the much more ordinary case of diffing two backups.
+- **Ordering is derived from what survives the trip.** The row ids do not: an
+  export writes `@I1@` and a re-import mints fresh UUIDs. So individuals sort
+  on surname, given name and their two dates, unions on where each partner
+  landed in that order and on their own dates, and the caller's order breaks a
+  tie. `unions.sequence` is deliberately not a sort key — GEDCOM has no
+  equivalent, so it is re-derived on the way in and would put the second export
+  in a different order from the first.
+- **Strings compare by code unit, not by locale.** `localeCompare` depends on
+  whatever ICU data the process was built with.
+
+The xrefs are then positional — `I1`, `F1` — which is what makes them stable
+without being derived from an id that is not.
+
+### It writes what it is given, and does not validate
+
+The round trip closes for every tree this application can produce — which is
+every tree that went through `validateIndividual`, `validateUnion` and
+`validateChildLink`. Where a row can be written _around_ those by hand, the
+export still writes a file that says what a reader will read:
+
+- A **place is collapsed** exactly as the parser collapses it. `readText` only
+  trims on the way into the column, so `Whitby,  Yorkshire` with two spaces is
+  a storable value — and written verbatim it would come back with one space and
+  the second export would disagree with the first.
+- A **name is trimmed** and deliberately _not_ collapsed, because the parser
+  trims a name and does not collapse one. `John  Henry` survives the trip
+  exactly as stored.
+- A **`FAM` with no partner is not written.** `validateUnion` refuses one — a
+  union needs at least one partner — so the record would say nothing about
+  anybody. It is dropped before the xrefs are handed out, so it cannot shift
+  the numbering of the families that are intact.
+- A **`CHIL` naming one of the family's own partners is not written.**
+  `1 WIFE @I2@` beside `1 CHIL @I2@` is a contradiction no reader can resolve,
+  and the mapping refuses it by name on the way back in.
+
+What the export does **not** do is repair a row whose _values_ the schema
+refuses. A birth recorded as `BET 1900 AND 1890`, or a person in a union with
+themselves, is written faithfully and then declined by the validators on the
+way back in, with a sentence on the import report saying so. Silently reversing
+the bounds would be the export inventing a recovery policy the import side
+deliberately does not have, and hiding a broken row rather than surfacing it.
+
+### What a first export narrows
+
+Three states the schema can hold and GEDCOM cannot. All three lose the same
+thing the import side would have lost anyway, all three are **stable from the
+second pass on**, and none of them is silent in the sense that matters: the
+loss is a property of the format, written down here, rather than of a
+particular file.
+
+| The schema says                       | The file says     | Read back as               |
+| ------------------------------------- | ----------------- | -------------------------- |
+| `type` `partnership`, with a date     | `MARR` and a date | `marriage`                 |
+| `type` `partnership`, undated         | nothing           | `unknown`                  |
+| `end_reason` `separation` / `unknown` | nothing           | `ongoing`, or `death`      |
+| `sequence`                            | nothing           | re-derived from file order |
+
+`end_reason` `divorce` is `DIV` directly, and `death` is deliberately not
+written: `lib/gedcom-map.ts` infers it back from the partners' own death dates,
+which is where the date already lives and the only place it should ever be
+corrected. An `end_date` beside a reason GEDCOM has no tag for goes with the
+reason — the alternative is writing `DIV` for a couple who did not divorce,
+which is a claim the file would then be making on this application's behalf.
+
+`notes` on either table are not written either, and that one is not a
+narrowing so much as a scope line. The parser does not read `NOTE`, so a note
+written here would be dropped on the way back in and absent from the second
+export — the round trip would fail on data the exporter had invented a use
+for. E7-T4 (`YEO-54`) is the ticket that puts entries and notes in a backup, as
+JSON beside the GEDCOM rather than inside it, because the genealogy standard
+has nowhere to put a wiki.
+
+Everything else is written back, including both bounds of a range and the
+`PEDI` on every child link.
+
+### Two small departures from 5.5.1, both deliberate
+
+`CHAR UTF-8`, where the specification lists only `ANSEL`, `UNICODE` and
+`ASCII`. Every reader written this century takes UTF-8 — it is what 5.5.5 went
+on to require — and the alternative is writing ANSEL, which cannot represent
+most of the world's names and is the character set `lib/ansel.ts` exists to
+rescue people _from_.
+
+And `PEDI step`, which is not one of 5.5.1's four pedigree values. It is a
+member of `child_relation` and it is written by more than one program, so the
+import side already reads it; refusing to write it would throw away a fact on
+the way out that the same pipeline was happy to accept on the way in.
+
+The header is otherwise complete, including the `SUBM` pointer and the
+submitter record it names — both mandatory in 5.5.1, and both checked by the
+strict validators. The submitter is the application rather than a person:
+nothing in this schema records who exported a file, and inventing a name for
+them would be worse than naming the program that wrote it.
 
 ## Nothing is dropped in silence
 

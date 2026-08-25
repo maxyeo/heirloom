@@ -175,8 +175,13 @@ const UNNAMED = "Unknown";
  * `sealing` is deliberately absent: it is an LDS ordinance, not a kind of
  * parentage, and it is handled below with a sentence of its own rather than
  * quietly folded into `biological` by a table.
+ *
+ * Exported for E7-T1 (`YEO-51`), which inverts it to write `PEDI` back out.
+ * The reversal is a lookup over this table rather than a table of its own, for
+ * the reason `SEX_CODES` gives in `lib/gedcom.ts`: two tables describing one
+ * correspondence drift the day somebody edits one of them.
  */
-const PEDIGREES: Readonly<Record<string, ChildRelation>> = {
+export const PEDIGREES: Readonly<Record<string, ChildRelation>> = {
   birth: "biological",
   adopted: "adopted",
   foster: "foster",

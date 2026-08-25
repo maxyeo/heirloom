@@ -208,8 +208,16 @@ export type GedcomFile = {
   issues: GedcomIssue[];
 };
 
-/** GEDCOM's `SEX` codes and the `sex` enum members they mean. */
-const SEX_CODES: Readonly<Record<string, Sex>> = {
+/**
+ * GEDCOM's `SEX` codes and the `sex` enum members they mean.
+ *
+ * Exported so that E7-T1 (`YEO-51`) can write it the other way round rather
+ * than keep a second copy. An export needs `male` -> `M`, which is this table
+ * inverted — and a second table saying so would typecheck forever and stop
+ * agreeing with this one the day `sex` gains a member. See `invert` in
+ * `lib/gedcom-export.ts`.
+ */
+export const SEX_CODES: Readonly<Record<string, Sex>> = {
   M: "male",
   F: "female",
   // Not in 5.5.1, which offers only M, F and U — but written by more than one

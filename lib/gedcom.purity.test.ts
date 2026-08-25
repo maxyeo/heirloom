@@ -46,6 +46,14 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 /**
  * The public entry points. Everything either one reaches is in scope.
  *
+ * Four of them since E7-T1 (`YEO-51`), and the fourth is what the other three
+ * were kept pure *for*. `lib/gedcom-export.ts` writes the rows back out as a
+ * file, and E7-T2 (`YEO-52`) round-trips export through import and compares
+ * the two texts byte for byte — a comparison that can only be a test of the
+ * *format* while neither half needs a database. The reading of the rows is
+ * `lib/export-tree.ts`, which is deliberately on the other side of this line
+ * and is not an entry point here.
+ *
  * Three of them since E6-T3 (`YEO-48`). `lib/import-preview.ts` is the third
  * and the one this rule was always for: it turns a mapping into the counts,
  * the sample and the warnings somebody reads *before* deciding whether to
@@ -67,6 +75,7 @@ const ENTRIES = {
   parser: join("lib", "gedcom.ts"),
   mapper: join("lib", "gedcom-map.ts"),
   preview: join("lib", "import-preview.ts"),
+  exporter: join("lib", "gedcom-export.ts"),
 } as const;
 
 /**
@@ -270,5 +279,58 @@ describe("the preview's import closure", () => {
     // preview that counted rows its own way would still typecheck, and would
     // quietly start describing an import that E6-T4 does not perform.
     expect(files).toContain(join("lib", "gedcom-map.ts"));
+  });
+});
+
+describe("the exporter's import closure", () => {
+  const { files, packages } = closure(ENTRIES.exporter);
+
+  it("is the mapper's closure and itself, and nothing more", () => {
+    // The exporter reaches everything the mapper does because it *reuses* the
+    // mapping rather than restating it: `PEDIGREES` comes from
+    // `lib/gedcom-map.ts` and `SEX_CODES` from `lib/gedcom.ts`, inverted
+    // rather than copied. A closure that had shrunk would mean somebody had
+    // written a second copy of one of those tables.
+    expect(files.sort()).toEqual(
+      [
+        join("lib", "ansel.ts"),
+        join("lib", "child-input.ts"),
+        join("lib", "field-input.ts"),
+        join("lib", "gedcom-encoding.ts"),
+        join("lib", "gedcom-export.ts"),
+        join("lib", "gedcom-lines.ts"),
+        join("lib", "gedcom-map.ts"),
+        join("lib", "gedcom-report.ts"),
+        join("lib", "gedcom.ts"),
+        join("lib", "individual-input.ts"),
+        join("lib", "parse-date.ts"),
+        join("lib", "row-id.ts"),
+        join("lib", "union-input.ts"),
+      ].sort(),
+    );
+  });
+
+  it("imports no package at all", () => {
+    expect(packages.filter((name) => !ALLOWED.has(name))).toEqual([]);
+  });
+
+  it("never reaches the database", () => {
+    // `lib/export-tree.ts` is the half that does, and it is not in here.
+    for (const file of files) {
+      expect(read(file)).not.toContain('from "@/db');
+      expect(read(file)).not.toContain('from "./db');
+      expect(read(file)).not.toContain("drizzle-orm");
+    }
+  });
+
+  it("reuses the mapping's own tables rather than a second copy of them", () => {
+    // Stated as a source assertion as well as a closure one, because the
+    // failure this guards against is not an import going missing — it is an
+    // import staying put beside a hand-written table that has quietly stopped
+    // agreeing with it.
+    const source = read(ENTRIES.exporter);
+
+    expect(source).toContain('import { SEX_CODES } from "./gedcom"');
+    expect(source).toContain('import { PEDIGREES } from "./gedcom-map"');
   });
 });
