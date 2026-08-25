@@ -640,6 +640,22 @@ function mapChildren(
       relation: relationFor(sourceByXref.get(xref), family, issues),
     });
 
+    /**
+     * Unreachable from any file, and kept anyway.
+     *
+     * `validateChildLink` refuses three things — a `unionId` or `childId` not
+     * shaped like a row id, and a `relation` outside the enum — and this
+     * caller supplies all three itself: both ids were minted by
+     * `crypto.randomUUID` above, and `relationFor` returns a `ChildRelation`
+     * on every path including its fallbacks. So there is no `.ged` that can
+     * drive this branch, which is why no test does.
+     *
+     * It is written out rather than asserted away because the alternative is
+     * writing *through* the validation layer for two records and around it
+     * for the third, which is the exact thing `docs/gedcom.md` says the
+     * mapping does not do. The day somebody adds a check here that a file
+     * *can* fail, the reporting is already correct.
+     */
     if (!checked.ok) {
       for (const issue of checked.issues) {
         issues.push({

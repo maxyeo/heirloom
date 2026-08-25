@@ -365,6 +365,12 @@ export function formatImportReport(
  * distinguishable reports rather than `import-report (3).txt`.
  */
 export function importReportFilename(fileName: string): string {
+  // The three steps below are order-dependent, which is easy to miss because
+  // each one reads correctly on its own. The extension has to go first or
+  // `.ged` is not at the end to match; the dot-trim has to go last, because
+  // the substitution before it can *create* a leading dot — `..\.ged` becomes
+  // `..-` only after the separator is replaced. Swapping the last two reopens
+  // the hidden-file case that `lib/import-report.test.ts` pins.
   const stem = fileName
     .replace(/\.(ged|gedcom)$/i, "")
     // Anything that is not a word character, a dot or a dash becomes a dash,

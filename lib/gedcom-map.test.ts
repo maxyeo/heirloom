@@ -868,6 +868,41 @@ describe("records the validation layer refuses", () => {
     ]);
   });
 
+  it("leaves out a child the validator refused, and names them", () => {
+    // The `CHIL` counterpart of the `HUSB` case above, and the sixth of the
+    // six places a skip is raised. The child is refused on their own record —
+    // a death before a birth — and the link goes with them, so the file's one
+    // family ends up with no children at all.
+    const mapping = map(`0 @I1@ INDI
+1 NAME A /One/
+0 @I2@ INDI
+1 NAME B /Two/
+1 BIRT
+2 DATE 1950
+1 DEAT
+2 DATE 1900
+0 @F1@ FAM
+1 HUSB @I1@
+1 CHIL @I2@`);
+
+    expect(mapping.unions).toHaveLength(1);
+    expect(mapping.unionChildren).toEqual([]);
+    // Two skips: the person, and the child link that could not survive them.
+    // The second names the child rather than the family that lost them.
+    expect(skips(mapping.issues).map((skip) => skip.record.tag)).toEqual([
+      "INDI",
+      "FAM.CHIL",
+    ]);
+    expect(skips(mapping.issues)[1].record).toEqual({
+      tag: "FAM.CHIL",
+      xref: "I2",
+      label: "B Two",
+    });
+    expect(messages(mapping.issues, "skipped")).toContainEqual(
+      expect.stringContaining("are not a child of this family"),
+    );
+  });
+
   it("writes one union_children row for a child named twice", () => {
     // The table is keyed on the pair, so the second row could not be written.
     const mapping = map(`0 @I1@ INDI
