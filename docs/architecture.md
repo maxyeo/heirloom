@@ -52,6 +52,45 @@ Google's app verification. The 7-day refresh-token expiry that Testing mode
 imposes is irrelevant here — Google is used for identity only, never to call
 Google APIs on a user's behalf.
 
+### Images
+
+Photographs are inside that boundary too, and putting them there was a
+decision rather than a default (`YEO-86`).
+
+Blob stores are created public or private. A public store serves every object
+at a permanent, unauthenticated URL, and the only thing protecting a family
+photograph is that the URL is long and nobody has guessed it. That is how most
+photo hosting on the internet works, and for one release it is how this worked
+too: E5-T1 shipped `access: "public"` and wrote the trade down honestly rather
+than leaving it to be discovered.
+
+The trade did not survive being looked at. Everything ordinary that moves a
+URL moves the image with it — a browser history on a shared laptop, a link
+pasted into a family chat, a referrer header, a bookmark sync, a page
+forwarded to a relative who is not on the list. None of those are exotic for a
+wiki whose entire purpose is to be shown to relatives, and the failure is
+silent and permanent: nobody finds out, and there is no revocation short of
+deleting the file. The counter-argument — that these are photographs, not
+credentials — is true and does not reach the point. It argues about how bad
+the exposure is, not about whether the deployer expected it, and a family that
+put its wiki behind a list of email addresses plainly expected the photographs
+to be behind it too.
+
+So the store is **private**, and `lib/storage.ts` hands out **signed URLs that
+expire fifteen minutes after they are minted**. Two things follow, and the
+second is the one that matters:
+
+- Nothing reaches an image without asking this application first, and this
+  application requires a session.
+- A leak is time-boxed. The URL sitting in somebody's chat history stopped
+  working the same afternoon. That is the difference between a mistake and a
+  permanent exposure, and it is why "unguessable is basically fine" was the
+  wrong answer even though the photographs are not secrets.
+
+What it costs is that an image URL is no longer a durable thing anybody can
+write down. The expiry itself, and the contract that follows from it, are in
+[The storage seam](#the-storage-seam).
+
 ### Entry HTML
 
 Entry bodies are the one place authored markup reaches the browser. TipTap
@@ -398,7 +437,7 @@ object store has `put`/`get`/`delete`; the moment a fourth appears — `list`,
 narrows to the ones that agree with Vercel, which is the seam leaking rather
 than widening.
 
-Four decisions inside the module are worth naming, because each is a default
+Five decisions inside the module are worth naming, because each is a default
 that would have been wrong:
 
 - **The credential is `STORAGE_TOKEN`**, read and passed explicitly. The SDK
@@ -414,14 +453,62 @@ that would have been wrong:
   are one host's opinion is not a seam.
 - **`get` returns a URL, not bytes.** Every host can produce one, and the
   alternative makes the application a proxy for its own static assets.
+- **The store is private and the URL expires.** `access: "private"`, and both
+  `put` and `get` return a signed URL rather than a permanent one. Why is
+  [Images](#images) above; what it costs is the rest of this section.
 
-That last one carries a trade worth stating plainly: blobs are stored with
-`access: "public"`, so an image URL is reachable by anyone holding it,
-outside the `ALLOWED_EMAILS` boundary that guards everything else. The URL is
-unguessable — a random store id plus the key — but a leaked one is a readable
-image. It is a trade rather than a hole precisely because of the seam: moving
-to short-lived signed URLs changes `put` and `get` in this one file and no
-call site.
+#### Signed URLs, and what they cost
+
+The seam paid for itself here, which is worth recording because that is the
+kind of claim nobody usually gets to check. E5-T1 asserted that moving to
+short-lived signed URLs "changes `put` and `get` in this one file and no call
+site". `YEO-86` made the move: `lib/storage.ts` changed, its tests changed,
+and the tripwire stayed green because the two new vendor calls
+(`issueSignedToken`, `presignUrl`) landed inside the same file as the old
+ones. The exported surface is still exactly `put` / `get` / `delete` — signing
+is not a fourth function, which matters, because a `presign` export would have
+narrowed the seam to hosts that agree with Vercel about how signing works.
+S3, GCS and R2 all sign; a directory on disk can mint its own token. What they
+do not agree on is the shape of the call, which is why it stays in here.
+
+**Fifteen minutes**, chosen against what the URL has to survive rather than
+against a round number. Its real job is the gap between rendering a page and
+the browser fetching the image off it — seconds — and the rest is slack for a
+slow connection, a tab left to load, or somebody opening the picture in its
+own tab. A reload re-signs, so nothing user-visible depends on the window
+being generous. What fifteen minutes deliberately does not outlast is the
+leak, and every route in [Images](#images) is discovered later than that.
+
+The delegation the signature is derived from is cached for an hour and reused.
+Issuing one per URL would put a control-API round trip in front of every
+image on a page, so a tree of thirty portraits would make thirty of them. It
+is a cache lifetime and not a boundary: the signing key never leaves the
+server, and what a browser receives is a URL already bound to one pathname and
+one expiry.
+
+##### The contract this sets for E5-T2 and after
+
+> `key` is the durable handle. `url` is not — never persist it.
+
+This is the "stable URL" question `YEO-42` has to answer, and the answer is
+that the stable URL is not the storage host's. An entry body that embedded a
+signed URL would render for fifteen minutes and show a broken image for the
+rest of that revision's life, and revisions are append-only, so the broken
+HTML would never be edited away. So:
+
+- **The upload endpoint returns a key**, and the stable reference an author's
+  HTML carries is a **site-relative path of this application's own**, resolved
+  through `storage.get` per request. That is the same shape and the same
+  reasoning as [Links between entries](#links-between-entries): bodies outlive
+  the domain they were written on, and an absolute URL to somebody else's host
+  ages badly and silently.
+- **The sanitiser allowlist never needs to name a storage host.** Pinning
+  `img[src]` to `*.blob.vercel-storage.com` would have written the vendor into
+  the one file that is meant to be about markup, and undone the portability
+  claim from a direction nothing was watching.
+- **E5-T5's cleanup has something to match on.** "Referenced by no revision"
+  is a query over keys. Against expiring URLs it would not be a well-formed
+  question.
 
 The credential itself belongs with `AUTH_SECRET` in the section above: it
 grants write and delete on the store, and never appears in the repository.

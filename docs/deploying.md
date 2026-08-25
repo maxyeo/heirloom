@@ -134,15 +134,16 @@ In Vercel, under **Settings → Environment Variables**. Every variable below is
 needed in the **Production** scope; add them to Preview and Development too
 only if you intend to deploy those, which by default this repository does not.
 
-| Variable                 | Required | What it is, and where it comes from                                                                                      |
-| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`           | Yes      | Supabase **transaction** pooler string, port `6543` (step 1). Every request the app serves goes through it               |
-| `MIGRATE_DATABASE_URL`   | Yes      | Supabase **session** pooler string, port `5432` (step 1). Used only by the migration step of the build                   |
-| `AUTH_SECRET`            | Yes      | Generate it yourself: `npx auth secret`. Signs the session cookie                                                        |
-| `AUTH_GOOGLE_ID`         | Yes      | OAuth client ID from step 2                                                                                              |
-| `AUTH_GOOGLE_SECRET`     | Yes      | OAuth client secret from step 2                                                                                          |
-| `ALLOWED_EMAILS`         | Yes      | Comma-separated addresses of everyone allowed in. You write this one                                                     |
-| `NEXT_PUBLIC_SITE_TITLE` | No       | The name in the header and page titles. Defaults to `Heirloom` (`lib/site.ts`). This is the one thing an install renames |
+| Variable                 | Required | What it is, and where it comes from                                                                                              |
+| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | Yes      | Supabase **transaction** pooler string, port `6543` (step 1). Every request the app serves goes through it                       |
+| `MIGRATE_DATABASE_URL`   | Yes      | Supabase **session** pooler string, port `5432` (step 1). Used only by the migration step of the build                           |
+| `AUTH_SECRET`            | Yes      | Generate it yourself: `npx auth secret`. Signs the session cookie                                                                |
+| `AUTH_GOOGLE_ID`         | Yes      | OAuth client ID from step 2                                                                                                      |
+| `AUTH_GOOGLE_SECRET`     | Yes      | OAuth client secret from step 2                                                                                                  |
+| `ALLOWED_EMAILS`         | Yes      | Comma-separated addresses of everyone allowed in. You write this one                                                             |
+| `STORAGE_TOKEN`          | Not yet  | Read-write token for a **private** Blob store. Nothing reads it until image upload ships — see [`STORAGE_TOKEN`](#storage_token) |
+| `NEXT_PUBLIC_SITE_TITLE` | No       | The name in the header and page titles. Defaults to `Heirloom` (`lib/site.ts`). This is the one thing an install renames         |
 
 `VERCEL` is set by the platform, not by you. `next.config.ts` reads it to drop
 `output: "standalone"`, which Vercel's own builder does not want.
@@ -224,6 +225,39 @@ mistake.
 `db/migrate.ts` logs which variable it used and against which host, precisely
 so a missing variable shows up in the first build log. Checking that line is
 step 7.
+
+### `STORAGE_TOKEN`
+
+Image upload is not built yet (`E5-T2`), so this one can wait. When you do get
+to it, one choice is made at store-creation time and is awkward to revisit.
+
+**Create the Blob store with its access set to Private.** In Vercel:
+**Storage → Create Database → Blob**, and set access to **Private** before
+creating it. Copy the read-write token into `STORAGE_TOKEN` — not into
+`BLOB_READ_WRITE_TOKEN`, which Vercel's integration also injects and which
+this application deliberately ignores, so that the deploy configuration goes
+on naming what the app needs rather than who is providing it.
+
+Private is not a preference here. Photographs are family material and belong
+behind the same `ALLOWED_EMAILS` boundary as everything else, so
+`lib/storage.ts` writes with `access: "private"` and serves each image through
+a signed URL that expires fifteen minutes after it is minted. In a public
+store every photograph would instead sit at a permanent URL that needs no
+session — readable by anyone the link ever reaches, whether that is a browser
+history on a shared laptop, a message forwarded to a relative who is not on
+the list, or a bookmark synced to somebody else's phone. Nobody finds out, and
+there is no way to revoke it short of deleting the file. The reasoning is in
+[Images](architecture.md#images).
+
+Public and private are properties of the _store_ rather than of each upload,
+so this is not a mistake you can make halfway: a store created public makes
+the first upload fail rather than quietly publishing what it was given. That
+is the right way round, but it does mean fixing it means creating a second
+store and moving whatever is in the first.
+
+Like `AUTH_SECRET`, the token is a password — it grants write and delete on
+the store. Leaving it unset until you need it costs a readable error at the
+first upload and nothing before that.
 
 ## 4. Baseline the migration ledger
 
@@ -493,5 +527,8 @@ Two things change:
   the proxy.
 
 Image storage is the one genuinely Vercel-shaped dependency, and it sits
-behind a single module so it can be swapped in one file. See
+behind a single module so it can be swapped in one file. That file also mints
+the expiring URLs images are served through, so the requirement on another
+host is private objects plus presigned reads — which S3, GCS and R2 all have,
+and which a directory on disk can be given. See
 [Portability](architecture.md#portability).
