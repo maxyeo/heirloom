@@ -321,12 +321,16 @@ async function resequencePartners(
 
   const assigned = resequenceUnions(current.map((union) => union.sequence));
 
+  // Only the rows whose number actually changes. `assigned` is positional
+  // against `current`, so the number a union holds now is right there beside
+  // the one it is being given.
   const moving = current
-    .map((union, index) => ({ unionId: union.id, sequence: assigned[index] }))
-    .filter(({ unionId, sequence }) => {
-      const held = current.find((union) => union.id === unionId);
-      return held !== undefined && held.sequence !== sequence;
-    });
+    .map((union, index) => ({
+      unionId: union.id,
+      sequence: assigned[index],
+      held: union.sequence,
+    }))
+    .filter(({ sequence, held }) => held !== sequence);
 
   // The common case by far: no tie was introduced, so nothing is written and
   // no third party's list moves at all.

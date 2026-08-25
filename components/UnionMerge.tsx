@@ -75,9 +75,25 @@ export function UnionMerge({
     [graph, personId],
   );
 
-  // Nothing recorded twice, which is almost everybody. A heading over an empty
-  // list would be inventing a problem to look at.
-  if (groups.length === 0) return null;
+  /**
+   * Nothing recorded twice and nothing on screen: almost everybody. A heading
+   * over an empty list would be inventing a problem to look at.
+   *
+   * `&& !open` is the part that is not obvious, and it is there because a
+   * successful merge *empties this list from under itself*. The action
+   * revalidates `/tree`, a graph arrives in which the two records are one, and
+   * this person's only duplicate group is gone — so an unconditional early
+   * return would unmount the section, the trigger and the open dialogue
+   * together, taking the confirmation's own "Merged." away before anybody read
+   * it. Nobody asked for that, and the dialogue is the only thing that ever
+   * says what happened.
+   *
+   * `components/PersonRemoval.tsx` gets away with the unconditional form
+   * because the write it confirms deletes the person, which closes the panel
+   * this whole section lives in — there is no surface left to report onto. A
+   * merge deletes nobody, so the panel stays exactly where it was.
+   */
+  if (groups.length === 0 && !open) return null;
 
   function close() {
     setOpen(false);
@@ -119,7 +135,30 @@ export function UnionMerge({
           returnFocus={returnFocus}
         >
           {choice === null ? (
-            <MergeChoices groups={groups} onChoose={setChoice} />
+            groups.length === 0 ? (
+              /*
+                Reachable only by backing out of a confirmation after the merge
+                it described has landed: the list this dialogue was opened on
+                has since become empty. Said plainly rather than rendered as an
+                empty list under a heading.
+              */
+              <>
+                <p className="text-caption">
+                  Nothing is recorded twice any more.
+                </p>
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={close}
+                    className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash"
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            ) : (
+              <MergeChoices groups={groups} onChoose={setChoice} />
+            )
           ) : (
             <MergeConfirmation
               // Remounts when the author backs out and picks a different
@@ -248,6 +287,45 @@ function MergeConfirmation({
     idleUnionMergeState,
   );
 
+  /**
+   * What just happened, checked *before* the preview — which is the whole
+   * reason this branch is a branch rather than a line inside the form.
+   *
+   * A merge that succeeds revalidates `/tree`, and the graph that arrives no
+   * longer holds the record that was merged away. `previewUnionMerge` then
+   * returns null, correctly and by design: one of the two unions is missing.
+   * Reading that as the "these rows have gone, somebody else may have removed
+   * them" case would replace the author's own success with a sentence about a
+   * race they did not have — the merge they are being warned about is the one
+   * they just performed.
+   *
+   * So the order is: what this dialogue did, then what the graph says. Only
+   * the second is a guess about somebody else.
+   */
+  if (state.status === "merged") {
+    return (
+      <>
+        {/*
+          `role="alert"` because this replaces the confirmation the author was
+          reading, after a submission they are watching for.
+        */}
+        <p role="alert" className="text-caption">
+          Merged. The two records are one, and nothing recorded on either of
+          them was lost.
+        </p>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash"
+          >
+            Close
+          </button>
+        </div>
+      </>
+    );
+  }
+
   if (preview === null) {
     return (
       <>
@@ -274,16 +352,10 @@ function MergeConfirmation({
           {state.error}
         </p>
       ) : null}
-      {state.status === "merged" ? (
-        <p role="alert" className="mt-3 text-caption">
-          Merged.
-        </p>
-      ) : null}
-
       <DialogButtons onBack={onBack} onCancel={onCancel}>
         <button
           type="submit"
-          disabled={pending || state.status === "merged"}
+          disabled={pending}
           className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash disabled:opacity-60"
         >
           {pending ? "Merging…" : "Merge"}

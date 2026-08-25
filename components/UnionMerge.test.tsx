@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { UnionMerge } from "@/components/UnionMerge";
 import type { FamilyGraph, GraphPerson } from "@/lib/family-graph";
 import { mergedUnionState, type UnionMergeState } from "@/lib/merge-state";
-import { render } from "@/test/render";
+import { render, rerender } from "@/test/render";
 
 /**
  * The merge confirmation (E3-T10, `YEO-82`).
@@ -296,6 +296,39 @@ describe("what it sends", () => {
     const form = mergeUnionsAction.mock.calls[0][1];
     expect(form.get("keepUnionId")).toBe("u-inline");
     expect(form.get("mergeUnionId")).toBe("u-marriage");
+  });
+
+  it("keeps its own confirmation when the merge empties the list under it", async () => {
+    /**
+     * The one that is easy to get wrong, and it fails *after* the write
+     * succeeds — which is the worst place for a dialogue to lie. A merge
+     * revalidates `/tree`, so a graph arrives in which the record that was
+     * merged away is gone and Rose has no duplicates left. Two things then
+     * happen unless they are stopped: `previewUnionMerge` returns null and the
+     * "somebody else may have removed these" copy replaces the success, and
+     * `duplicateUnionGroups` comes back empty and unmounts the whole section
+     * with the open dialogue inside it.
+     */
+    const host = openConfirmation("Keep Marriage");
+    await submit(host);
+
+    expect(dialogue(host).textContent).toContain("Merged");
+
+    const merged = graph();
+    merged.unions = merged.unions.filter((u) => u.id !== "u-inline");
+    merged.childLinks = merged.childLinks.map((link) =>
+      link.unionId === "u-inline" ? { ...link, unionId: "u-marriage" } : link,
+    );
+
+    act(() => {
+      rerender(host, <UnionMerge graph={merged} personId="rose" />);
+    });
+
+    const text = dialogue(host).textContent ?? "";
+    expect(text).toContain("nothing recorded on either of them was lost");
+    // Not the race message. The merge it would be warning about is the one the
+    // author just performed.
+    expect(text).not.toContain("no longer both recorded");
   });
 
   it("does not send anything from the first stage", () => {
