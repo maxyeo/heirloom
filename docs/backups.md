@@ -5,12 +5,18 @@ where it is kept, how long it lasts, how it is proven to work, and what to do
 on the day it is needed. Like [Deploying](deploying.md), it is written for
 someone who did not build this.
 
-It is the counterpart to the family's own export, and the two are not
-substitutes. Export is a feature: the people in the wiki can take their data
-with them. This is the thing that means the data is still there after an
-accident nobody noticed at the time — a migration that dropped the wrong
-column, a `db:seed` pointed at the wrong database, a Supabase project deleted
-along with the account it was on.
+It is the counterpart to [the family's own export](export.md), and the two are
+not substitutes. Export is a feature: the people in the wiki can take their
+data with them, by clicking a button, whenever they think of it. This is the
+thing that means the data is still there after an accident nobody noticed at
+the time — a migration that dropped the wrong column, a `db:seed` pointed at
+the wrong database, a Supabase project deleted along with the account it was
+on.
+
+The distinction is kept in the words as well as in the runbooks: the settings
+page offers a **Full export** and never calls it a backup, because a reader
+who believed the file they had just downloaded was this would stop worrying
+about the thing that actually protects them.
 
 ## What actually protects the data
 
@@ -102,7 +108,9 @@ for it either.
 - **Photographs.** Images live in Blob storage, not in Postgres
   (`lib/storage.ts`), so a dump carries the rows that reference them and not
   the files themselves. A restore brings back a wiki whose pictures are
-  missing if the store went with it.
+  missing if the store went with it. The [full export](export.md) is the one
+  copy that carries the image files themselves, which is a reason to take one
+  occasionally even though it is a feature rather than a schedule.
 - **Environment variables.** `AUTH_SECRET`, the OAuth client, `ALLOWED_EMAILS`
   and the connection strings live in Vercel. Losing those is recoverable —
   [Deploying](deploying.md) is the procedure for setting them again — but it

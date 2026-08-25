@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  attributeValue,
   collapseWhitespace,
   decodeHtmlEscapes,
   escapeHtmlAttribute,
@@ -148,5 +149,40 @@ describe("escapeHtmlAttribute", () => {
     const value = 'Rose & <Walter> said "hi"';
 
     expect(decodeHtmlEscapes(escapeHtmlAttribute(value))).toBe(value);
+  });
+});
+
+describe("reading one attribute off a tag", () => {
+  /**
+   * Shared by `lib/red-links.ts` (which reads `<a href>`) and
+   * `lib/entry-images.ts` (which reads `<img src>`) since E7-T4 (`YEO-54`).
+   * It moved here rather than being copied for this module's own stated
+   * reason: a second regex that has to agree with the sanitiser's output is a
+   * second place for that agreement to drift.
+   */
+  it.each([
+    ['href="/wiki/rose"', "href", "/wiki/rose"],
+    ["href='/wiki/rose'", "href", "/wiki/rose"],
+    ["href=/wiki/rose", "href", "/wiki/rose"],
+    [' src="/api/images/ab/x.jpg" alt="Rose"', "src", "/api/images/ab/x.jpg"],
+    ['alt="Rose" src="/x.jpg"', "src", "/x.jpg"],
+    ['HREF="/wiki/rose"', "href", "/wiki/rose"],
+    ['href=""', "href", ""],
+  ])("reads %j for %j", (attributes, name, expected) => {
+    expect(attributeValue(attributes, name)).toBe(expected);
+  });
+
+  it("answers null for an attribute that is not there", () => {
+    // Which every caller reads as "not the kind of tag I am looking for".
+    expect(attributeValue('alt="Rose"', "src")).toBeNull();
+    expect(attributeValue("", "href")).toBeNull();
+  });
+
+  it("returns the value still escaped, for the caller to decode", () => {
+    // What an attribute *means* depends on which attribute it is, so decoding
+    // is deliberately not done here.
+    expect(attributeValue('href="/wiki/a&amp;b"', "href")).toBe(
+      "/wiki/a&amp;b",
+    );
   });
 });

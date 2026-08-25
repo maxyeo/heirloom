@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { ALLOWED_IMAGE_TYPES } from "@/lib/image-type";
 import {
   assertSafeStorageKey,
+  imageKeyFromHref,
   imageKeyFromPath,
   imagePath,
+  IMAGE_ROUTE,
   IMAGE_KEY_PREFIX,
   MAX_KEY_LENGTH,
   newImageKey,
@@ -122,5 +124,45 @@ describe("the route's URL space", () => {
       UnsafeStorageKeyError,
     );
     expect(() => imageKeyFromPath([""])).toThrow(UnsafeStorageKeyError);
+  });
+});
+
+describe("reading a key back out of an entry body", () => {
+  const key = "images/ab/0e5b6c2f-1234-4a56-89ab-cdef01234567.jpg";
+
+  it("is the inverse of the path the upload endpoint hands out", () => {
+    // The property the full export rests on: an archive built from what the
+    // bodies refer to has to name the same objects `put` was given.
+    expect(imageKeyFromHref(imagePath(key))).toBe(key);
+  });
+
+  it("reads a percent-encoded path", () => {
+    // Next decodes dynamic segments before a handler sees them, so the route
+    // and this function have to agree that the encoded and decoded forms name
+    // the same object.
+    expect(imageKeyFromHref(`${IMAGE_ROUTE}/ab/one%2Djpeg.jpg`)).toBe(
+      "images/ab/one-jpeg.jpg",
+    );
+  });
+
+  it("drops a query or a fragment before matching", () => {
+    expect(imageKeyFromHref(`${imagePath(key)}?v=2`)).toBe(key);
+    expect(imageKeyFromHref(`${imagePath(key)}#top`)).toBe(key);
+  });
+
+  it.each([
+    ["https://example.com/api/images/ab/x.jpg", "an absolute URL, even to us"],
+    ["//example.com/api/images/ab/x.jpg", "a protocol-relative URL"],
+    ["/wiki/rose-hall", "a path that is not the image route"],
+    ["/api/images", "the route with no key after it"],
+    ["/api/images/", "the route with an empty key"],
+    ["/api/images/../../etc/passwd", "a path that climbs out"],
+    ["/api/images/%", "a broken percent-escape"],
+    ["data:image/png;base64,AAAA", "an inline image"],
+    ["", "nothing"],
+  ])("answers null for %j — %s", (href) => {
+    // Null rather than a throw, all the way down: an export must not refuse
+    // to run because one stored body has an odd `src` in it.
+    expect(imageKeyFromHref(href)).toBeNull();
   });
 });
