@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { db, schema } from "@/db";
 import { savePage } from "@/lib/save-page";
 import { raceWriters } from "@/test/db-concurrency";
+import { backdatePages } from "@/test/db-timestamps";
 
 /**
  * Database tests for the save action's write path. Run with `npm run test:db`;
@@ -60,6 +61,10 @@ afterAll(removeFixture);
  * Cleaning up before inserting (as well as after) also means an interrupted
  * run, which skips `afterAll`, does not greet the next one with a duplicate
  * key on these fixed ids.
+ *
+ * Both rows are then backdated, which is what makes the `updatedAt` assertions
+ * below deterministic rather than a race against the clock's resolution — see
+ * `test/db-timestamps.ts`.
  */
 beforeEach(async () => {
   await removeFixture();
@@ -67,6 +72,7 @@ beforeEach(async () => {
     { id: PAGE, slug: SLUG, ...ORIGINAL },
     { id: OTHER_PAGE, slug: OTHER_SLUG, title: "Untouched", bodyHtml: "<p>." },
   ]);
+  await backdatePages(PAGE, OTHER_PAGE);
 });
 
 describe("savePage", () => {
@@ -126,6 +132,10 @@ describe("savePage", () => {
     const after = await readPage();
     const [revision] = await readRevisions();
 
+    // Strictly greater, which is only deterministic because the fixture was
+    // backdated. Compared against the row read back rather than against
+    // `LAST_WRITTEN` directly, so this still fails if `beforeEach` ever stops
+    // applying the date it thinks it is applying.
     expect(after.updatedAt.getTime()).toBeGreaterThan(
       before.updatedAt.getTime(),
     );

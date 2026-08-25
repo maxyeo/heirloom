@@ -10,12 +10,14 @@ import {
 /**
  * The batching arithmetic behind the transactional import (E6-T4, `YEO-49`).
  *
- * No database, on purpose and by necessity. The acceptance criterion these
- * cover — "a file with several hundred people should not be several hundred
- * round trips" — is a statement about a number, and a number is exactly what
- * CI can check in the bare environment it runs `npm test` in. Asserting it
- * against a real import instead would put it in `npm run test:db`, which CI
- * does not run, so the commit that regressed it would go green. See
+ * No database, on purpose. The acceptance criterion these cover — "a file
+ * with several hundred people should not be several hundred round trips" — is
+ * a statement about a number, and a number is provable without one.
+ *
+ * That used to be the difference between a checked claim and an unchecked one,
+ * because `npm run test:db` ran in no pipeline. `YEO-90` fixed that, and both
+ * suites now gate a merge, so this file stays where it is on the ordinary
+ * grounds: arithmetic belongs in the suite that needs no fixtures. See
  * docs/testing.md.
  *
  * What is deliberately *not* here: that `lib/gedcom-import.ts` actually uses

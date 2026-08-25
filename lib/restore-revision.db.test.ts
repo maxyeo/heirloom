@@ -5,6 +5,7 @@ import { db, schema } from "@/db";
 import { restoreRevision } from "@/lib/restore-revision";
 import { savePage } from "@/lib/save-page";
 import { raceWriters } from "@/test/db-concurrency";
+import { backdatePages } from "@/test/db-timestamps";
 
 /**
  * Database tests for one-click restore (E1-T7). Run with `npm run test:db`;
@@ -79,6 +80,14 @@ beforeEach(async () => {
 
   await savePage({ slug: SLUG, ...V1, editedBy: AUTHOR });
   await savePage({ slug: SLUG, ...V2, editedBy: AUTHOR });
+
+  // Last, because the two saves above each set `updated_at` to their own
+  // `now()` — so the timestamp that has to be older than the restore is one
+  // the code under test just wrote, and pinning it at insert time would not
+  // survive them. See `test/db-timestamps.ts` for why it has to be older by
+  // more than a rounding error. The revisions keep their real timestamps:
+  // `readRevisions` orders on them.
+  await backdatePages(PAGE, OTHER_PAGE);
 });
 
 describe("restoreRevision", () => {
@@ -180,6 +189,8 @@ describe("restoreRevision", () => {
     const after = await readPage();
     const [, , restored] = await readRevisions();
 
+    // Strictly greater, which is only deterministic because `beforeEach`
+    // backdated the page after building its history.
     expect(after.updatedAt.getTime()).toBeGreaterThan(
       before.updatedAt.getTime(),
     );

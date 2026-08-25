@@ -136,13 +136,16 @@ npm run test:watch
 npm run test:db          # only the tests that do need one, against heirloom_test
 ```
 
-The suite is split on a filename: `*.test.ts` is pure and runs in CI,
-`*.db.test.ts` needs Postgres and runs only under `npm run test:db`, which
-points at a separate local `heirloom_test` database via `DATABASE_TARGET=test`
-— your everyday `DATABASE_URL` is never touched by it. CI runs `npm test` with
-no `DATABASE_URL` and no `AUTH_*` at all, which is what keeps that boundary
-honest. See [Testing](docs/testing.md) before writing a test that needs a
-database.
+The suite is split on a filename: `*.test.ts` is pure, `*.db.test.ts` needs
+Postgres and runs only under `npm run test:db`, which points at a separate
+local `heirloom_test` database via `DATABASE_TARGET=test` — your everyday
+`DATABASE_URL` is never touched by it.
+
+**Both halves run in CI and both gate a merge**, in two jobs: `check` runs
+`npm test` with no `DATABASE_URL` and no `AUTH_*` at all, which is what keeps
+that boundary honest, and `database` runs `npm run test:db` against a
+throwaway Postgres service container of its own. See
+[Testing](docs/testing.md) before writing a test that needs a database.
 
 ## Deploying
 
@@ -201,9 +204,9 @@ sentence stays true.
 | `npm run dev`               | Development server                                                                               |
 | `npm run build`             | Production build                                                                                 |
 | `npm run typecheck`         | `tsc --noEmit`                                                                                   |
-| `npm test`                  | Tests that need no database — what CI runs                                                       |
+| `npm test`                  | Tests that need no database — CI's `check` job                                                   |
 | `npm run test:watch`        | The same suite, in watch mode                                                                    |
-| `npm run test:db`           | Tests that need a database, against `heirloom_test`                                              |
+| `npm run test:db`           | Tests that need a database, against `heirloom_test` — CI's `database` job                        |
 | `npm run db:generate`       | Generate a migration from schema changes                                                         |
 | `npm run db:migrate`        | Apply migrations to `DATABASE_URL`                                                               |
 | `npm run db:migrate:test`   | Apply migrations to `heirloom_test`                                                              |

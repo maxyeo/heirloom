@@ -5,26 +5,36 @@ transpile config to keep in sync — the `@/*` alias is read straight out of
 `tsconfig.json`, so the test runner and the compiler cannot disagree about what
 `@/lib/tree-layout` means.
 
-| Script               | Runs                                                                |
-| -------------------- | ------------------------------------------------------------------- |
-| `npm test`           | Every test that does **not** need a database. This is what CI runs. |
-| `npm run test:watch` | The same suite, in watch mode                                       |
-| `npm run test:db`    | Only the tests that **do** need a database                          |
+| Script               | Runs                                         | In CI                      |
+| -------------------- | -------------------------------------------- | -------------------------- |
+| `npm test`           | Every test that does **not** need a database | Yes, in the `check` job    |
+| `npm run test:watch` | The same suite, in watch mode                | No                         |
+| `npm run test:db`    | Only the tests that **do** need a database   | Yes, in the `database` job |
+
+**Both suites gate a merge.** A red `test:db` blocks a pull request exactly as
+a red `npm test` does. See "`test:db` in CI" at the end of this document for
+how, and docs/architecture.md ("What gates a merge") for the full list.
 
 ## The rule everything else follows
 
 **`npm test` must never need a database.**
 
-CI runs `npm test` in the same deliberately empty environment as `npm run
-build` — no `DATABASE_URL`, no `AUTH_*`. That is an enforced property of the
-build step, and the test step inherits it. A test that reaches for Postgres in
-the default suite does not fail loudly and locally; it fails on every commit
-anyone pushes, for reasons unrelated to their commit.
+CI's `check` job runs `npm test` in the same deliberately empty environment as
+`npm run build` — no `DATABASE_URL`, no `AUTH_*`. That is an enforced property
+of the build step, and the test step inherits it. A test that reaches for
+Postgres in the default suite does not fail loudly and locally; it fails on
+every commit anyone pushes, for reasons unrelated to their commit.
+
+The database tests run in CI too, but in a **separate** job with a Postgres of
+its own, which is what keeps the rule above intact rather than negotiable. The
+split is not "checked versus unchecked" — both halves are checked — it is
+about which environment each one is entitled to assume.
 
 So the suite is split in two, and the split is a filename:
 
-- `something.test.ts` — pure. Runs under `npm test` and in CI.
-- `something.db.test.ts` — needs Postgres. Runs only under `npm run test:db`.
+- `something.test.ts` — pure. Runs under `npm test`, in CI's `check` job.
+- `something.db.test.ts` — needs Postgres. Runs under `npm run test:db`, in
+  CI's `database` job.
 
 `vitest.config.mts` defines those as two Vitest projects; `npm test` passes
 `--project unit`, which excludes `*.db.test.ts` outright. Nothing depends on
@@ -707,12 +717,79 @@ it is asserting anything is to remove the `for("update")` it is about and watch
 it fail. A race test whose subject nobody has ever broken deliberately may be
 asserting nothing at all.
 
-## Why `test:db` is not in CI
+### Asserting on timestamps
 
-It could be — a `services: postgres` container in the workflow plus
-`npm run db:migrate` is the standard shape. It is left out for now because the
-CI job's value right now is proving that the app builds and its pure logic
-holds with **no** environment at all, and adding a database service to that job
-would quietly erode the property the build step exists to enforce. When enough
-database tests exist to be worth it, they belong in a **separate job**, so the
-bare one stays bare.
+`test/db-timestamps.ts` is the helper; `backdatePages(...ids)` is the whole of
+it.
+
+Postgres `now()` is the _transaction's_ start time at microsecond precision,
+and postgres.js hands JavaScript a `Date`, which only carries milliseconds. So
+two writes in separate transactions can be a few hundred microseconds apart —
+genuinely ordered in the database — and reach an assertion as two `Date`s that
+compare equal.
+
+That is not hypothetical. It is what made `lib/save-page.db.test.ts` and
+`lib/restore-revision.db.test.ts` intermittently red: both assert that a write
+moves `pages.updated_at` _forward_, both built their fixture moments earlier,
+and the interval being measured was one insert, one select and a `BEGIN`.
+
+**So backdate the fixture, do not loosen the assertion.**
+`toBeGreaterThanOrEqual` turns both tests green and throws away the only thing
+they check — that a save moves `updated_at` forward at all, which is what
+E8-T4's recently-changed feed orders on. Call `backdatePages` at the end of
+`beforeEach`, after the fixture exists, and the interval being compared becomes
+a year rather than a scheduling accident.
+
+Last in `beforeEach` rather than pinned at insert time, because a fixture is
+often built by calling the application: `lib/restore-revision.db.test.ts` writes
+its history with two real `savePage` calls, so the timestamp that needs to be
+older is one the code under test wrote, and a pinned `INSERT` would not survive
+it.
+
+It touches `pages.updated_at` only. Revision rows are ordered by `created_at`
+and several files read history back in that order, so rewriting those would
+trade a flake for a fixture whose order depends on how the rows happened to be
+updated. Their ordering was never at risk in the first place — Postgres
+compares them at full precision, and only the trip through `Date` loses
+anything.
+
+## `test:db` in CI
+
+It runs on every push and every pull request, in a job of its own
+(`database`, in `.github/workflows/ci.yml`), against a `postgres:17` service
+container that is created and thrown away with the run. The job does exactly
+what the local setup above does — `npm run db:migrate:test`, then
+`npm run test:db` — with `TEST_DATABASE_URL` pointed at the container instead
+of at your `heirloom_test`. There is no CI-only code path, which is the point:
+the commands in this document are the commands that gate the merge.
+
+**A separate job, so the bare one stays bare.** This was the shape this
+document argued for before the job existed, and the reasoning held. The
+`check` job's `npm run build` step proves that a build needs no live database,
+and it can only prove that while its environment has none. A Postgres service
+attached to that job would put a reachable database in the build's
+environment and the guarantee would be gone — silently, because the build
+would keep passing either way.
+
+**It costs a PR no extra waiting.** The two jobs run concurrently, so the run
+is as long as its slowest job, which is still `check` with the build in it.
+The database suite itself is around ten seconds: the files run one at a time
+(`fileParallelism: false`, since they share one database), so that is already
+the serial number rather than a best case. If it ever grows to where it is the
+critical path, the fix is to shard the suite across jobs — not to move it to a
+nightly run against `main`. Nightly is strictly better than never, but it is a
+fallback, not the goal: a gate that reports after the merge does not stop the
+merge.
+
+**Why this was worth doing.** For a long time the suite ran nowhere, and the
+cost was not the missing coverage — it was that an unrun suite starts shaping
+the code written against it. Two tickets in the E6/E7 work extracted pure
+modules (`lib/import-batches.ts`, `lib/import-rows.ts`) _specifically_ so the
+logic would land in `npm test` and therefore in CI. Both are good modules and
+both are staying, but the motivation was routing around this gap, and the next
+person could as easily route around it by writing a weaker test instead of a
+better module. The other half of the cost is that real signal stayed invisible:
+the millisecond race in `lib/save-page.db.test.ts` was a genuine flake nobody
+had to care about, because nothing was watching it go red. Turning the suite
+on is what made fixing it necessary — see `LAST_WRITTEN` in that file for what
+the fix was and why it is a fix rather than a loosened assertion.

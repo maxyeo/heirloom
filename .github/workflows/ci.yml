@@ -60,8 +60,8 @@ jobs:
       # test is a more useful first signal than a broken bundle. `npm test`
       # runs Vitest's `unit` project, which is the half of the suite that
       # needs no database — the same constraint the build step below is
-      # documenting. Tests that do need Postgres are named `*.db.test.ts` and
-      # run under `npm run test:db`, which is deliberately not wired in here.
+      # documenting. Tests that do need Postgres are named `*.db.test.ts`; the
+      # `database` job below runs those, against a Postgres of its own.
       # See docs/testing.md.
       - run: npm test
 
@@ -71,3 +71,111 @@ jobs:
       # lazily behind a Proxy precisely so it does not, and running this step
       # with an empty environment is what keeps that true.
       - run: npm run build
+
+  # The other half of the suite: `*.db.test.ts`, run against a real Postgres.
+  #
+  # ## Why this exists at all
+  #
+  # It did not, for a long time, and the cost was not the missing coverage. It
+  # was that a suite nobody runs starts shaping the code written against it.
+  # Two tickets in the E6/E7 work extracted pure-logic modules
+  # (`lib/import-batches.ts`, `lib/import-rows.ts`) *specifically* so the
+  # arithmetic would land in `npm test` and therefore in CI. Both extractions
+  # are good code and both are staying, but the reason for them was routing
+  # around this gap, and the next person could as easily route around it by
+  # writing a weaker test instead of a better module. A suite that gates
+  # nothing also hides real signal: the millisecond race in
+  # `lib/save-page.db.test.ts` was a genuine flake that nobody had to care
+  # about, because nothing it could go red on was watching. (It is fixed now —
+  # turning the suite on is what made fixing it necessary.)
+  #
+  # ## Why a separate job rather than more steps in `check`
+  #
+  # Two reasons, and the second is the load-bearing one.
+  #
+  # Wall clock: a separate job runs concurrently with `check`, so the database
+  # tests cost a PR no additional waiting at all — the run is as long as its
+  # slowest job, and that is still `check` with its build.
+  #
+  # And `check` must stay bare. That job deliberately has no `DATABASE_URL`
+  # and no `AUTH_*`, which is precisely what makes its `npm run build` step
+  # prove that a build needs no live database. Putting a Postgres service on
+  # that job would put a reachable database in the environment the build runs
+  # in, and the guarantee would be gone — silently, since the build would go
+  # on passing either way. The isolation is the point.
+  database:
+    name: test:db against a real Postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # A disposable database per run, so these tests never share rows with
+      # anything and start from a schema this commit's migrations produced.
+      #
+      # Pinned to a major rather than `latest`, matching backup.yml: a new
+      # PostgreSQL release should not be able to change what a green tick
+      # means overnight.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # Without a health check the steps below start racing the container's
+        # own startup, which is the classic way a database job becomes
+        # intermittently red for reasons that have nothing to do with the
+        # commit.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # `TEST_DATABASE_URL` rather than `DATABASE_URL`, because that is the
+    # variable the test scripts actually read: both `db:migrate:test` and
+    # `test:db` set `DATABASE_TARGET=test`, and `lib/database-target.ts`
+    # resolves that target to `TEST_DATABASE_URL`. Setting `DATABASE_URL` here
+    # instead would leave the resolution failing with "DATABASE_TARGET=test
+    # requires TEST_DATABASE_URL to be set". Naming it this way also means CI
+    # runs the same two commands a developer runs locally, with the same
+    # variable pointing somewhere else — nothing here is a CI-only code path.
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same Node major as the `check` job and as local development.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # The service container comes up empty, so the schema has to be built
+      # before anything queries it. This is `drizzle-kit`, the same command
+      # docs/testing.md tells a developer to run against their own
+      # `heirloom_test` — rather than `db:migrate:deploy`, which exists for a
+      # different job (it takes `MIGRATE_DATABASE_URL`, for Supabase's session
+      # pooler) and would need `DATABASE_URL` set directly, contradicting the
+      # target resolution above.
+      #
+      # Running the migrations rather than `db:push`ing the schema means this
+      # job also proves the migration files apply cleanly to an empty
+      # database — the same thing a deploy does, checked on every PR instead
+      # of first at merge.
+      - name: Create the schema
+        run: npm run db:migrate:test
+
+      # Bounded on the step rather than only on the job, for the reason
+      # keep-alive.yml spells out at length: a *job* timeout cancels the job,
+      # and the failure then reads as "cancelled" rather than as a test
+      # failure. This suite is ~9s locally and the files run one at a time
+      # (`fileParallelism: false`, since they share the one database), so ten
+      # minutes is far past stuck — it is a deadlock detector, not a budget.
+      # If it ever starts being approached, that is the signal to split the
+      # suite, not to raise the number.
+      - name: Run the database tests
+        timeout-minutes: 10
+        run: npm run test:db
