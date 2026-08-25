@@ -9,6 +9,8 @@ Built for Vercel + Supabase, but it runs on any Node host with any Postgres.
 
 - [Product overview](docs/product.md) — what it is and who it is for
 - [Architecture](docs/architecture.md) — the data model and the security model
+- [Deploying](docs/deploying.md) — the production runbook, written for someone
+  who did not build it
 - [Design tokens](docs/design-tokens.md) — the Wikipedia type, colour and
   layout values, and the one rule that keeps them in one place
 - [Testing](docs/testing.md) — how the suite is split, and how to test
@@ -138,39 +140,44 @@ database.
 
 ## Deploying
 
-Push to GitHub, import the repo in Vercel, and set the same environment
-variables in the project settings. Add your production callback URL to the
-Google OAuth client.
+Push to GitHub, import the repo in Vercel, set the environment variables in
+the project settings, and add your production callback URL to the Google OAuth
+client. Migrations run as the first half of Vercel's build command, so a merge
+to `main` migrates production before the code that depends on the new schema
+is ever served.
+
+Two things are easy to get wrong and hard to diagnose from the symptom.
+`MIGRATE_DATABASE_URL` has to be Supabase's _session_ pooler (port `5432`),
+not the transaction pooler `DATABASE_URL` uses — unset, it falls back to
+`DATABASE_URL` and fails quietly, much later. And a database whose tables came
+from `db:push` has no migration ledger, so it needs baselining once before the
+first build or that build replays `0000` and dies on "already exists".
+
+**[Deploying](docs/deploying.md) is the full runbook**: every environment
+variable and where to get it, the Google OAuth setup and what Testing versus
+Published mode implies, the `ALLOWED_EMAILS` membership model, that one-time
+baseline check, and the steps that verify a deploy actually works.
 
 **Keep the database awake.** Supabase pauses free projects after about a week
 of inactivity, which will find a family wiki that gets visited monthly. The
 `Keep database awake` workflow (`.github/workflows/keep-alive.yml`) runs a
-trivial query once a day to avoid it.
-
-It needs one thing from you: add the same pooler connection string as a
-repository secret named `DATABASE_URL`, under **Settings → Secrets and
-variables → Actions**. Until that exists every run fails. Once it is set, run
-the workflow manually from the Actions tab to confirm it passes rather than
-waiting a day to find out.
-
-If the keep-alive ever breaks it opens an issue labelled `keep-alive`, and
-closes it again on the next successful run — a silently broken keep-alive
-would be no better than not having one. Note that GitHub disables scheduled
-workflows in repositories with no activity for 60 days, and emails the owner
-when it does.
-
-The scheduled run is skipped in forks, since a fork does not inherit the
-secret and would otherwise file itself a daily bug report about a Supabase
-workaround it never asked for. If you forked this and are on Supabase, run the
-workflow manually or edit the repository name in its `if:` condition. If you
-are on any other Postgres, you do not need this workflow at all — delete it.
+trivial query once a day to avoid it. It needs a repository secret named
+`DATABASE_URL` before it will pass — see [Keep the database
+awake](docs/deploying.md#8-keep-the-database-awake).
 
 ### Other hosts
 
 `output: "standalone"` is set for every build except Vercel's, so `next build`
 produces a self-contained server bundle that runs under plain Node or in a
 container. Nothing outside image storage is tied to Vercel, and environment
-variables are named generically so any Postgres provider works.
+variables are named generically so any Postgres provider works. See [Another
+host](docs/deploying.md#another-host) for the two things that differ.
+
+Image storage is the one exception, and it is confined to `lib/storage.ts` —
+three functions (`put`, `get`, `delete`), one vendor import, one `STORAGE_TOKEN`
+to point somewhere else. `lib/storage.call-sites.test.ts` turns the suite red if a
+second file ever imports the vendor directly, which is the only reason that
+sentence stays true.
 
 ## Scripts
 
