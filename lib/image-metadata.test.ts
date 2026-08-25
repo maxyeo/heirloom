@@ -460,10 +460,39 @@ describe("an Exif block that asks for more work than it is worth", () => {
     // and nothing recurses past depth one, so a per-directory limit would
     // wave every part of this through and pay the whole cost.
     const scrubbed = stripLocation(
-      jpeg([app1Exif(fanOutExif(100, 50, 4096))]),
+      jpeg([app1Exif(fanOutExif(150, 50, 4096))]),
       "image/jpeg",
     );
     expect(exifOf(scrubbed)).toBeNull();
+  });
+
+  it("spends one allowance across the whole file, not one per block", () => {
+    /**
+     * A container may hold as many Exif blocks as it has room for, so a
+     * budget minted per block is simply multiplied by however many blocks
+     * fit — every block bounded and the file not, which is the same mistake
+     * one level up from the one the budget was added for.
+     *
+     * The second chunk here is an ordinary photograph's Exif block. It is
+     * dropped rather than scrubbed, because the file ahead of it already
+     * spent the allowance, and that is the intended answer: a file that has
+     * been this strange has stopped being one this code will vouch for. The
+     * location comes out either way — dropping is the safe half.
+     */
+    const file = png([
+      { type: "IHDR", data: IHDR },
+      { type: "eXIf", data: [...fanOutExif(150, 50, 4096)] },
+      { type: "eXIf", data: [...phoneExif()] },
+      { type: "IEND", data: [] },
+    ]);
+    expect(contains(file, GPS_DATE_STAMP)).toBe(true);
+
+    const scrubbed = stripLocation(file, "image/png");
+    expect(chunksOf(scrubbed).map((chunk) => chunk.type)).toEqual([
+      "IHDR",
+      "IEND",
+    ]);
+    expect(contains(scrubbed, GPS_DATE_STAMP)).toBe(false);
   });
 
   it("still scrubs a block far larger than any camera writes", () => {

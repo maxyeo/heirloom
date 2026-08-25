@@ -144,6 +144,7 @@ export class UnreadableImageError extends Error {
     this.name = "UnreadableImageError";
   }
 }
+
 /**
  * The three tags this scrub reacts to.
  *
@@ -190,29 +191,35 @@ const TYPE_SIZES: Readonly<Record<number, number>> = {
 const MAX_DEPTH = 8;
 
 /**
- * How many directory entries one Exif block may spend before it is treated as
- * hostile and dropped.
+ * How many directory entries one *upload* may spend before the rest of its
+ * metadata is treated as hostile and dropped.
  *
- * This is the bound that actually matters, and depth is not a substitute for
- * it. A directory holds up to 65,535 entries and every one of them may point
- * at a *different* child directory, so a block one level deep can still ask
- * for entries × entries of work — and the two obvious guards both wave it
- * through: nothing recurses past depth one, and no offset is ever revisited,
- * because the children are genuinely distinct. Overlapping them inside one
- * block makes the file small while the work stays quadratic.
+ * Two things had to be said in the right unit here, and the first one is the
+ * bound most parsers get wrong. A directory holds up to 65,535 entries and
+ * every one of them may point at a *different* child directory, so a block
+ * one level deep can ask for entries × entries of work — and the two obvious
+ * guards both wave it through: nothing recurses past depth one, and no offset
+ * is ever revisited, because the children are genuinely distinct. Overlapping
+ * them inside one block makes the file small while the work stays quadratic.
+ * So depth is not the unit; entries are.
  *
- * JPEG is accidentally safe from this — an `APP1` segment carries a 16-bit
- * length, so its Exif block cannot exceed about 64 KB — and PNG and WebP are
- * not: their chunk lengths are 32-bit, so the hostile block can be as large
- * as the upload cap allows. That asymmetry is exactly the kind of thing a
- * bound stated in the wrong unit misses.
+ * The second is that **the budget belongs to the file, not to the block**. A
+ * container may hold as many Exif blocks as it has room for — repeated `eXIf`
+ * chunks in a PNG, repeated `EXIF` chunks in a WebP, repeated `Exif\0\0`
+ * `APP1` segments in a JPEG — and a per-block budget is simply multiplied by
+ * however many blocks fit in four megabytes. That is the same mistake one
+ * level up, and it is worth naming because the per-block version *looks*
+ * finished: every individual block is bounded, and the file is not.
  *
- * The budget is spent across the *whole* walk rather than reset per
- * directory, which is what makes fan-out cost something. Real files are three
- * or four directories of a few dozen entries each, so this leaves around two
- * orders of magnitude of headroom; a file that exceeds it is not one this
- * code is going to understand anyway, and the answer to not understanding a
- * block is to drop it.
+ * Spending it across the whole walk is also what makes fan-out cost anything
+ * within a block, since the children are reached from one parent.
+ *
+ * Real files are three or four directories of a few dozen entries each, so
+ * this leaves around two orders of magnitude of headroom. What it costs when
+ * it does fire is the same thing every other parse failure costs — the block
+ * is dropped, the orientation with it, and the location goes either way. A
+ * file that has already spent this much being strange is not one the rest of
+ * this code was going to understand.
  */
 const MAX_ENTRIES = 4096;
 
@@ -230,9 +237,23 @@ interface Walk {
   bytes: Uint8Array;
   view: DataView;
   little: boolean;
-  /** Directory offsets already walked, so a cycle is not walked twice. */
+  /**
+   * Directory offsets already walked, so a cycle is not walked twice.
+   *
+   * Per block, and it has to be: an offset is relative to the start of its
+   * own TIFF block, so two blocks in one file share a numbering and would
+   * otherwise mask each other's directories.
+   */
   seen: Set<number>;
-  /** Entries left in {@link MAX_ENTRIES}. Negative means the walk is over. */
+  /**
+   * The file's remaining allowance, shared by every block in it. Negative
+   * means the walk is over.
+   */
+  budget: Budget;
+}
+
+/** {@link MAX_ENTRIES}, counted down across one upload. */
+interface Budget {
   entries: number;
 }
 
@@ -244,8 +265,8 @@ interface Walk {
  * would be free.
  */
 function afford(walk: Walk, count: number): boolean {
-  walk.entries -= count + 1;
-  return walk.entries >= 0;
+  walk.budget.entries -= count + 1;
+  return walk.budget.entries >= 0;
 }
 
 const ascii = (bytes: Uint8Array, at: number, length: number): string =>
@@ -419,7 +440,7 @@ function scrubDirectory(walk: Walk, offset: number, depth: number): boolean {
  * intended is precisely the assumption not to make about a file somebody
  * uploaded.
  */
-function scrubExif(bytes: Uint8Array): boolean {
+function scrubExif(bytes: Uint8Array, budget: Budget): boolean {
   if (bytes.length < 8) return false;
 
   const little =
@@ -439,7 +460,7 @@ function scrubExif(bytes: Uint8Array): boolean {
   if (first === 0) return true;
 
   return scrubDirectory(
-    { bytes, view, little, seen: new Set(), entries: MAX_ENTRIES },
+    { bytes, view, little, seen: new Set(), budget },
     first,
     0,
   );
@@ -497,6 +518,7 @@ function join(
  */
 function keepJpegSegment(
   bytes: Uint8Array,
+  budget: Budget,
   marker: number,
   payload: number,
   payloadEnd: number,
@@ -506,7 +528,7 @@ function keepJpegSegment(
       return true;
     case 0xe1: // APP1 — Exif, or XMP wearing the same marker.
       if (!startsWith(bytes, payload, "Exif\0\0")) return false;
-      return scrubExif(bytes.subarray(payload + 6, payloadEnd));
+      return scrubExif(bytes.subarray(payload + 6, payloadEnd), budget);
     case 0xe2: // APP2 — kept only when it is a colour profile.
       return startsWith(bytes, payload, "ICC_PROFILE\0");
     default:
@@ -517,7 +539,7 @@ function keepJpegSegment(
   }
 }
 
-function stripJpeg(bytes: ImageBytes): ImageBytes {
+function stripJpeg(bytes: ImageBytes, budget: Budget): ImageBytes {
   const keep: [number, number][] = [[0, 2]]; // SOI
   let at = 2;
 
@@ -556,7 +578,9 @@ function stripJpeg(bytes: ImageBytes): ImageBytes {
     if (end > bytes.length)
       throw new UnreadableImageError("segment runs past the end");
 
-    if (keepJpegSegment(bytes, marker, code + 3, end)) keep.push([at, end]);
+    if (keepJpegSegment(bytes, budget, marker, code + 3, end)) {
+      keep.push([at, end]);
+    }
     at = end;
   }
 
@@ -567,7 +591,7 @@ function stripJpeg(bytes: ImageBytes): ImageBytes {
 /** PNG chunk types that exist to carry text, and nothing else. */
 const PNG_TEXT_CHUNKS = new Set(["tEXt", "zTXt", "iTXt"]);
 
-function stripPng(bytes: ImageBytes): ImageBytes {
+function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
   const keep: [number, number][] = [[0, 8]]; // The eight-byte signature.
   let at = 8;
 
@@ -588,7 +612,7 @@ function stripPng(bytes: ImageBytes): ImageBytes {
     if (PNG_TEXT_CHUNKS.has(type)) {
       // Dropped whole. Nothing renders from these, and XMP arrives as one.
     } else if (type === "eXIf") {
-      if (scrubExif(bytes.subarray(data, data + length))) {
+      if (scrubExif(bytes.subarray(data, data + length), budget)) {
         // The chunk's own bytes changed, so its checksum has to be redone
         // over type-and-data, which is what PNG covers with the CRC.
         const crc = crc32(bytes.subarray(at + 4, data + length));
@@ -619,7 +643,7 @@ function stripPng(bytes: ImageBytes): ImageBytes {
 const VP8X_EXIF = 0x08;
 const VP8X_XMP = 0x04;
 
-function stripWebp(bytes: ImageBytes): ImageBytes {
+function stripWebp(bytes: ImageBytes, budget: Budget): ImageBytes {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const keep: [number, number][] = [[0, 12]]; // "RIFF", size, "WEBP"
   let at = 12;
@@ -642,8 +666,9 @@ function stripWebp(bytes: ImageBytes): ImageBytes {
     } else if (type === "XMP ") {
       cleared |= VP8X_XMP;
     } else if (type === "EXIF") {
-      if (scrubExif(bytes.subarray(data, data + length))) keep.push([at, end]);
-      else cleared |= VP8X_EXIF;
+      if (scrubExif(bytes.subarray(data, data + length), budget)) {
+        keep.push([at, end]);
+      } else cleared |= VP8X_EXIF;
     } else {
       keep.push([at, end]);
     }
@@ -673,13 +698,18 @@ function stripWebp(bytes: ImageBytes): ImageBytes {
  * @throws {UnreadableImageError} if the container cannot be walked.
  */
 export function stripLocation(bytes: ImageBytes, type: ImageType): ImageBytes {
+  // One allowance for the whole file, handed to every block in it. See
+  // {@link MAX_ENTRIES}: minting it per block would bound each block and
+  // leave the file unbounded, which is the same mistake one level up.
+  const budget: Budget = { entries: MAX_ENTRIES };
+
   switch (type) {
     case "image/jpeg":
-      return stripJpeg(bytes.slice());
+      return stripJpeg(bytes.slice(), budget);
     case "image/png":
-      return stripPng(bytes.slice());
+      return stripPng(bytes.slice(), budget);
     case "image/webp":
-      return stripWebp(bytes.slice());
+      return stripWebp(bytes.slice(), budget);
     case "image/gif":
       // GIF has no Exif block and no coordinate anywhere in its
       // specification. There is nothing to take out, and rebuilding the file

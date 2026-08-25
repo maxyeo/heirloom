@@ -38,12 +38,12 @@ export async function POST(request: Request) {
    * decide to say no early and can never be allowed to say yes. The real cap
    * is enforced on the bytes.
    *
-   * It is a courtesy, not a backstop. A chunked request carries no
+   * It is a courtesy, not a backstop: a chunked request carries no
    * `Content-Length` at all, and `formData()` below would buffer whatever
-   * arrives before any cap of this application's could apply; what actually
-   * bounds that is the host's own request limit, which on Vercel is the
-   * 4.5 MB ceiling `MAX_UPLOAD_BYTES` already sits under. A host without one
-   * would need this enforced while reading the stream instead.
+   * arrives before any cap of this application's could apply. What bounds
+   * that case is the host's own request limit — see {@link MAX_REQUEST_BYTES},
+   * which explains why there is a ceiling above this cap and who enforces
+   * it.
    */
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_REQUEST_BYTES) {
