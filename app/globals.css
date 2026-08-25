@@ -412,6 +412,20 @@
       text-align: center;
     }
 
+    /* A photograph from a phone is stored the way the sensor delivered it,
+     * with an Exif tag saying which way up it goes. E5-T2 takes the location
+     * out of that block on upload and deliberately leaves the orientation in,
+     * so this is the end of the wire that has to honour it.
+     *
+     * `from-image` is already the initial value, which is exactly why the
+     * declaration is here: it pins a default the upload path depends on, so
+     * that a future reset — or somebody "fixing" a layout with
+     * `image-orientation: none` — has to argue with a line that says why.
+     * Same shape, and the same reason, as `color-scheme: light` above. */
+    img {
+      image-orientation: from-image;
+    }
+
     /* The framed thumbnail. Floats right by default, the way
      * `[[File:…|thumb]]` does; `.thumb-left` is the other side. */
     figure {

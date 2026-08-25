@@ -104,6 +104,23 @@ describe("the section [edit] link", () => {
   });
 });
 
+describe("photographs", () => {
+  /**
+   * The render half of E5-T2's orientation criterion. The upload endpoint
+   * goes to some trouble to strip a photograph's coordinates while leaving
+   * its orientation tag intact; a stylesheet that turned orientation off
+   * would waste that quietly, and every portrait photograph in the wiki would
+   * lie on its side with nothing in the diff to explain it.
+   */
+  it("renders them the way up the camera says", () => {
+    expect(css).toContain("image-orientation: from-image;");
+  });
+
+  it("never turns that off", () => {
+    expect(css).not.toContain("image-orientation: none");
+  });
+});
+
 describe("call sites", () => {
   const sourceDirs = ["app", "components", "lib"];
   const sourceExtensions = [".ts", ".tsx", ".css"];
