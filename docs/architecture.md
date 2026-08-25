@@ -263,6 +263,9 @@ where nothing can query or format it; and the four values are exactly GEDCOM
 5.5.1's date modifiers, so `ABT`/`BEF`/`AFT` survive a round trip through
 import and export instead of being silently discarded.
 
+What does not survive is a range; see
+[Ranges, and the bound that is not stored](#ranges-and-the-bound-that-is-not-stored).
+
 A qualifier answers only half the question, though, and E4-T2 (`YEO-39`) added
 the other half. "How far can this be trusted" is not the same question as "how
 much of a date did the source actually give" — a headstone gives a year, a
@@ -316,6 +319,56 @@ most-read surface in the application to be making the wrong one on. It takes
 no precision, and that is not the same omission: the anchor convention puts
 the year in the same four characters at every precision, so a year is the one
 part of a stored date that reading back can never invent.
+
+#### Ranges, and the bound that is not stored
+
+`date_qualifier` has four members and every one describes a single point with
+a fuzzy edge. GEDCOM has two forms that describe two points — `BET 1890 AND
+1900`, `FROM 1912 TO 1918` — and they had nowhere to go (`YEO-88`). The parser
+refused them rather than guess, which was correct in isolation and left real
+dates on the floor: a date inferred from a census window or a parish register
+span is usually written as one.
+
+Three answers were on the table, and the schema takes neither of the two that
+widen it:
+
+- **A second date column per event** (`birth_date_end`, `death_date_end`, ...).
+  Honest, and it widens the table, every reader, every validator and every
+  formatter — four date columns per event, two of them null on the
+  overwhelming majority of rows.
+- **A fifth qualifier**, `between`, with the far endpoint stored beside it.
+  Narrower, and it changes what the column _is_: `date_qualifier` stops
+  answering "how far can this one date be trusted" and starts answering two
+  questions, the second of which is meaningful for exactly one of its members.
+- **Collapse, and write the loss down.** What this schema does.
+
+A range is stored as **`after` its lower bound**, with `date_precision` taken
+from that bound's own words: `BET MAR 1890 AND JUN 1890` is `after March
+1890` at month precision. The upper bound is not stored anywhere a query can
+reach. It survives on the import report, which names the original text, the
+value that was written, and the line it came from.
+
+`after` rather than `about` at the midpoint, and the reason is worth keeping.
+`after 1890` is a claim the file makes. `about 1895` is arithmetic on two of
+its numbers producing a third that appears nowhere in it, stated in the voice
+of a recorded fact — the same failure as the 1 January anchor the section
+above exists to prevent. It is also the weaker-but-true reading rather than
+the narrower-and-invented one, and it is the one a validator can still use:
+`dateRange` in `lib/field-input.ts` turns `after` into `[1890-01-01, inf)` and
+`about` into `(-inf, inf)`, so the midpoint would have thrown the ordering check
+away as well as the bound.
+
+The accepted loss, stated plainly: **`AFT 1890` and `BET 1890 AND 1900` become
+the same row.** Nothing downstream can tell them apart, and a GEDCOM export
+writes both as `AFT 1890`. The import report is the only place the difference
+survives, and it is per-import, not per-row. If that turns out to matter, the
+second date column is still available and no existing row would have to change
+meaning to get it — which is the property this answer was chosen to keep.
+
+`INT 1890 (from baptism record)` is the same shape of decision, made at the
+same time. The date is stored as `about 1890`, because `INT` says the
+submitter _inferred_ it and `exact` would claim a precision the file itself
+disclaims; the interpretation phrase is reported and not stored.
 
 ### Ordering
 
@@ -520,3 +573,6 @@ grants write and delete on the store, and never appears in the repository.
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.
+- **A GEDCOM range loses its upper bound.** `BET 1890 AND 1900` is stored as
+  `after 1890`, and the import report is the only place 1900 survives. By
+  decision (`YEO-88`, see [Date precision](#date-precision)), not by accident.

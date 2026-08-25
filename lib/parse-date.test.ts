@@ -215,6 +215,23 @@ describe("what it refuses, and what it says", () => {
     expect(parsed("29 February 1892").date).toBe("1892-02-29");
     expect(parseDateInput("29 February 1893").ok).toBe(false);
   });
+
+  it("refuses the range grammar rather than reading one endpoint (YEO-88)", () => {
+    // The splitter that reads `BET`/`FROM`/`TO`/`INT` lives in `lib/gedcom.ts`
+    // and is deliberately not taught here. There is nowhere on the typed path
+    // for the dropped endpoint to go — `DateField.tsx` has one inline echo,
+    // not a report — so this module keeps refusing what it always refused,
+    // and the loss stays visible only on the GEDCOM import path, which has
+    // somewhere to put it.
+    for (const input of [
+      "between 1890 and 1900",
+      "BET 1890 AND 1900",
+      "FROM 1912 TO 1918",
+      "INT 1890 (x)",
+    ]) {
+      expect(parseDateInput(input).ok, input).toBe(false);
+    }
+  });
 });
 
 describe("the round trip through the formatter", () => {

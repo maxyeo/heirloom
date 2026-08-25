@@ -78,7 +78,17 @@ export type GedcomUnknownTag = {
  * sentences. The `message` beside it stays the human half.
  *
  * - `line` — text that is not a GEDCOM line, or a level number that skips.
- * - `date` — a `DATE` value this application's date grammar cannot read.
+ * - `date` — a `DATE` value this application's date grammar cannot read at
+ *   all, so the field is left **blank**.
+ * - `narrowed` — a `DATE` value this application *could* read, but only by
+ *   dropping something: a range's upper bound, an `INT` phrase (`YEO-88`).
+ *   The field is left **populated**, with something true but weaker than the
+ *   file said. Kept apart from `date` on purpose — the two are opposite
+ *   outcomes for the person reading the report, one says "go and fix this
+ *   file" and the other says "nothing to fix", and a report cannot answer
+ *   "how many dates did this import fail to read" if they share a kind.
+ *   `narrowed` is never fatal, by construction; there is no separate
+ *   severity field because the kind already carries that distinction.
  * - `pointer` — an `@Xref@` naming a record that is not in the file.
  * - `value` — a value in a place that has a fixed vocabulary (`SEX`) that is
  *   not one of the words.
@@ -86,7 +96,7 @@ export type GedcomUnknownTag = {
  *   contradicted by its own bytes.
  */
 export type GedcomIssueKind =
-  "line" | "date" | "pointer" | "value" | "encoding";
+  "line" | "date" | "narrowed" | "pointer" | "value" | "encoding";
 
 /** One specific place where the imported tree will differ from the file. */
 export type GedcomIssue = {

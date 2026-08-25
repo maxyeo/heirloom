@@ -57,11 +57,51 @@ tell which route a date arrived by. A second, GEDCOM-only date grammar would
 break that the first time the two disagreed, and the disagreement would be
 invisible.
 
-GEDCOM's range forms — `BET 1890 AND 1900`, `FROM 1912 TO 1918` — are out of
-scope, because a range is two dates and `individuals` has one. They are
-**refused** rather than approximated: reading `BET 1890 AND 1900` as `1890`
-would turn "some time in that decade" into a false certainty. The text is kept
-and an issue is raised.
+## Ranges collapse onto `after`
+
+GEDCOM's range and period forms are two dates, and every event in this schema
+has one date column. `YEO-88` decided what happens to the second one: it is
+not stored.
+
+| The file says                    | Stored as                     | Reported                   |
+| -------------------------------- | ----------------------------- | -------------------------- |
+| `BET 1890 AND 1900`              | `after 1890`, year precision  | yes — the upper bound goes |
+| `FROM 1912 TO 1918`              | `after 1912`, year precision  | yes — the upper bound goes |
+| `FROM 1912`                      | `after 1912`, year precision  | no — nothing is lost       |
+| `TO 1918`                        | `before 1918`, year precision | no — nothing is lost       |
+| `INT 1890 (from baptism record)` | `about 1890`, year precision  | yes — the phrase goes      |
+
+The precision is the lower bound's own. `BET MAR 1890 AND JUN 1890` is `after
+March 1890` at month precision; `FROM 12 MAR 1912 TO 4 JUL 1918` is `after 12
+March 1912` at day precision. Each endpoint goes through `parseDateInput` like
+any other date, so this module learns a _splitter_ and not a second date
+grammar — which is the property the section above defends.
+
+The lower bound rather than a midpoint, because `after 1890` is a statement
+the file makes and `about 1895` is one it does not. The whole argument is in
+[Date precision](architecture.md#date-precision), and the short version sits
+beside the enum in `db/schema.ts`.
+
+Every collapse raises a **`narrowed`** issue naming the text that was read and
+the value that was written, so the loss lands on the import report at the line
+it happened on. `narrowed` is a different kind from `date` on purpose: a
+`date` issue means the field is **blank** and somebody has to go and fix the
+file, a `narrowed` issue means the field is **populated with something true
+but weaker** and there is nothing to fix. One report cannot answer "how many
+dates could this import not read" if the two are the same word.
+
+A range whose _lower_ bound cannot be read is still refused outright — a
+`date` issue, field blank, text kept. Reading the upper bound instead would be
+picking an endpoint at random, which is the thing this whole decision is
+avoiding. A bare date phrase — `(before the war)`, with no `INT` in front of
+it — has no date in it to store and is refused for the same reason.
+
+One consequence worth knowing before E7-T2 (`YEO-52`) is written: **a
+third-party file containing a range does not round-trip byte for byte.** `BET
+1890 AND 1900` comes back out as `AFT 1890`. The round trip that does close is
+export -> import -> export, which is the property the test is actually for — our
+own output is stable, and a foreign file's ranges are narrowed exactly once,
+on the way in, with the report saying so.
 
 ## Nothing is dropped in silence
 

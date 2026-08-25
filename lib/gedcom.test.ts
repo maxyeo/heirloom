@@ -9,6 +9,7 @@ import {
   type GedcomFile,
   type GedcomIndividual,
 } from "@/lib/gedcom";
+import { formatLifespan, formatQualifiedDate } from "@/lib/format-date";
 
 /**
  * The GEDCOM parser (E6-T1, `YEO-46`).
@@ -313,33 +314,241 @@ describe("names", () => {
   });
 });
 
-describe("dates it will not guess at", () => {
-  function dateIssue(value: string) {
-    const file = parseGedcomText(
-      ["0 @I1@ INDI", "1 BIRT", `2 DATE ${value}`].join("\n"),
-    );
-    return { file, birth: file.individuals[0].birth };
-  }
+/** A one-person, one-birth-date file, parsed and unpacked (`YEO-88`). */
+function dateIssue(value: string) {
+  const file = parseGedcomText(
+    ["0 @I1@ INDI", "1 BIRT", `2 DATE ${value}`].join("\n"),
+  );
+  return { file, birth: file.individuals[0].birth };
+}
 
-  it("refuses a range rather than reading one end of it", () => {
-    // `individuals` has one birth date. Taking 1890 here would turn "some
-    // time in that decade" into a false certainty that reads as a fact.
+describe("the range and period forms, collapsed", () => {
+  // BET...AND and FROM...TO are two dates and this schema has one column per
+  // event (`YEO-88`). The lower bound is stored as `after`, at its own
+  // precision, and the upper bound survives only on the report — see
+  // db/schema.ts and docs/architecture.md for why the midpoint was not taken
+  // instead.
+
+  it("collapses BET...AND onto the lower bound", () => {
     const { file, birth } = dateIssue("BET 1890 AND 1900");
 
-    expect(birth?.date).toBeNull();
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "after",
+      precision: "year",
+    });
     expect(birth?.dateText).toBe("BET 1890 AND 1900");
+    expect(file.issues).toHaveLength(1);
+  });
+
+  it("raises a narrowed issue, not a date issue", () => {
+    // `date` means the field is blank and somebody has to fix the file;
+    // `narrowed` means the field is populated with something true but
+    // weaker. A collapsed range is the second, not the first.
+    const { file } = dateIssue("BET 1890 AND 1900");
+    expect(file.issues[0].kind).toBe("narrowed");
+  });
+
+  it("collapses FROM...TO the same way", () => {
+    const { birth, file } = dateIssue("FROM 1912 TO 1918");
+
+    expect(birth?.date).toEqual({
+      date: "1912-01-01",
+      qualifier: "after",
+      precision: "year",
+    });
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0].kind).toBe("narrowed");
+  });
+
+  it("takes precision from the lower bound", () => {
+    const { birth } = dateIssue("BET MAR 1890 AND JUN 1890");
+
+    expect(birth?.date).toEqual({
+      date: "1890-03-01",
+      qualifier: "after",
+      precision: "month",
+    });
+  });
+
+  it("takes day precision from a full lower-bound date", () => {
+    const { birth } = dateIssue("FROM 12 MAR 1912 TO 4 JUL 1918");
+
+    expect(birth?.date).toEqual({
+      date: "1912-03-12",
+      qualifier: "after",
+      precision: "day",
+    });
+  });
+
+  it("reads a real file's lowercase and mixed-case spellings", () => {
+    // Real files are dirty. `bet ... and` means exactly what `BET ... AND`
+    // does.
+    const { birth } = dateIssue("bet 1890 and 1900");
+
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "after",
+      precision: "year",
+    });
+  });
+
+  it("stores FROM with no TO losslessly", () => {
+    // One bound, nothing dropped — no issue to raise.
+    const { file, birth } = dateIssue("FROM 1912");
+
+    expect(birth?.date).toEqual({
+      date: "1912-01-01",
+      qualifier: "after",
+      precision: "year",
+    });
+    expect(file.issues).toEqual([]);
+  });
+
+  it("stores TO with no FROM losslessly", () => {
+    const { file, birth } = dateIssue("TO 1918");
+
+    expect(birth?.date).toEqual({
+      date: "1918-01-01",
+      qualifier: "before",
+      precision: "year",
+    });
+    expect(file.issues).toEqual([]);
+  });
+
+  it("names both the original text and the dropped bound", () => {
+    const { file } = dateIssue("BET 1890 AND 1900");
+
+    expect(file.issues[0].message).toContain("BET 1890 AND 1900");
+    expect(file.issues[0].message).toContain("1900");
+  });
+
+  it("lets after win over an endpoint's own about", () => {
+    // The splitter overrides the endpoint's own modifier — `after` is what
+    // the row means once the second date is gone, whatever the lower bound
+    // said about itself.
+    const { file, birth } = dateIssue("BET ABT 1890 AND 1900");
+
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "after",
+      precision: "year",
+    });
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0].kind).toBe("narrowed");
+  });
+});
+
+describe("interpreted dates", () => {
+  // `INT d (phrase)` is stored as `about d`, unless `d` carries its own
+  // `BEF`/`AFT`, which wins (Rule A, `YEO-88`). The phrase is reported, never
+  // stored.
+
+  it("stores INT with a phrase as about, and reports the phrase", () => {
+    const { file, birth } = dateIssue("INT 1890 (from baptism record)");
+
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "about",
+      precision: "year",
+    });
+    expect(file.issues).toHaveLength(1);
+    expect(file.issues[0].kind).toBe("narrowed");
+    expect(file.issues[0].message).toContain("from baptism record");
+  });
+
+  it("raises no issue for INT with no phrase", () => {
+    // Nothing author-written was dropped — the same trade EST already makes
+    // silently.
+    const { file, birth } = dateIssue("INT 1890");
+
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "about",
+      precision: "year",
+    });
+    expect(file.issues).toEqual([]);
+  });
+
+  it("lets an inner BEF/AFT win over about", () => {
+    const { birth } = dateIssue("INT BEF 1890 (x)");
+
+    expect(birth?.date).toEqual({
+      date: "1890-01-01",
+      qualifier: "before",
+      precision: "year",
+    });
+  });
+
+  it("keeps day precision from the inner date", () => {
+    const { birth } = dateIssue("INT 12 MAR 1890 (x)");
+
+    expect(birth?.date).toEqual({
+      date: "1890-03-12",
+      qualifier: "about",
+      precision: "day",
+    });
+  });
+});
+
+describe("what a collapsed range looks like on screen", () => {
+  // Written as an assertion rather than assumed: the acceptance criterion is
+  // that a collapsed range never reaches a screen as a plain date.
+
+  it("formats as 'after 1890', never as '1890'", () => {
+    const { birth } = dateIssue("BET 1890 AND 1900");
+    const shown = formatQualifiedDate(
+      birth?.date?.date ?? null,
+      birth?.date?.qualifier ?? "exact",
+      birth?.date?.precision ?? "day",
+    );
+
+    expect(shown).toBe("after 1890");
+    expect(shown).not.toBe("1890");
+  });
+
+  it("reads as 'b. after 1890' in a lifespan", () => {
+    const { birth } = dateIssue("BET 1890 AND 1900");
+    const lifespan = formatLifespan({
+      birthDate: birth?.date?.date ?? null,
+      birthDateQualifier: birth?.date?.qualifier ?? "exact",
+      deathDate: null,
+      deathDateQualifier: "exact",
+    });
+
+    expect(lifespan).toBe("b. after 1890");
+  });
+});
+
+describe("dates it still will not guess at", () => {
+  it("refuses a range whose lower bound is unreadable, rather than falling back to the upper one", () => {
+    // Taking the upper bound would be picking an endpoint at random, which is
+    // the thing the whole `YEO-88` decision is built to avoid.
+    const { file, birth } = dateIssue("BET garbage AND 1900");
+
+    expect(birth?.date).toBeNull();
+    expect(birth?.dateText).toBe("BET garbage AND 1900");
     expect(file.issues).toHaveLength(1);
     expect(file.issues[0].kind).toBe("date");
   });
 
-  it("refuses a FROM/TO span the same way", () => {
-    const { birth } = dateIssue("FROM 1912 TO 1918");
+  it("refuses a malformed span with no AND", () => {
+    const { file, birth } = dateIssue("BET 1890");
+
     expect(birth?.date).toBeNull();
+    expect(file.issues[0].kind).toBe("date");
+  });
+
+  it("refuses a bare phrase with no date at all", () => {
+    const { file, birth } = dateIssue("(before the war)");
+
+    expect(birth?.date).toBeNull();
+    expect(file.issues[0].kind).toBe("date");
   });
 
   it("names the text it could not read", () => {
-    const { file } = dateIssue("BET 1890 AND 1900");
-    expect(file.issues[0].message).toContain("BET 1890 AND 1900");
+    const { file } = dateIssue("nonsense");
+    expect(file.issues[0].message).toContain("nonsense");
   });
 
   it("says which date it was", () => {

@@ -44,6 +44,33 @@ export const sex = pgEnum("sex", ["male", "female", "other", "unknown"]);
  * `not null` rather than nullable for the same reason — a qualifier is only
  * ever read alongside its date, so "no date at all" is already expressed by
  * the `date` column being null and needs no second way of saying it.
+ *
+ * ## Ranges collapse onto `after`, deliberately (`YEO-88`)
+ *
+ * GEDCOM has two forms this list has no member for: `BET 1890 AND 1900` and
+ * `FROM 1912 TO 1918`. A range is two points and every event here has one
+ * date column, so something has to give, and what gives is the upper bound.
+ * Such a date is stored as `after` the **lower** bound, at whatever precision
+ * that bound itself carries, and the whole original text is named on the
+ * import report at the line it came from.
+ *
+ * Not `about` at the midpoint, which was the obvious alternative. `after
+ * 1890` is a statement the file actually makes; `about 1895` is arithmetic on
+ * two of its numbers producing a third that appears nowhere in it — a guess
+ * wearing the clothes of a record, which is the same failure the anchor
+ * convention beside this column exists to prevent. The difference is
+ * mechanical as well as moral: `dateRange` in `lib/field-input.ts` reads
+ * `after` as a real one-sided interval and `about` as no constraint at all,
+ * so the midpoint reading would have discarded the ordering check along with
+ * the bound.
+ *
+ * What it costs is the upper bound, and the cost is real: `AFT 1890` and `BET
+ * 1890 AND 1900` become the same three column values, nothing queried out of
+ * this database can tell them apart afterwards, and a GEDCOM export writes
+ * both back as `AFT 1890` — true of both files, weaker than one of them. A
+ * fifth enum member or a second date column would each have held it; see
+ * docs/architecture.md for why neither was worth the width, and note that
+ * either remains available later without any existing row changing meaning.
  */
 export const dateQualifier = pgEnum("date_qualifier", [
   "exact",
