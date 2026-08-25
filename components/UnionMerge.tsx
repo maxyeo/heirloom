@@ -137,10 +137,17 @@ export function UnionMerge({
           {choice === null ? (
             groups.length === 0 ? (
               /*
-                Reachable only by backing out of a confirmation after the merge
-                it described has landed: the list this dialogue was opened on
-                has since become empty. Said plainly rather than rendered as an
-                empty list under a heading.
+                The list this dialogue was opened on has emptied under it.
+
+                Not reached by closing a successful merge — that button clears
+                `choice` and `open` together, so the guard above unmounts the
+                whole section first. What reaches it is **Back**, which clears
+                only `choice`: a confirmation whose pair went in another tab
+                shows the "no longer both recorded" fallback, and backing out
+                of that lands here when it was the last duplicate group.
+
+                Said plainly rather than rendered as an empty list under a
+                heading.
               */
               <>
                 <p className="text-caption">
