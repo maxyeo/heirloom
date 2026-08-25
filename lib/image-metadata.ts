@@ -599,23 +599,105 @@ function keepJpegSegment(
     case 0xe2: // APP2 — kept only when it is a colour profile.
       return startsWith(bytes, payload, "ICC_PROFILE\0");
     default:
-      /**
-       * An allowlist of the markers a decoder actually reads: `0xC0`–`0xCF`
-       * is the frame and table space (start of frame, Huffman tables,
-       * arithmetic conditioning) and `0xDB`–`0xDF` the rest of the
-       * structural set (quantisation tables, restart interval, hierarchical
-       * progression). Standalone markers never reach here — they carry no
-       * payload and were kept by the walk.
-       *
-       * This was a list of markers to *drop* (`APP3`–`APP15` and the comment
-       * segment), which is the blocklist mistake the PNG walk also made:
-       * `0xF0`–`0xFD` are reserved for JPEG extensions, every decoder skips
-       * them, and a segment wearing one carried up to sixty-five kilobytes
-       * past a check that was only looking elsewhere.
-       */
-      return (
-        (marker >= 0xc0 && marker <= 0xcf) || (marker >= 0xdb && marker <= 0xdf)
-      );
+      return keepJpegStructural(bytes, marker, payload, payloadEnd);
+  }
+}
+
+/**
+ * Walks a payload built of back-to-back records, each declaring its own
+ * length, and answers whether they tile it exactly. `next` returns where the
+ * record starting at `at` ends, or `null` when it is malformed.
+ *
+ * Tiling *exactly* is the point. A payload with anything left over after its
+ * last well-formed record is carrying that remainder for some other reason.
+ */
+function spansExactly(
+  from: number,
+  to: number,
+  next: (at: number) => number | null,
+): boolean {
+  let at = from;
+  while (at < to) {
+    const after = next(at);
+    if (after === null || after <= at || after > to) return false;
+    at = after;
+  }
+  return at === to;
+}
+
+/** Start of frame, in all its numberings, and `DHP`, which shares its header. */
+const isJpegFrame = (marker: number): boolean =>
+  (marker >= 0xc0 && marker <= 0xc3) ||
+  (marker >= 0xc5 && marker <= 0xc7) ||
+  (marker >= 0xc9 && marker <= 0xcb) ||
+  (marker >= 0xcd && marker <= 0xcf) ||
+  marker === 0xde;
+
+/**
+ * The structural segments, kept for the shape each one mandates rather than
+ * for the range its marker falls in.
+ *
+ * `0xC0`–`0xCF` and `0xDB`–`0xDF` took the marker's word for it and never
+ * read the payload behind it, which is the same trust the GIF walk placed in
+ * `0xF9`. It matters more here: a JPEG may legally define the same table
+ * twice, later overriding earlier, so a segment labelled `DQT` and filled
+ * with something else rides along inside a photograph that decodes and
+ * displays exactly as it should. Nothing looks wrong, which is why nothing
+ * would have been noticed.
+ *
+ * Each of these has an internal structure that must consume its payload
+ * exactly. A payload that does not is not the thing its marker claims.
+ */
+function keepJpegStructural(
+  bytes: Uint8Array,
+  marker: number,
+  payload: number,
+  payloadEnd: number,
+): boolean {
+  const length = payloadEnd - payload;
+
+  switch (marker) {
+    case 0xc4:
+      // DHT — Huffman tables back to back: a class-and-id byte, sixteen
+      // counts, then one symbol for each unit the counts add up to.
+      return spansExactly(payload, payloadEnd, (at) => {
+        if (bytes[at] >> 4 > 1 || (bytes[at] & 0x0f) > 3) return null;
+        if (at + 17 > payloadEnd) return null;
+        let symbols = 0;
+        for (let i = 0; i < 16; i += 1) symbols += bytes[at + 1 + i];
+        return at + 17 + symbols;
+      });
+    case 0xdb:
+      // DQT — quantisation tables back to back: a precision-and-id byte,
+      // then sixty-four values held in one byte each, or two.
+      return spansExactly(payload, payloadEnd, (at) => {
+        const precision = bytes[at] >> 4;
+        if (precision > 1 || (bytes[at] & 0x0f) > 3) return null;
+        return at + 1 + (precision === 0 ? 64 : 128);
+      });
+    case 0xcc:
+      // DAC — two bytes for every arithmetic conditioning entry: a class
+      // and id, then the value being conditioned. Counting the bytes is not
+      // enough on its own, since any even run of text would pass that.
+      return spansExactly(payload, payloadEnd, (at) => {
+        if (bytes[at] >> 4 > 1 || (bytes[at] & 0x0f) > 3) return null;
+        return at + 2;
+      });
+    case 0xc8:
+      // JPG — reserved, carrying nothing any decoder is defined to read.
+      return false;
+    case 0xdc: // DNL, a line count.
+    case 0xdd: // DRI, a restart interval.
+      return length === 2;
+    case 0xdf:
+      // EXP — one byte of horizontal and vertical expansion.
+      return length === 1;
+    default:
+      // A frame header: sample precision, two dimensions and a component
+      // count, then three bytes describing each component it declares.
+      if (!isJpegFrame(marker)) return false;
+      if (length < 6 || bytes[payload + 5] < 1) return false;
+      return length === 6 + 3 * bytes[payload + 5];
   }
 }
 
@@ -713,6 +795,64 @@ const PNG_KEEP: ReadonlySet<string> = new Set([
   "cLLi",
 ]);
 
+/** The payload length each fixed-size PNG chunk is defined to carry. */
+const PNG_FIXED: ReadonlyMap<string, number> = new Map([
+  ["IHDR", 13],
+  ["IEND", 0],
+  ["gAMA", 4],
+  ["cHRM", 32],
+  ["sRGB", 1],
+  ["pHYs", 9],
+  ["acTL", 8],
+  ["fcTL", 26],
+  ["cICP", 4],
+  ["mDCv", 24],
+  ["cLLi", 8],
+]);
+
+/**
+ * Whether a kept chunk carries a payload of the size its type defines.
+ *
+ * `PNG_KEEP` matched the four-character type and nothing else, which is a
+ * claim taken on trust exactly as a JPEG marker was: `gAMA` is four bytes of
+ * gamma, but a `gAMA` chunk declaring four hundred was kept whole, tail
+ * included. Decoders tolerate a repeated ancillary chunk, so — as with a
+ * duplicate JPEG table — the carrier still rendered normally.
+ *
+ * The variable ones are named here with whatever does bound them: a palette
+ * is a whole number of colours and at most 256, a histogram one entry per
+ * colour, transparency at most one byte per colour. `IDAT`, `fdAT`, `iCCP`
+ * and `sPLT` stay genuinely variable, because compressed data and colour
+ * profiles are arbitrary bytes by construction. That is this scrubber's
+ * limit, and it is the limit the module's docblock states.
+ */
+function pngLengthFits(type: string, length: number): boolean {
+  const fixed = PNG_FIXED.get(type);
+  if (fixed !== undefined) return length === fixed;
+
+  switch (type) {
+    case "PLTE":
+      return length > 0 && length % 3 === 0 && length <= 768;
+    case "hIST":
+      return length > 0 && length % 2 === 0 && length <= 512;
+    case "tRNS":
+      return length > 0 && length <= 256;
+    case "sBIT":
+      return length >= 1 && length <= 4;
+    case "bKGD":
+      return length === 1 || length === 2 || length === 6;
+    case "fdAT":
+      return length >= 4; // A sequence number, then frame data.
+    case "iCCP":
+    case "sPLT":
+      return length >= 3; // A name, its terminator, and at least one byte.
+    case "IDAT":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
   const keep: [number, number][] = [[0, 8]]; // The eight-byte signature.
   let at = 8;
@@ -742,7 +882,7 @@ function stripPng(bytes: ImageBytes, budget: Budget): ImageBytes {
         );
         keep.push([at, end]);
       }
-    } else if (PNG_KEEP.has(type)) {
+    } else if (PNG_KEEP.has(type) && pngLengthFits(type, length)) {
       keep.push([at, end]);
     }
     // Everything else is dropped whole, including every private and unknown
@@ -786,6 +926,63 @@ const WEBP_KEEP: ReadonlySet<string> = new Set([
   "VP8L",
 ]);
 
+/**
+ * Whether a kept WebP chunk carries the payload its type defines.
+ *
+ * The same gap PNG had, and RIFF makes it wider: chunk skipping is driven
+ * entirely by the declared length, so an oversized `VP8X` or `ANIM` with a
+ * valid prefix and an arbitrary tail is skipped over cleanly by a decoder
+ * and displays as though nothing were there. `ICCP` and the two bitstreams
+ * are variable by nature and stay unmeasured.
+ */
+function webpLengthFits(
+  bytes: Uint8Array,
+  view: DataView,
+  type: string,
+  data: number,
+  length: number,
+): boolean {
+  switch (type) {
+    case "VP8X":
+      return length === 10;
+    case "ANIM":
+      return length === 6;
+    case "ANMF":
+      // A sixteen-byte frame header, then the frame's own chunks. `ANMF` is
+      // a container, so measuring its length would leave the same gap one
+      // level down: a frame is entitled to sub-chunks, and nothing says an
+      // `XMP ` cannot be among them. They are walked, and the frame is kept
+      // only when they tile it exactly and every one of them draws.
+      return length >= 16 && framesOnly(bytes, view, data + 16, data + length);
+    case "ALPH":
+      return length >= 1;
+    default:
+      return true;
+  }
+}
+
+/** The chunks a single animation frame may carry: its pixels, and its alpha. */
+const WEBP_FRAME: ReadonlySet<string> = new Set(["ALPH", "VP8 ", "VP8L"]);
+
+function framesOnly(
+  bytes: Uint8Array,
+  view: DataView,
+  from: number,
+  to: number,
+): boolean {
+  let at = from;
+  while (at < to) {
+    if (at + 8 > to) return false;
+    const type = ascii(bytes, at, 4);
+    const length = view.getUint32(at + 4, true);
+    const end = at + 8 + length + (length % 2);
+    if (end > to || end <= at) return false;
+    if (!WEBP_FRAME.has(type)) return false;
+    at = end;
+  }
+  return at === to;
+}
+
 function stripWebp(bytes: ImageBytes, budget: Budget): ImageBytes {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const keep: [number, number][] = [[0, 12]]; // "RIFF", size, "WEBP"
@@ -803,16 +1000,20 @@ function stripWebp(bytes: ImageBytes, budget: Budget): ImageBytes {
     if (end > bytes.length)
       throw new UnreadableImageError("chunk runs past the end");
 
-    if (type === "VP8X") {
-      vp8x = data;
-      keep.push([at, end]);
-    } else if (type === "XMP ") {
+    if (type === "XMP ") {
       cleared |= VP8X_XMP;
     } else if (type === "EXIF") {
       if (scrubExif(bytes.subarray(data, data + length), budget)) {
         keep.push([at, end]);
       } else cleared |= VP8X_EXIF;
-    } else if (WEBP_KEEP.has(type)) {
+    } else if (
+      WEBP_KEEP.has(type) &&
+      webpLengthFits(bytes, view, type, data, length)
+    ) {
+      // Only a `VP8X` of the mandated size is worth remembering: one that
+      // fails its measurement is dropped, and there is then no header left
+      // holding flags to clear.
+      if (type === "VP8X") vp8x = data;
       keep.push([at, end]);
     }
     // Anything else is dropped. There is no flag in `VP8X` to clear for it,

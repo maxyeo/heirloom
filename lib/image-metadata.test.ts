@@ -584,7 +584,10 @@ describe("a block wearing a label it does not fit", () => {
     const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
     const original = jpeg([
       { marker: 0xf0, payload: smuggled },
-      { marker: 0xdb, payload: [0, 1, 2, 3] }, // a quantisation table
+      // A quantisation table, and a real one: precision and id, then the
+      // sixty-four values. Four bytes wearing the marker is not a table,
+      // and is no longer kept for wearing it.
+      { marker: 0xdb, payload: [0, ...Array.from({ length: 64 }, () => 1)] },
       app1Exif(phoneExif()),
     ]);
     expect(contains(original, GIF_SMUGGLED)).toBe(true);
@@ -647,13 +650,196 @@ describe("a block wearing a label it does not fit", () => {
       { type: "PLTE", data: [1, 2, 3] },
       { type: "tRNS", data: [0] },
       { type: "acTL", data: [0, 0, 0, 2, 0, 0, 0, 0] },
-      { type: "fcTL", data: [0, 0, 0, 0] },
-      { type: "fdAT", data: [9] },
-      { type: "iCCP", data: [1] },
+      // Twenty-six bytes, which is what a frame control chunk is: a sequence
+      // number, the frame's size and offset, its delay, and two one-byte
+      // rules for how it replaces the frame before it.
+      { type: "fcTL", data: Array.from({ length: 26 }, () => 0) },
+      { type: "fdAT", data: [0, 0, 0, 1, 9] },
+      { type: "iCCP", data: [0x70, 0, 0, 1] },
       { type: "IDAT", data: [1, 2, 3] },
       { type: "IEND", data: [] },
     ]);
     expect(stripLocation(original, "image/png")).toEqual(original);
+  });
+});
+
+/**
+ * A marker or a chunk type is a claim about what follows it. These are the
+ * places that used to take the claim and never measure it — so a segment
+ * saying `DQT` and holding text was kept whole, and because a JPEG may
+ * define the same table twice, the file around it still decoded and
+ * displayed as an ordinary photograph.
+ */
+describe("a block whose payload is not the shape its label promises", () => {
+  const smuggled = [...GIF_SMUGGLED].map((c) => c.charCodeAt(0));
+
+  /** One quantisation table: precision and id, then sixty-four values. */
+  const DQT = [0x00, ...Array.from({ length: 64 }, (_, i) => i + 1)];
+  /** One Huffman table: class and id, sixteen counts, then their symbols. */
+  const DHT = [0x00, 1, ...Array.from({ length: 15 }, () => 0), 0x0a];
+  /** A baseline frame header declaring exactly one component. */
+  const SOF0 = [8, 0, 1, 0, 1, 1, 1, 0x11, 0];
+
+  it.each([
+    ["DQT", 0xdb, DQT],
+    ["DHT", 0xc4, DHT],
+    ["SOF0", 0xc0, SOF0],
+    ["DRI", 0xdd, [0, 16]],
+  ])("keeps a genuine %s", (_name, marker, payload) => {
+    const file = jpeg([{ marker, payload }, app1Exif(tiff())]);
+    expect(segmentsOf(stripLocation(file, "image/jpeg"))[0].marker).toBe(
+      marker,
+    );
+  });
+
+  it.each([
+    ["DQT", 0xdb],
+    ["DHT", 0xc4],
+    ["SOF0", 0xc0],
+    ["DRI", 0xdd],
+    ["DAC", 0xcc],
+    ["EXP", 0xdf],
+  ])("drops a %s carrying text instead", (_name, marker) => {
+    const file = jpeg([{ marker, payload: smuggled }, app1Exif(tiff())]);
+    expect(contains(file, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(file, "image/jpeg");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(segmentsOf(scrubbed).map((segment) => segment.marker)).not.toContain(
+      marker,
+    );
+  });
+
+  it("drops a table that tiles its payload and then leaves a tail", () => {
+    // The whole reason to measure: a real table followed by a remainder is
+    // carrying that remainder for some other purpose.
+    const file = jpeg([
+      { marker: 0xdb, payload: [...DQT, ...smuggled] },
+      app1Exif(tiff()),
+    ]);
+    const scrubbed = stripLocation(file, "image/jpeg");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+  });
+
+  it("drops a frame header that declares fewer components than it holds", () => {
+    const file = jpeg([
+      { marker: 0xc0, payload: [...SOF0, ...smuggled] },
+      app1Exif(tiff()),
+    ]);
+    expect(contains(stripLocation(file, "image/jpeg"), GIF_SMUGGLED)).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["gAMA", 4],
+    ["pHYs", 9],
+    ["sRGB", 1],
+    ["cHRM", 32],
+  ])("drops an oversized PNG %s", (type, size) => {
+    const oversized = png([
+      { type: "IHDR", data: IHDR },
+      { type, data: [...Array.from({ length: size }, () => 0), ...smuggled] },
+      { type: "IDAT", data: [1, 2, 3] },
+      { type: "IEND", data: [] },
+    ]);
+    expect(contains(oversized, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(oversized, "image/png");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(chunksOf(scrubbed).map((chunk) => chunk.type)).toEqual([
+      "IHDR",
+      "IDAT",
+      "IEND",
+    ]);
+  });
+
+  it("keeps those same PNG chunks at the size they are defined to be", () => {
+    const honest = png([
+      { type: "IHDR", data: IHDR },
+      { type: "gAMA", data: [0, 1, 0x86, 0xa0] },
+      { type: "pHYs", data: [0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, 1] },
+      { type: "sRGB", data: [0] },
+      { type: "IDAT", data: [1, 2, 3] },
+      { type: "IEND", data: [] },
+    ]);
+    expect(stripLocation(honest, "image/png")).toEqual(honest);
+  });
+
+  it.each([
+    ["VP8X", 10],
+    ["ANIM", 6],
+  ])("drops an oversized WebP %s", (type, size) => {
+    const oversized = webp([
+      { type, data: [...Array.from({ length: size }, () => 0), ...smuggled] },
+      { type: "VP8 ", data: [1, 2, 3] },
+    ]);
+    expect(contains(oversized, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(oversized, "image/webp");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(riffChunksOf(scrubbed).map((chunk) => chunk.type)).toEqual(["VP8 "]);
+  });
+
+  it("drops an animation frame smuggling a chunk inside itself", () => {
+    // `ANMF` carries the frame's own chunks, so measuring its length alone
+    // would leave this same gap one level further down.
+    const sub = (type: string, data: number[]) => [
+      ...[...type].map((c) => c.charCodeAt(0)),
+      data.length & 0xff,
+      (data.length >> 8) & 0xff,
+      0,
+      0,
+      ...data,
+      ...(data.length % 2 ? [0] : []),
+    ];
+    const frame = [
+      ...Array.from({ length: 16 }, () => 0),
+      ...sub("XMP ", smuggled),
+    ];
+    const original = webp([
+      { type: "VP8X", data: VP8X },
+      { type: "ANMF", data: frame },
+      { type: "VP8 ", data: [1, 2, 3] },
+    ]);
+    expect(contains(original, GIF_SMUGGLED)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/webp");
+    expect(contains(scrubbed, GIF_SMUGGLED)).toBe(false);
+    expect(riffChunksOf(scrubbed).map((chunk) => chunk.type)).not.toContain(
+      "ANMF",
+    );
+  });
+
+  it("keeps an animation frame carrying only what draws it", () => {
+    const frame = [
+      ...Array.from({ length: 16 }, () => 0),
+      ...[..."VP8 "].map((c) => c.charCodeAt(0)),
+      4,
+      0,
+      0,
+      0,
+      1,
+      2,
+      3,
+      4,
+    ];
+    const honest = webp([
+      { type: "VP8X", data: VP8X },
+      { type: "ANIM", data: [0, 0, 0, 0, 0, 0] },
+      { type: "ANMF", data: frame },
+    ]);
+    expect(stripLocation(honest, "image/webp")).toEqual(honest);
+  });
+
+  it("keeps a WebP header and animation chunk at their defined sizes", () => {
+    const honest = webp([
+      { type: "VP8X", data: VP8X },
+      { type: "ANIM", data: [0, 0, 0, 0, 0, 0] },
+      { type: "ANMF", data: Array.from({ length: 16 }, () => 0) },
+      { type: "VP8 ", data: [1, 2, 3] },
+    ]);
+    expect(stripLocation(honest, "image/webp")).toEqual(honest);
   });
 });
 
