@@ -647,3 +647,76 @@ describe("opening on a section", () => {
     expect(openedAt(editorOf(host))).toBe("Early life");
   });
 });
+
+/**
+ * The hatnote variant (E11-T9, `YEO-79`) — "plain text plus links; not a full
+ * editor surface", as the mounted component rather than as configuration.
+ *
+ * `lib/editor-extensions.test.ts` already asserts the schema this variant can
+ * produce, with no DOM. What needs one is the part that is markup: which
+ * controls are on the bar, and how the writing surface is described to a
+ * screen reader — the latter because a `contenteditable` inside ProseMirror's
+ * own DOM has no `<label for>` relationship to inherit, so a hint sitting next
+ * to it in the form is announced only if it is wired up explicitly.
+ */
+describe("the hatnote variant", () => {
+  it("offers the Link button and nothing else", () => {
+    const host = render(<EntryEditor variant="hatnote" />);
+
+    const buttons = [
+      ...host.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+    ];
+
+    expect(buttons.map((button) => button.textContent)).toEqual(["Link"]);
+    // No paragraph-style control: there are no headings to reach.
+    expect(host.querySelectorAll('[role="toolbar"] select')).toHaveLength(0);
+  });
+
+  it("does not throw asking about marks it has no extension for", () => {
+    // `isActive("bold")` resolves a name to a mark type and raises when there
+    // is none, so an unguarded selector would take the whole page down rather
+    // than render a smaller bar. Mounting at all is the assertion.
+    expect(() => render(<EntryEditor variant="hatnote" />)).not.toThrow();
+  });
+
+  it("looks like the line it becomes", () => {
+    const host = render(<EntryEditor variant="hatnote" />);
+    const surface = host.querySelector('[contenteditable="true"]');
+
+    // `hatnote` beside `wiki-body`, so the author sees the italic indent while
+    // typing rather than after saving.
+    expect(surface?.className).toContain("hatnote");
+    expect(surface?.className).toContain("wiki-body");
+    // One line, and said so rather than left to be discovered by pressing
+    // Enter and watching nothing happen.
+    expect(surface?.getAttribute("aria-multiline")).toBe("false");
+  });
+
+  it("announces the hint beside it, when given one", () => {
+    const host = render(
+      <EntryEditor variant="hatnote" describedBy="hatnote-hint" />,
+    );
+    const surface = host.querySelector('[contenteditable="true"]');
+
+    expect(surface?.getAttribute("aria-describedby")).toBe("hatnote-hint");
+  });
+
+  it("carries no description attribute when there is nothing to describe it", () => {
+    const host = render(<EntryEditor variant="hatnote" />);
+    const surface = host.querySelector('[contenteditable="true"]');
+
+    // Absent, not `"undefined"`: ProseMirror writes every key of the attribute
+    // record onto the node, so a description that is not there has to be a key
+    // that is not there.
+    expect(surface?.hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("leaves the body variant undescribed and multiline", () => {
+    const host = render(<EntryEditor />);
+    const surface = host.querySelector('[contenteditable="true"]');
+
+    expect(surface?.getAttribute("aria-multiline")).toBe("true");
+    expect(surface?.hasAttribute("aria-describedby")).toBe(false);
+    expect(surface?.className).not.toContain("hatnote");
+  });
+});

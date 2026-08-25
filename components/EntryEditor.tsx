@@ -106,6 +106,19 @@ export interface EntryEditorProps {
   /** Accessible name for the writing surface. */
   label?: string;
   /**
+   * The id of an element describing this field, announced after its name.
+   *
+   * The writing surface is a `contenteditable` inside ProseMirror's own DOM,
+   * so a `<p>` sitting next to it in the form is not associated with it by
+   * anything a screen reader can see — there is no `<label for>` relationship
+   * to inherit and no wrapper to imply one. This is the only way a hint gets
+   * read out, which matters most for the hatnote field (E11-T9, `YEO-79`),
+   * whose hint carries the one thing nobody would guess: that an entry about
+   * a person who shares a name already gets a hatnote without anybody writing
+   * one.
+   */
+  describedBy?: string;
+  /**
    * Every entry that exists, so the link button can offer them by title and
    * so a link to one that has since been deleted can be reported as such.
    *
@@ -200,6 +213,7 @@ export function EntryEditor({
   name,
   onChange,
   label = "Entry body",
+  describedBy,
   entries = NO_ENTRIES,
   initialHeadingIndex = null,
   variant = "body",
@@ -232,6 +246,13 @@ export function EntryEditor({
         class: surfaceClass,
         "aria-label": label,
         "aria-multiline": String(multiline),
+        // Spread rather than set to `undefined`: ProseMirror writes every key
+        // of this record onto the DOM node, so an absent description has to be
+        // an absent *key* or the surface grows `aria-describedby="undefined"`
+        // and a screen reader announces a hint that is not there.
+        ...(describedBy === undefined
+          ? {}
+          : { "aria-describedby": describedBy }),
       },
       /**
        * A one-line field stays one line (E11-T9, `YEO-79`).
@@ -249,7 +270,12 @@ export function EntryEditor({
        */
       handleKeyDown: multiline
         ? undefined
-        : (_view, event) => event.key === "Enter",
+        : // `isComposing` is the guard that keeps this from breaking input
+          // methods: confirming a candidate in a Japanese, Chinese or Korean
+          // IME is an Enter keypress, and swallowing it would make the field
+          // impossible to type a name into in exactly the scripts
+          // `lib/entry-slug.ts` went out of its way to keep addressable.
+          (_view, event) => event.key === "Enter" && !event.isComposing,
     },
     onUpdate: ({ editor: updated }) => {
       const html = updated.getHTML();

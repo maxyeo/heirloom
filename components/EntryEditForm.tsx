@@ -174,6 +174,7 @@ export function EntryEditForm({
         <EntryEditor
           variant="hatnote"
           label="Note above the entry"
+          describedBy={hatnoteHintId}
           initialHtml={initialHatnote}
           onChange={onHatnoteChange}
           entries={entries}
