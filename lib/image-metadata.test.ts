@@ -27,7 +27,15 @@ import {
   VP8X,
   webp,
   XMP_LATITUDE,
-  GIF,
+  gif,
+  gifApplication,
+  gifComment,
+  gifGraphicControl,
+  gifImage,
+  gifLoop,
+  gifXmp,
+  GIF_COMMENT_TEXT,
+  GIF_XMP_LATITUDE,
   type Field,
 } from "@/test/image-fixtures";
 
@@ -389,11 +397,164 @@ describe("a WebP", () => {
   });
 });
 
-describe("a GIF", () => {
-  it("is passed through untouched", () => {
-    // No Exif block, and no coordinate anywhere in the specification.
-    // Rebuilding it to prove that would only be a chance to break it.
-    expect(stripLocation(GIF, "image/gif")).toEqual(GIF);
+/** The blocks of a GIF, read independently of the module under test. */
+function gifBlocksOf(file: Uint8Array): string[] {
+  const found: string[] = [];
+  const table = file[10] & 0x80 ? 3 * (1 << ((file[10] & 0x07) + 1)) : 0;
+  let at = 13 + table;
+
+  const chainEnd = (from: number): number => {
+    let cursor = from;
+    while (file[cursor] !== 0) cursor += 1 + file[cursor];
+    return cursor + 1;
+  };
+
+  while (at < file.length && file[at] !== 0x3b) {
+    if (file[at] === 0x21) {
+      const label = file[at + 1];
+      found.push(
+        label === 0xf9
+          ? "graphic-control"
+          : label === 0xfe
+            ? "comment"
+            : label === 0xff
+              ? `application:${String.fromCharCode(...file.subarray(at + 3, at + 14))}`
+              : `extension:${label}`,
+      );
+      at = chainEnd(at + 2);
+      continue;
+    }
+    if (file[at] === 0x2c) {
+      const packed = file[at + 9];
+      const local = packed & 0x80 ? 3 * (1 << ((packed & 0x07) + 1)) : 0;
+      found.push("image");
+      at = chainEnd(at + 10 + local + 1);
+      continue;
+    }
+    throw new Error(`unknown GIF block 0x${file[at].toString(16)} at ${at}`);
+  }
+  return found;
+}
+
+describe("a GIF carrying XMP", () => {
+  /**
+   * The case an earlier version of this module got wrong, and got wrong in
+   * its reasoning rather than its code: GIF has no Exif block, which is true,
+   * and was taken to mean it has nowhere to put coordinates, which is not.
+   * GIF89a's Application Extension is a labelled block of vendor data, and it
+   * is the documented place XMP goes — `exiftool -XMP-exif:GPSLatitude=`
+   * writes exactly this file.
+   */
+  const original = gif([gifXmp(), gifImage([0x4c, 0x01, 0x00])]);
+
+  it("has a latitude in it to begin with", () => {
+    expect(contains(original, GIF_XMP_LATITUDE)).toBe(true);
+    expect(gifBlocksOf(original)).toEqual(["application:XMP DataXMP", "image"]);
+  });
+
+  it("does not afterwards", () => {
+    const scrubbed = stripLocation(original, "image/gif");
+    expect(contains(scrubbed, GIF_XMP_LATITUDE)).toBe(false);
+    expect(gifBlocksOf(scrubbed)).toEqual(["image"]);
+  });
+
+  it("is walked through the magic trailer rather than around it", () => {
+    // The packet is not length-prefixed: its own ASCII acts as the sub-block
+    // lengths. A walker that mishandled that would either throw on a real
+    // file or lose its place and take the image with it.
+    const scrubbed = stripLocation(original, "image/gif");
+    expect(scrubbed[scrubbed.length - 1]).toBe(0x3b);
+    expect(contains(scrubbed, "GIF89a")).toBe(true);
+  });
+});
+
+describe("a GIF's other carriers", () => {
+  it("loses its comment extension", () => {
+    const original = gif([gifComment(), gifImage([0x4c, 0x01, 0x00])]);
+    expect(contains(original, GIF_COMMENT_TEXT)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/gif");
+    expect(contains(scrubbed, GIF_COMMENT_TEXT)).toBe(false);
+    expect(gifBlocksOf(scrubbed)).toEqual(["image"]);
+  });
+
+  it("loses an application extension wearing the loop's name but not its shape", () => {
+    // The loop count is kept by exact shape, not by identifier. A block
+    // calling itself NETSCAPE2.0 and carrying a payload is not a loop count.
+    const original = gif([
+      gifApplication(
+        "NETSCAPE2.0",
+        [...GIF_XMP_LATITUDE].map((c) => c.charCodeAt(0)),
+      ),
+      gifImage([0x4c, 0x01, 0x00]),
+    ]);
+    expect(contains(original, GIF_XMP_LATITUDE)).toBe(true);
+
+    const scrubbed = stripLocation(original, "image/gif");
+    expect(contains(scrubbed, GIF_XMP_LATITUDE)).toBe(false);
+    expect(gifBlocksOf(scrubbed)).toEqual(["image"]);
+  });
+
+  it("loses bytes appended after the trailer", () => {
+    // Outside the image by definition, rendered by nothing, and the most
+    // obvious place left to put something.
+    const original = new Uint8Array([
+      ...gif([gifImage([0x4c, 0x01, 0x00])]),
+      ...[...GIF_XMP_LATITUDE].map((c) => c.charCodeAt(0)),
+    ]);
+    expect(contains(original, GIF_XMP_LATITUDE)).toBe(true);
+    expect(
+      contains(stripLocation(original, "image/gif"), GIF_XMP_LATITUDE),
+    ).toBe(false);
+  });
+});
+
+describe("an animated GIF", () => {
+  const original = gif([
+    gifLoop(),
+    gifGraphicControl(10),
+    gifImage([0x4c, 0x01, 0x00]),
+    gifGraphicControl(20),
+    gifImage([0x4c, 0x02, 0x00]),
+  ]);
+
+  it("comes back byte for byte", () => {
+    // Nothing in it is a carrier, so a scrub that rebuilt it differently
+    // would be rebuilding it wrongly.
+    expect(stripLocation(original, "image/gif")).toEqual(original);
+  });
+
+  it("keeps its frames, their timing, and the loop that makes it repeat", () => {
+    // Dropping every application extension would be simpler and would leave
+    // every animation in the wiki playing once and stopping.
+    expect(gifBlocksOf(stripLocation(original, "image/gif"))).toEqual([
+      "application:NETSCAPE2.0",
+      "graphic-control",
+      "image",
+      "graphic-control",
+      "image",
+    ]);
+  });
+});
+
+describe("a GIF that cannot be walked", () => {
+  it("is refused rather than passed through", () => {
+    // The polarity that matters: the old pass-through could not fail, which
+    // is why it could not notice anything either.
+    const truncated = gif([gifImage([0x4c, 0x01, 0x00])]).slice(0, 16);
+    expect(() => stripLocation(truncated, "image/gif")).toThrow(
+      UnreadableImageError,
+    );
+  });
+
+  it("is refused when a block introducer is not one", () => {
+    // 19 is the first block: six bytes of header, seven of logical screen
+    // descriptor, six of the two-entry global colour table.
+    const corrupt = gif([gifImage([0x4c, 0x01, 0x00])]);
+    corrupt[19] = 0x99;
+    expect(() => stripLocation(corrupt, "image/gif")).toThrow(
+      UnreadableImageError,
+    );
   });
 });
 

@@ -119,6 +119,19 @@ code does not run. Out come the Exif GPS directory, the XMP and IPTC blocks
 that carry coordinates as text, and the vendor maker note that cannot be
 parsed well enough to be trusted.
 
+That last list is per-container rather than per-format, and one of the four
+formats is worth calling out because the obvious reasoning about it is wrong.
+**A GIF has no Exif block, and that does not mean it has nowhere to put a
+location.** GIF89a defines an Application Extension — a labelled block of
+vendor data — and it is the documented place an XMP packet goes; `exiftool`,
+ImageMagick and Photoshop's "Save for Web" all write one. A GIF made from a
+phone video by a tool that carries the source metadata across arrives with
+`exif:GPSLatitude` in it. So a GIF is walked like the others, and its
+application, comment and plain-text extensions are dropped, keeping only what
+draws and times the picture: the colour tables, the graphic control
+extensions, the image blocks, and the Netscape loop count without which every
+animation would play once and stop.
+
 **Orientation stays**, and that is the reason this is byte-level surgery
 rather than a three-line deletion. A phone stores its pixels the way the
 sensor delivered them and writes "rotate this" into the same Exif block the
@@ -780,9 +793,9 @@ grants write and delete on the store, and never appears in the repository.
   repository fails the build over. A recent phone routinely produces larger
   photographs than that, so the fix is for the editor's image button (`E5-T3`)
   to downscale in a canvas before it posts.
-- **GIF metadata is not touched.** There is no Exif block and no coordinate in
-  the format, so there is nothing to remove; PNG and WebP keep whatever
-  orientation tag they arrived with, and nothing re-synthesises one.
+- **Orientation is respected, never repaired.** PNG, WebP and GIF keep
+  whatever orientation tag they arrived with and nothing re-synthesises one,
+  because nothing that produces those formats produces a rotated image.
 - **Free-tier pausing.** Supabase pauses free projects after roughly a week of
   inactivity. A family wiki visited monthly will be found asleep. A daily cron
   that touches the database avoids this.

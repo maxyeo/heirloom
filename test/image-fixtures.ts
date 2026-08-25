@@ -337,17 +337,137 @@ export function webp(chunks: readonly Chunk[]): Uint8Array<ArrayBuffer> {
  */
 export const VP8X = [0x2e, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-export const GIF: Uint8Array<ArrayBuffer> = new Uint8Array([
-  ...bytes("GIF89a"),
-  1,
+/**
+ * A GIF sub-block chain: length-prefixed runs of at most 255 bytes, ended by
+ * a zero length. Every variable-length payload in a GIF is one of these.
+ */
+const subBlocks = (data: readonly number[]): number[] => {
+  const out: number[] = [];
+  for (let at = 0; at < data.length; at += 255) {
+    const chunk = data.slice(at, at + 255);
+    out.push(chunk.length, ...chunk);
+  }
+  out.push(0);
+  return out;
+};
+
+/** A graphic control extension: frame delay and transparency. Kept by the scrub. */
+export const gifGraphicControl = (delay = 10): number[] => [
+  0x21,
+  0xf9,
+  0x04,
+  0x00,
+  delay,
+  0x00,
+  0x00,
+  0x00,
+];
+
+/**
+ * A Netscape loop count — the one application extension that survives,
+ * because without it an animated GIF plays once instead of looping.
+ */
+export const gifLoop = (count = 0): number[] => [
+  0x21,
+  0xff,
+  0x0b,
+  ...bytes("NETSCAPE2.0"),
+  0x03,
+  0x01,
+  count & 0xff,
+  count >> 8,
+  0x00,
+];
+
+/** A 1×1 image block with no local colour table. */
+export const gifImage = (data: readonly number[]): number[] => [
+  0x2c,
+  0,
+  0,
+  0,
   0,
   1,
   0,
+  1,
+  0,
+  0x00,
+  0x02,
+  ...subBlocks(data),
+];
+
+export const GIF_COMMENT_TEXT = "Taken at home, 37.77N 122.41W";
+
+/** A comment extension: free-form text, and a carrier like any other. */
+export const gifComment = (text = GIF_COMMENT_TEXT): number[] => [
+  0x21,
+  0xfe,
+  ...subBlocks(bytes(text)),
+];
+
+/** An application extension with an eleven-byte identifier and a payload. */
+export const gifApplication = (
+  identifier: string,
+  payload: readonly number[],
+): number[] => [0x21, 0xff, 0x0b, ...bytes(identifier), ...subBlocks(payload)];
+
+export const GIF_XMP_LATITUDE =
+  "<exif:GPSLatitude>37,46.2400N</exif:GPSLatitude>";
+
+/**
+ * XMP as it is actually written into a GIF, magic trailer and all.
+ *
+ * This is the encoding `exiftool`, ImageMagick and Photoshop's "Save for Web"
+ * produce, and it is a deliberate abuse of the sub-block chain: the packet is
+ * **not** length-prefixed, so the walker reads the packet's own ASCII bytes
+ * as sub-block lengths and hops through the text in irregular strides. What
+ * makes that terminate is the trailer — a descending run 0xFF…0x01 — because
+ * a hop from any byte of a descending run lands at the same place: 256 bytes
+ * past the run's start, which is where the zero sits.
+ *
+ * The fixture carries the real thing rather than a tidy length-prefixed
+ * approximation, because a scrubber that only handled the tidy version would
+ * pass a test and fail on every file in the wild.
+ */
+export const gifXmp = (packet = GIF_XMP_LATITUDE): number[] => [
+  0x21,
+  0xff,
+  0x0b,
+  ...bytes("XMP DataXMP"),
+  ...bytes(packet),
+  0x01,
+  ...Array.from({ length: 255 }, (_, index) => 255 - index),
   0x00,
   0x00,
-  0x00,
-  0x3b,
-]);
+];
+
+/**
+ * A GIF89a: header, a 1×1 logical screen with a two-colour global table, the
+ * given blocks, and the trailer.
+ */
+export function gif(
+  blocks: readonly (readonly number[])[],
+): Uint8Array<ArrayBuffer> {
+  return new Uint8Array([
+    ...bytes("GIF89a"),
+    1,
+    0,
+    1,
+    0, // one pixel each way
+    0x80, // a global colour table follows, of two entries
+    0,
+    0,
+    0,
+    0,
+    0,
+    0xff,
+    0xff,
+    0xff,
+    ...blocks.flat(),
+    0x3b,
+  ]);
+}
+
+export const GIF: Uint8Array<ArrayBuffer> = gif([gifImage([0x4c, 0x01, 0x00])]);
 
 /** Whether `haystack` contains `needle` as a run of bytes. */
 export function contains(haystack: Uint8Array, needle: string): boolean {

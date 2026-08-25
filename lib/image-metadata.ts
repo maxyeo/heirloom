@@ -77,9 +77,11 @@ import type { ImageType } from "@/lib/image-type";
  * Coordinates hide in more than one place, and the ones that are not needed
  * to draw the picture are removed outright rather than inspected:
  *
- * - **XMP** (`APP1` in JPEG, `iTXt` in PNG, the `XMP ` chunk in WebP) has an
- *   `exif:GPSLatitude` of its own, which phones and editors write alongside
- *   the Exif one. Nothing renders from it.
+ * - **XMP** (`APP1` in JPEG, `iTXt` in PNG, the `XMP ` chunk in WebP, an
+ *   Application Extension in GIF) has an `exif:GPSLatitude` of its own, which
+ *   phones and editors write alongside the Exif one. Nothing renders from it,
+ *   and it reaches all four of these formats — including the one with no Exif
+ *   block at all.
  * - **IPTC / Photoshop resources** (`APP13`) carry a sub-location, city and
  *   country as plain text.
  * - **Every other `APPn` and the JPEG comment segment.** In JPEG this is an
@@ -89,6 +91,10 @@ import type { ImageType } from "@/lib/image-type";
  *   treated the other way round, as a blocklist of its three text chunk
  *   types, because PNG chunk types are registered and non-textual ones do
  *   not carry prose.
+ * - **GIF's application, comment and plain-text extensions**, kept to an
+ *   allowlist of the graphic control extension and the Netscape loop count —
+ *   see `stripGif`, which also records why the earlier belief that a GIF had
+ *   nothing to remove was wrong.
  *
  * ICC profiles are kept deliberately: dropping one does not protect anything
  * and visibly shifts the colours of every photograph taken on a
@@ -118,11 +124,17 @@ import type { ImageType } from "@/lib/image-type";
  *
  * ## Known limits
  *
- * GIF is passed through untouched: it has no Exif block and no coordinate
- * anywhere in its specification. PNG and WebP keep whatever orientation tag
- * they arrived with but nothing re-synthesises one, because nothing that
- * produces a PNG produces a rotated one. Both are recorded in
- * `docs/architecture.md`.
+ * PNG, WebP and GIF keep whatever orientation tag they arrived with, and
+ * nothing re-synthesises one — nothing that produces those formats produces a
+ * rotated one, so there is nothing to respect. GIF has no Exif block at all,
+ * so what it loses is only the extension blocks named above.
+ *
+ * The known limit worth stating is the shape of the defence rather than a
+ * gap in it: three of the four formats are handled by walking a container
+ * this file understands, and a container it stops understanding is refused
+ * rather than forwarded. That is a bet that refusing a damaged file is better
+ * than storing an unread one, and it is recorded in `docs/architecture.md`
+ * along with everything above.
  */
 
 /**
@@ -333,6 +345,14 @@ function eraseGpsIfd(walk: Walk, offset: number): boolean {
  * reader finds them by counting entries — so they move down with the entries
  * rather than staying put. The twelve bytes freed at the end are zeroed;
  * they belonged to this directory, so nothing else can be relying on them.
+ *
+ * The shift is linear in the entries after the one removed, which is the one
+ * cost {@link MAX_ENTRIES} does not charge for directly: a directory packed
+ * with removable tags moves bytes proportional to the *square* of its entry
+ * count. It is still bounded, because the entry count is — worst case is
+ * around `MAX_ENTRIES²` byte moves, a few million, which measures in single
+ * digit milliseconds. Worth saying plainly, because "entries examined" is
+ * what the budget counts and this is the work that rides along behind it.
  */
 function removeEntry(
   walk: Walk,
@@ -686,14 +706,184 @@ function stripWebp(bytes: ImageBytes, budget: Budget): ImageBytes {
 }
 
 /**
+ * GIF block introducers, and the two extension labels this scrub keeps.
+ *
+ * A GIF is a header, a screen descriptor, a colour table, and then a flat
+ * sequence of blocks each identified by its first byte. That flatness is what
+ * makes it walkable: unlike a JPEG scan, every block declares its own length,
+ * so the file can be rebuilt exactly rather than copied from a point onwards.
+ */
+const GIF_EXTENSION = 0x21;
+const GIF_IMAGE = 0x2c;
+const GIF_TRAILER = 0x3b;
+const GIF_GRAPHIC_CONTROL = 0xf9;
+const GIF_APPLICATION = 0xff;
+
+/**
+ * The one application extension that survives: Netscape's loop count.
+ *
+ * Dropping every application extension would be simpler and would stop every
+ * animated GIF in the wiki from looping — the frames and their timing live in
+ * graphic control extensions and image blocks, but *how many times it plays*
+ * lives in this one, and without it a browser plays the animation once and
+ * stops. That is a visible regression on the one format anybody uploads
+ * specifically because it moves.
+ *
+ * It is matched by its exact shape rather than by its name: the eleven-byte
+ * identifier, one three-byte sub-block, the sub-block's own leading `0x01`,
+ * and the terminator — nineteen bytes with two of them free. A block wearing
+ * this name and carrying anything else is not a loop count, and goes with the
+ * rest.
+ */
+const GIF_LOOP = "NETSCAPE2.0";
+const GIF_LOOP_LENGTH = 19;
+
+/** A GIF colour table's size in bytes, from the packed field that describes it. */
+const colourTableBytes = (packed: number): number =>
+  packed & 0x80 ? 3 * (1 << ((packed & 0x07) + 1)) : 0;
+
+/**
+ * The end of the sub-block chain starting at `at`.
+ *
+ * Every variable-length payload in a GIF is a chain of sub-blocks, each a
+ * length byte followed by that many bytes, ending with a zero length. Walking
+ * it is what lets an extension be skipped without understanding it — which is
+ * the whole point, since the blocks being removed here are by definition ones
+ * whose contents this code has no business interpreting.
+ *
+ * It also handles the XMP-in-GIF encoding, which is a deliberate abuse of
+ * this structure: the packet is *not* length-prefixed, so its own ASCII bytes
+ * act as the lengths and the walk hops through the text in irregular strides
+ * until a 258-byte trailer of descending values funnels every possible
+ * landing point onto the terminating zero. That is the encoding this scrub
+ * has to survive, because it is the one the tools in the wild write.
+ */
+function gifSubBlocksEnd(bytes: Uint8Array, at: number): number {
+  let cursor = at;
+  while (cursor < bytes.length) {
+    const size = bytes[cursor];
+    if (size === 0) return cursor + 1;
+    cursor += 1 + size;
+  }
+  throw new UnreadableImageError("sub-block chain runs past the end");
+}
+
+/** Whether the extension at `at` is exactly a Netscape loop count. */
+function isGifLoop(bytes: Uint8Array, at: number, end: number): boolean {
+  return (
+    bytes[at + 1] === GIF_APPLICATION &&
+    end - at === GIF_LOOP_LENGTH &&
+    bytes[at + 2] === 0x0b &&
+    startsWith(bytes, at + 3, GIF_LOOP) &&
+    bytes[at + 14] === 0x03 &&
+    bytes[at + 15] === 0x01
+  );
+}
+
+/**
+ * Rebuild a GIF without the blocks that carry arbitrary data.
+ *
+ * ## The premise this replaces was wrong
+ *
+ * An earlier version of this module returned a GIF untouched, on the grounds
+ * that the format has no Exif block and no coordinate in its specification.
+ * The first half is true and the second half is not the same claim. **GIF89a
+ * defines an Application Extension** — a labelled block of vendor-defined
+ * data — and that is the documented mechanism XMP uses to ride in a GIF, the
+ * one ImageMagick, Photoshop's "Save for Web" and `exiftool` all write. An
+ * XMP packet carries `exif:GPSLatitude` and `exif:GPSLongitude`, which are
+ * the same fields already stripped from the other three formats.
+ *
+ * So a GIF converted from a phone video or a burst by a tool that carries the
+ * source metadata across arrives here with the coordinates in it, and the
+ * pass-through handed them straight to the store. The comment was not a
+ * documentation slip; the threat model had the gap, which is why this file
+ * and `docs/architecture.md` now both say what an Application Extension is.
+ *
+ * ## What is kept
+ *
+ * Everything that draws or times the picture: the header, the logical screen
+ * descriptor, the global and local colour tables, every graphic control
+ * extension, every image block, and the Netscape loop count. Everything that
+ * carries free-form data goes — application extensions (bar the loop),
+ * comment extensions, and plain-text extensions, which are a legacy
+ * rendering feature no decoder has implemented in decades and an arbitrary
+ * ASCII carrier in the meantime.
+ *
+ * Bytes after the trailer go too. They are outside the image by definition,
+ * nothing renders them, and they are the most obvious place left to put
+ * something. That is a stricter line than the JPEG walk draws, and the
+ * difference is capability rather than judgement: a JPEG scan cannot be
+ * traversed without decoding it, so the walk there has to stop and copy the
+ * rest; a GIF declares every length, so the file can be rebuilt exactly.
+ */
+function stripGif(bytes: ImageBytes): ImageBytes {
+  // Header (6) and logical screen descriptor (7); the packed field at 10 says
+  // whether a global colour table follows.
+  if (bytes.length < 13) {
+    throw new UnreadableImageError("no logical screen descriptor");
+  }
+  let at = 13 + colourTableBytes(bytes[10]);
+  if (at > bytes.length) {
+    throw new UnreadableImageError("global colour table runs past the end");
+  }
+
+  const keep: [number, number][] = [[0, at]];
+
+  for (;;) {
+    if (at >= bytes.length) throw new UnreadableImageError("no trailer");
+    const block = bytes[at];
+
+    if (block === GIF_TRAILER) {
+      keep.push([at, at + 1]);
+      break;
+    }
+
+    if (block === GIF_EXTENSION) {
+      if (at + 2 > bytes.length) {
+        throw new UnreadableImageError("truncated extension");
+      }
+      const end = gifSubBlocksEnd(bytes, at + 2);
+      if (bytes[at + 1] === GIF_GRAPHIC_CONTROL || isGifLoop(bytes, at, end)) {
+        keep.push([at, end]);
+      }
+      at = end;
+      continue;
+    }
+
+    if (block === GIF_IMAGE) {
+      // Image descriptor: nine bytes, the last of them packed, then an
+      // optional local colour table, then the LZW code size, then the data.
+      if (at + 10 > bytes.length) {
+        throw new UnreadableImageError("truncated image descriptor");
+      }
+      const data = at + 10 + colourTableBytes(bytes[at + 9]);
+      if (data + 1 > bytes.length) {
+        throw new UnreadableImageError("local colour table runs past the end");
+      }
+      const end = gifSubBlocksEnd(bytes, data + 1);
+      keep.push([at, end]);
+      at = end;
+      continue;
+    }
+
+    // Not a block introducer, which means the walk is no longer aligned to
+    // block boundaries and nothing after this point can be trusted.
+    throw new UnreadableImageError("unknown block");
+  }
+
+  return join(bytes, keep);
+}
+
+/**
  * Return `bytes` with its location metadata removed.
  *
  * Nothing is ever scrubbed in place in the caller's buffer: every format that
  * has work to do copies first, because callers hold the body of a request and
  * a function that quietly rewrote a buffer its caller still had a reference to
- * would be a trap in a file about not surprising anyone. GIF has no work to
- * do, so it is returned as it came — the one case where the result and the
- * argument are the same object, and the one case where that cannot matter.
+ * would be a trap in a file about not surprising anyone. GIF needs no copy
+ * for a different reason: its walk only ever reads, and assembles a fresh
+ * buffer out of the ranges it decided to keep.
  *
  * @throws {UnreadableImageError} if the container cannot be walked.
  */
@@ -711,9 +901,8 @@ export function stripLocation(bytes: ImageBytes, type: ImageType): ImageBytes {
     case "image/webp":
       return stripWebp(bytes.slice(), budget);
     case "image/gif":
-      // GIF has no Exif block and no coordinate anywhere in its
-      // specification. There is nothing to take out, and rebuilding the file
-      // to prove it would only be a chance to break it.
-      return bytes;
+      // No copy: `stripGif` only ever reads, and returns a buffer it
+      // assembled itself.
+      return stripGif(bytes);
   }
 }
