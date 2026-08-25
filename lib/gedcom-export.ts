@@ -153,6 +153,28 @@ export type GedcomExportInput = {
 };
 
 /**
+ * Everything the writers look records up by, built once before any line is
+ * written.
+ *
+ * Without it each `INDI` would scan the whole child-link list and the whole
+ * union list to find its own `FAMC` and `FAMS` lines, and each `FAM` would
+ * scan the link list again for its `CHIL` — quadratic in the size of the tree,
+ * on the one operation whose whole job is to walk it. The lists are built from
+ * the already-ordered arrays, so every value in here is in the order it will
+ * be written and nothing re-sorts.
+ */
+type ExportIndex = {
+  positionOfIndividual: ReadonlyMap<string, number>;
+  positionOfUnion: ReadonlyMap<string, number>;
+  /** Child links by the child they name, for that person's `FAMC` lines. */
+  linksByChild: ReadonlyMap<string, readonly ExportChild[]>;
+  /** Child links by the family they belong to, for its `CHIL` lines. */
+  linksByUnion: ReadonlyMap<string, readonly ExportChild[]>;
+  /** The families a person is a partner in, by position, for their `FAMS`. */
+  familiesOfPartner: ReadonlyMap<string, readonly number[]>;
+};
+
+/**
  * CRLF, which GEDCOM 5.5.1 specifies and which is fixed here rather than
  * taken from the platform. `os.EOL` would make the same tree export
  * differently on a developer's Mac and on CI, and E7-T2 compares bytes.
@@ -247,16 +269,24 @@ export function writeGedcom(tree: GedcomExportInput): string {
     positionOfIndividual,
   );
 
+  const index: ExportIndex = {
+    positionOfIndividual,
+    positionOfUnion,
+    linksByChild: groupBy(links, (link) => link.childId),
+    linksByUnion: groupBy(links, (link) => link.unionId),
+    familiesOfPartner: familiesByPartner(unions),
+  };
+
   const lines: string[] = [];
 
   writeHeader(lines);
 
-  for (const [index, individual] of individuals.entries()) {
-    writeIndividual(lines, individual, index, unions, links, positionOfUnion);
+  for (const [position, individual] of individuals.entries()) {
+    writeIndividual(lines, individual, position, index);
   }
 
-  for (const [index, union] of unions.entries()) {
-    writeFamily(lines, union, index, links, positionOfIndividual);
+  for (const [position, union] of unions.entries()) {
+    writeFamily(lines, union, position, index);
   }
 
   emit(lines, 0, "TRLR");
@@ -312,9 +342,7 @@ function writeIndividual(
   lines: string[],
   individual: ExportIndividual,
   position: number,
-  unions: readonly ExportUnion[],
-  links: readonly ExportChild[],
-  positionOfUnion: ReadonlyMap<string, number>,
+  index: ExportIndex,
 ): void {
   record(lines, individualXref(position), "INDI");
 
@@ -345,10 +373,8 @@ function writeIndividual(
   // because a file without them is one most programs read as a tree of
   // unrelated people, and because `reportOneSidedLinks` cross-checks them on
   // the way back in.
-  for (const link of links) {
-    if (link.childId !== individual.id) continue;
-
-    const family = positionOfUnion.get(link.unionId);
+  for (const link of index.linksByChild.get(individual.id) ?? []) {
+    const family = index.positionOfUnion.get(link.unionId);
     if (family === undefined) continue;
 
     emit(lines, 1, "FAMC", pointer(familyXref(family)));
@@ -359,14 +385,8 @@ function writeIndividual(
     if (pedigree !== undefined) emit(lines, 2, "PEDI", pedigree);
   }
 
-  for (const [index, union] of unions.entries()) {
-    if (
-      union.partnerAId !== individual.id &&
-      union.partnerBId !== individual.id
-    ) {
-      continue;
-    }
-    emit(lines, 1, "FAMS", pointer(familyXref(index)));
+  for (const family of index.familiesOfPartner.get(individual.id) ?? []) {
+    emit(lines, 1, "FAMS", pointer(familyXref(family)));
   }
 }
 
@@ -486,18 +506,15 @@ function writeFamily(
   lines: string[],
   union: ExportUnion,
   position: number,
-  links: readonly ExportChild[],
-  positionOfIndividual: ReadonlyMap<string, number>,
+  index: ExportIndex,
 ): void {
   record(lines, familyXref(position), "FAM");
 
-  writePartner(lines, "HUSB", union.partnerAId, positionOfIndividual);
-  writePartner(lines, "WIFE", union.partnerBId, positionOfIndividual);
+  writePartner(lines, "HUSB", union.partnerAId, index.positionOfIndividual);
+  writePartner(lines, "WIFE", union.partnerBId, index.positionOfIndividual);
 
-  for (const link of links) {
-    if (link.unionId !== union.id) continue;
-
-    const child = positionOfIndividual.get(link.childId);
+  for (const link of index.linksByUnion.get(union.id) ?? []) {
+    const child = index.positionOfIndividual.get(link.childId);
     if (child === undefined) continue;
 
     emit(lines, 1, "CHIL", pointer(individualXref(child)));
@@ -812,6 +829,48 @@ function compareKeys(a: SortKey, b: SortKey): number {
   }
 
   return 0;
+}
+
+/** Group a list by a key, keeping each group in the list's own order. */
+function groupBy<T>(
+  items: readonly T[],
+  keyOf: (item: T) => string,
+): ReadonlyMap<string, readonly T[]> {
+  const grouped = new Map<string, T[]>();
+
+  for (const item of items) {
+    const key = keyOf(item);
+    const group = grouped.get(key);
+    if (group === undefined) grouped.set(key, [item]);
+    else group.push(item);
+  }
+
+  return grouped;
+}
+
+/**
+ * The families each person is a partner in, by position, in family order.
+ *
+ * A union is counted once per person even when both of its partner columns
+ * name them — a row `validateUnion` refuses, and one that would otherwise
+ * write the same `FAMS` line twice.
+ */
+function familiesByPartner(
+  unions: readonly ExportUnion[],
+): ReadonlyMap<string, readonly number[]> {
+  const families = new Map<string, number[]>();
+
+  for (const [position, union] of unions.entries()) {
+    for (const partnerId of new Set([union.partnerAId, union.partnerBId])) {
+      if (partnerId === null) continue;
+
+      const found = families.get(partnerId);
+      if (found === undefined) families.set(partnerId, [position]);
+      else found.push(position);
+    }
+  }
+
+  return families;
 }
 
 /** Where each row ended up, by id, for the pointers that name it. */

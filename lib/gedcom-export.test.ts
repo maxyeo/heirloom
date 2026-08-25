@@ -619,6 +619,66 @@ describe("determinism", () => {
     expect(writeGedcom(shifted)).toBe(writeGedcom(tree));
   });
 
+  it("holds on a tree big enough that the lookups matter", () => {
+    // Every record is found through a `Map` built once rather than by scanning
+    // the link and union lists per record, so this walks the grouping paths
+    // with enough rows that a mis-keyed group would show up as a missing or
+    // misattached family rather than as a slow test.
+    const families = 120;
+
+    const people: ExportIndividual[] = [];
+    const marriages: ExportUnion[] = [];
+    const links: ExportChild[] = [];
+
+    for (let n = 0; n < families; n += 1) {
+      const father = id(n * 4 + 1);
+      const mother = id(n * 4 + 2);
+      const first = id(n * 4 + 3);
+      const second = id(n * 4 + 4);
+      const home = id(n * 4 + 1000);
+
+      people.push(
+        person({ id: father, givenName: `Father${n}`, surname: `House${n}` }),
+        person({ id: mother, givenName: `Mother${n}`, surname: `House${n}` }),
+        person({ id: first, givenName: `First${n}`, surname: `House${n}` }),
+        person({ id: second, givenName: `Second${n}`, surname: `House${n}` }),
+      );
+
+      marriages.push(
+        union({
+          id: home,
+          partnerAId: father,
+          partnerBId: mother,
+          type: "marriage",
+          startDate: `19${String(n % 90).padStart(2, "0")}-01-01`,
+          startDatePrecision: "year",
+        }),
+      );
+
+      links.push(
+        { unionId: home, childId: first, relation: "biological" },
+        { unionId: home, childId: second, relation: "adopted" },
+      );
+    }
+
+    const big: GedcomExportInput = {
+      individuals: people,
+      unions: marriages,
+      unionChildren: links,
+    };
+
+    const { text, mapped, input } = roundTrip(big);
+
+    expect(mapped.issues).toEqual([]);
+    expect(input.individuals).toHaveLength(families * 4);
+    expect(input.unions).toHaveLength(families);
+    expect(input.unionChildren).toHaveLength(families * 2);
+    expect(text.match(/1 CHIL /g)).toHaveLength(families * 2);
+    expect(text.match(/1 FAMS /g)).toHaveLength(families * 2);
+    expect(text.match(/1 FAMC /g)).toHaveLength(families * 2);
+    expect(writeGedcom(input)).toBe(text);
+  });
+
   it("survives export, import and export unchanged — the property E7-T2 tests", () => {
     const first = writeGedcom(tree);
     const { input } = roundTrip(tree);
