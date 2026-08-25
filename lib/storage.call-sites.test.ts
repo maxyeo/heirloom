@@ -34,7 +34,22 @@ import { describe, expect, it } from "vitest";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const SOURCE_DIRS = ["app", "components", "db", "lib", "test"];
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts"];
+/**
+ * Every extension a module could hide in, not just the ones currently in use.
+ * `postcss.config.mjs` and `eslint.config.mjs` have no business importing a
+ * storage vendor and today they do not — but a scan whose blind spot is a
+ * file extension is one rename away from being a scan of nothing.
+ */
+const SOURCE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+];
 
 /** The storage module itself, and the only file allowed to name a vendor. */
 const STORAGE_MODULE = join("lib", "storage.ts");

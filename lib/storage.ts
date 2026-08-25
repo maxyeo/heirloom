@@ -32,12 +32,16 @@ import { BlobNotFoundError, del, head, put as blobPut } from "@vercel/blob";
  * await storage.delete(key);
  * ```
  *
- * `delete` is a reserved word, so it cannot be a bare imported binding
- * (`import { delete }` does not parse) — but it is a perfectly good property
- * name, which `storage.delete(...)` reads as. The namespace import is the
- * house style here for a second reason anyway: it keeps the seam legible at
- * the call site. `storage.put(...)` says where the bytes went; a bare
- * `put(...)` says nothing.
+ * `delete` is a reserved word, so it cannot be a *bare* imported binding —
+ * `import { delete }` does not parse. (An alias, `import { delete as remove }`,
+ * is legal; it just renames the seam at every call site, which is the opposite
+ * of what this module is for.) As a property name it is unremarkable, which is
+ * what `storage.delete(...)` reads as — the same shape `Map` and `Set` have
+ * always had.
+ *
+ * The namespace import is the house style here for a second reason anyway: it
+ * keeps the seam legible at the call site. `storage.put(...)` says where the
+ * bytes went; a bare `put(...)` says nothing.
  *
  * ## Server only
  *
@@ -124,6 +128,13 @@ function token(): string {
  * an existing pathname, but "PUT replaces" is what S3, GCS, R2 and a
  * filesystem all do, and a seam whose semantics are one host's opinion is not
  * a seam. Key uniqueness is the caller's business.
+ *
+ * So is key *shape*, and that is a sharper obligation than it sounds: nothing
+ * here rejects a leading slash or a `..` segment. Against a blob store those
+ * are merely odd pathnames, but this module exists so that a directory on
+ * disk can be the backend one day, and on that day an unvalidated key is a
+ * path traversal. E5-T2 owns the upload endpoint and should constrain the
+ * keys it mints rather than passing a filename through from a browser.
  *
  * `addRandomSuffix` is pinned off for the property this whole module depends
  * on: the key you write is the key you read. A random suffix would make the

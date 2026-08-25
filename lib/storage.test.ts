@@ -42,7 +42,7 @@ vi.mock("@vercel/blob", () => ({
 }));
 
 const KEY = "images/9f8b/portrait.jpg";
-const URL =
+const BLOB_URL =
   "https://abc123.public.blob.vercel-storage.com/images/9f8b/portrait.jpg";
 
 beforeEach(() => {
@@ -68,9 +68,9 @@ describe("put", () => {
   it("stores under the key it was given, and returns it unchanged", async () => {
     blob.put.mockResolvedValue({
       pathname: KEY,
-      url: URL,
+      url: BLOB_URL,
       contentType: "image/jpeg",
-      downloadUrl: `${URL}?download=1`,
+      downloadUrl: `${BLOB_URL}?download=1`,
       contentDisposition: "inline",
       etag: "abc",
     });
@@ -79,7 +79,11 @@ describe("put", () => {
       contentType: "image/jpeg",
     });
 
-    expect(stored).toEqual({ key: KEY, url: URL, contentType: "image/jpeg" });
+    expect(stored).toEqual({
+      key: KEY,
+      url: BLOB_URL,
+      contentType: "image/jpeg",
+    });
 
     const [pathname, body, options] = blob.put.mock.calls[0];
     expect(pathname).toBe(KEY);
@@ -102,7 +106,7 @@ describe("put", () => {
     // stopped being the thing that configures storage.
     blob.put.mockResolvedValue({
       pathname: KEY,
-      url: URL,
+      url: BLOB_URL,
       contentType: "image/jpeg",
     });
 
@@ -125,7 +129,7 @@ describe("get", () => {
   it("describes what is stored", async () => {
     blob.head.mockResolvedValue({
       pathname: KEY,
-      url: URL,
+      url: BLOB_URL,
       contentType: "image/jpeg",
       size: 1024,
       uploadedAt: new Date(),
@@ -133,7 +137,7 @@ describe("get", () => {
 
     await expect(storage.get(KEY)).resolves.toEqual({
       key: KEY,
-      url: URL,
+      url: BLOB_URL,
       contentType: "image/jpeg",
     });
     expect(blob.head.mock.calls[0][1].token).toBe("vercel_blob_rw_test_token");

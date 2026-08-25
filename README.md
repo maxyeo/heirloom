@@ -174,7 +174,7 @@ variables are named generically so any Postgres provider works.
 
 Image storage is the one exception, and it is confined to `lib/storage.ts` —
 three functions (`put`, `get`, `delete`), one vendor import, one `STORAGE_TOKEN`
-to point somewhere else. `lib/storage.call-sites.test.ts` fails the build if a
+to point somewhere else. `lib/storage.call-sites.test.ts` turns the suite red if a
 second file ever imports the vendor directly, which is the only reason that
 sentence stays true.
 

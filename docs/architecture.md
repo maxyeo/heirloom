@@ -356,8 +356,11 @@ the drizzle-kit path for local use.
 
 ## Portability
 
-The only Vercel-specific dependency is image storage, and it sits behind a
-single module so it can be swapped in one file. Everything else runs on any
+The only Vercel-specific dependency the application would have to _replace_
+is image storage, and it sits behind a single module so it can be swapped in
+one file. (`@vercel/analytics` is the one other vendor import in the tree, and
+it is not an exception to this: on another host it is deleted rather than
+reimplemented, so nothing is owed an interface.) Everything else runs on any
 Node host with any Postgres:
 
 - `output: "standalone"` produces a self-contained server bundle (it is switched
