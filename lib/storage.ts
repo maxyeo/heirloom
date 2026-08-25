@@ -234,6 +234,16 @@ let cachedDelegation: {
  * signing key never leaves this process, and what a browser receives is a URL
  * already bound to one pathname and one expiry. Widening the delegation does
  * not widen anything a leaked URL can reach.
+ *
+ * Two callers arriving together at the moment one expires will both fail the
+ * floor check and both issue, because each is awaiting the old delegation
+ * while the other replaces it. That is a redundant control-API call about
+ * once an hour under load, and it is left alone deliberately: both
+ * delegations are valid, whichever lands second is the one that gets reused,
+ * and no URL is ever signed with less life than {@link URL_TTL_MS} promises.
+ * Closing it would mean re-reading the slot after the await and deciding
+ * whose delegation wins — concurrency reasoning in the file whose whole job
+ * is to be obvious, bought with one saved round trip an hour.
  */
 async function delegation(credential: string): Promise<IssuedSignedToken> {
   const cached = cachedDelegation;
@@ -338,6 +348,13 @@ export async function put(
  * a pathname, and it would happily produce a valid-looking URL for a key that
  * was deleted last week. A caller asking `get` whether an image is there
  * deserves an answer about the object rather than about the string.
+ *
+ * It narrows the window rather than closing it — a key deleted between the
+ * check and the signature still gets a URL minted for it, and there is no
+ * transactional API that would prevent that. The point is the stale key, not
+ * the racing one: E5-T5 deletes orphans on its own schedule, so `get` being
+ * wrong about an image removed months ago is the case that would actually
+ * happen.
  */
 export async function get(key: string): Promise<StoredObject | null> {
   const credential = token();
