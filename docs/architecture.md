@@ -836,6 +836,18 @@ grants write and delete on the store, and never appears in the repository.
   `about 1918`, which is the oldest of the four and has been true since
   `lib/parse-date.ts` was written. All four are `narrowed` issues rather than
   accidents (`YEO-88`, `YEO-47`); the ranges themselves are stored whole.
+- **An import can be previewed but not yet performed.** E6-T3 (`YEO-48`)
+  landed the whole path up to and including consent — upload, parse, preview,
+  cancel, and a confirming request that proves it is confirming the file that
+  was previewed — and deliberately stopped there. Writing the rows is E6-T4
+  (`YEO-49`), which lands them as one transaction that rolls back whole; a
+  plain sequence of inserts added earlier to finish the button is the
+  half-imported tree that ticket exists to prevent. Confirming today answers
+  `501` and says so. See [Previewing an import](gedcom.md#previewing-an-import).
+- **A previewed file is uploaded twice.** Once to be read and once to be
+  imported, because a serverless function keeps nothing between requests and
+  the alternative leaves every cancelled import as something to clean up
+  later. The second upload carries the digest of the first.
 - **Three things a GEDCOM file records have no column at all**: a second name
   for a person, a place for a marriage, and a first name that the file leaves
   blank. Each is reported per record rather than lost, and each is written up
