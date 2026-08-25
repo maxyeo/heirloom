@@ -162,21 +162,29 @@ async function dump(connectionString: string, destination: string) {
     ["ignore", "pipe", "pipe"],
   );
 
-  /**
-   * Both, and both awaited. Waiting only on the pipeline would accept a
-   * `pg_dump` that wrote a partial dump and then failed; waiting only on the
-   * exit code would return before the last bytes had been flushed to disk.
-   */
-  const [warnings] = await Promise.all([
-    finished,
-    pipeline(
-      child.stdout as NodeJS.ReadableStream,
-      createGzip(),
-      createWriteStream(destination),
-    ),
-  ]);
+  const piped = pipeline(
+    child.stdout as NodeJS.ReadableStream,
+    createGzip(),
+    createWriteStream(destination),
+  );
 
-  return warnings;
+  /**
+   * Both are awaited, and neither is allowed to hide the other.
+   *
+   * Waiting only on the pipeline would accept a `pg_dump` that wrote a
+   * partial dump and then failed; waiting only on the exit code would return
+   * before the last bytes had been flushed to disk. But `Promise.all` would
+   * also reject at the *first* failure and leave the other promise pending,
+   * which surfaces later as an unhandled rejection on top of the error that
+   * mattered. `allSettled` waits for both, and pg_dump's own complaint wins
+   * when there is one — a write error is usually the consequence, and the
+   * message on stderr is the diagnosis.
+   */
+  const [exit, write] = await Promise.allSettled([finished, piped]);
+  if (exit.status === "rejected") throw exit.reason;
+  if (write.status === "rejected") throw write.reason;
+
+  return exit.value;
 }
 
 /** Read the gzipped dump back: row counts, completeness, and its hash. */
@@ -229,20 +237,35 @@ async function main() {
   console.log(`Backing up: ${source} -> ${host}`);
 
   const started = Date.now();
-  const warnings = await dump(connectionString, dumpPath);
-  if (warnings) console.warn(warnings);
-
-  const { summary, sha256, bytes } = await inspect(dumpPath);
-
   /**
-   * Everything below deletes the dump before failing. A file that is not a
-   * usable backup is worse than no file at all: it is the one an operator
-   * finds in the directory and believes.
+   * Everything from here on deletes the dump before failing. A file that is
+   * not a usable backup is worse than no file at all: it is the one an
+   * operator finds in the directory and believes.
    */
   const discard = async (why: string) => {
     await rm(dumpPath, { force: true });
     throw new Error(why);
   };
+
+  let warnings: string;
+  try {
+    warnings = await dump(connectionString, dumpPath);
+  } catch (err) {
+    /**
+     * A dump that failed partway has still written a partial `.sql.gz`, and
+     * it would otherwise sit in the output directory with no manifest beside
+     * it. On the CI runner that is harmless — the job stops here and the disk
+     * is thrown away — but locally the files accumulate, and the whole point
+     * of the checks below is that nothing unrestorable is left lying around
+     * looking like a backup. The original error is what gets reported;
+     * removing the fragment must not replace it.
+     */
+    await rm(dumpPath, { force: true });
+    throw err;
+  }
+  if (warnings) console.warn(warnings);
+
+  const { summary, sha256, bytes } = await inspect(dumpPath);
 
   if (summary.truncated) {
     await discard(

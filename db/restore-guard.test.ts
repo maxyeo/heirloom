@@ -81,11 +81,14 @@ describe("assertRestoreTarget", () => {
     expect(result.allowed).toBe(false);
   });
 
-  it("refuses an unset DATABASE_URL rather than assuming it is safe", () => {
+  it("refuses an unset connection string rather than assuming it is safe", () => {
     const result = assertRestoreTarget(undefined, env({}));
     expect(result.allowed).toBe(false);
     if (!result.allowed) {
-      expect(result.message).toMatch(/DATABASE_URL is not set/);
+      // Both variables named, because an operator who has just set one of
+      // them should not be sent to look at the other.
+      expect(result.message).toContain("RESTORE_DATABASE_URL");
+      expect(result.message).toContain("DATABASE_URL");
     }
   });
 

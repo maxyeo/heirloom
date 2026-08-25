@@ -148,11 +148,24 @@ jobs:
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           set -euo pipefail
+          # Without nullglob a pattern that matches nothing is passed through
+          # literally, so the loop would run once on a file called
+          # `backups/*.sql.gz`. `db:backup` always writes exactly one dump, so
+          # this cannot happen today — but "the loop ran zero times and the
+          # step went green" is precisely the silent success this workflow
+          # exists to make impossible, so it is counted rather than assumed.
+          shopt -s nullglob
+          encrypted=0
           for dump in backups/*.sql.gz; do
             gpg --batch --yes --quiet --pinentry-mode loopback \
               --symmetric --cipher-algo AES256 \
               --passphrase-fd 0 --output "$dump.gpg" "$dump" <<< "$BACKUP_PASSPHRASE"
+            encrypted=$((encrypted + 1))
           done
+          if [ "$encrypted" -eq 0 ]; then
+            echo "::error::No dump to encrypt. db:backup reported success without writing one."
+            exit 1
+          fi
           ls -l backups
 
       # Deliberately from the encrypted file, not from the plaintext still
@@ -170,7 +183,11 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
         run: |
           set -euo pipefail
+          # As above: a glob matching nothing must fail the step, not quietly
+          # verify nothing and let the artifact be kept unchecked.
+          shopt -s nullglob
           mkdir -p verify
+          verified=0
           for encrypted in backups/*.sql.gz.gpg; do
             name=$(basename "$encrypted" .gpg)
             gpg --batch --yes --quiet --pinentry-mode loopback \
@@ -178,7 +195,12 @@ jobs:
               --output "verify/$name" "$encrypted" <<< "$BACKUP_PASSPHRASE"
             cp "backups/${name%.sql.gz}.manifest.json" "verify/"
             npm run db:restore -- --from "verify/$name"
+            verified=$((verified + 1))
           done
+          if [ "$verified" -eq 0 ]; then
+            echo "::error::Nothing was restored, so nothing was verified. Refusing to keep an unchecked backup."
+            exit 1
+          fi
 
       # Belt and braces. The upload below names only the encrypted files, but
       # a glob is a weaker guarantee than the plaintext not existing.

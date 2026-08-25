@@ -279,10 +279,24 @@ async function main() {
       ["pipe", "ignore", "pipe"],
     );
 
-    await Promise.all([
-      finished,
-      pipeline(openDump(dumpPath), child.stdin as NodeJS.WritableStream),
-    ]);
+    const piped = pipeline(
+      openDump(dumpPath),
+      child.stdin as NodeJS.WritableStream,
+    );
+
+    /**
+     * psql's verdict wins over the write that was feeding it.
+     *
+     * When `ON_ERROR_STOP` fires, psql exits and stops reading stdin, so the
+     * pipeline above fails with `EPIPE` — often first. Reporting that would
+     * replace "ERROR: syntax error at or near ..." with "write EPIPE", which
+     * says nothing about why the restore failed. So both are awaited, and the
+     * exit code is preferred; a genuine write error still surfaces when psql
+     * itself was happy.
+     */
+    const [exit, write] = await Promise.allSettled([finished, piped]);
+    if (exit.status === "rejected") throw exit.reason;
+    if (write.status === "rejected") throw write.reason;
 
     const restored = await countRows(client);
     const expected = manifest?.tables ?? summary.tables;

@@ -161,11 +161,13 @@ vector, ordering.
 ```bash
 createdb heirloom_drill
 gh run download --repo maxyeo/heirloom <run-id> --dir /tmp/drill
-gpg --output /tmp/drill/dump.sql.gz --decrypt /tmp/drill/heirloom-*.sql.gz.gpg
-cp /tmp/drill/heirloom-*.manifest.json /tmp/drill/dump.manifest.json
+
+# Strip only the .gpg, so the decrypted dump keeps the name its manifest is
+# paired with and db:restore finds it without being told where it is.
+for f in /tmp/drill/*.sql.gz.gpg; do gpg --output "${f%.gpg}" --decrypt "$f"; done
 
 DATABASE_URL=postgresql://localhost:5432/heirloom_drill \
-  npm run db:restore -- --from /tmp/drill/dump.sql.gz
+  npm run db:restore -- --from /tmp/drill/heirloom-<timestamp>.sql.gz
 
 TEST_DATABASE_URL=postgresql://localhost:5432/heirloom_drill npm run test:db
 dropdb heirloom_drill
@@ -178,12 +180,16 @@ uses a scratch database and drops it afterwards.)
 
 ### Drill log
 
-| Date       | Dump                  | What was done                                                                                                    | Result                                                                       |
+| Date (UTC) | Dump                  | What was done                                                                                                    | Result                                                                       |
 | ---------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | 2026-08-25 | Local, seeded fixture | Dump → gzip → AES-256 → decrypt → restore into a separate database → `npm run test:db` against the restored copy | Pass. 40 rows across 6 tables, every count matched; 221 database tests green |
 
 Add a row each time. A drill nobody wrote down is a drill nobody can point to
 a year later.
+
+Dates are UTC, matching the timestamps in the dump filenames, so a row here
+can be lined up with the artifact it describes without anyone having to work
+out which side of midnight a local clock was on.
 
 ## Restoring
 
@@ -214,11 +220,18 @@ data — so you can read it first and confirm you have the night you meant.
 ### 2. Decrypt it
 
 ```bash
-gpg --output ./restore/heirloom.sql.gz --decrypt ./restore/heirloom-*.sql.gz.gpg
+for f in ./restore/*.sql.gz.gpg; do gpg --output "${f%.gpg}" --decrypt "$f"; done
 ```
 
-It asks for `BACKUP_PASSPHRASE`. If the manifest is not named to match the
-dump, pass it explicitly with `--manifest` in the next step.
+It asks for `BACKUP_PASSPHRASE`.
+
+Strip only the `.gpg`, as above. `db/restore.ts` looks for the manifest beside
+the dump under the dump's own name, so a decrypted
+`heirloom-<timestamp>.sql.gz` is paired with its
+`heirloom-<timestamp>.manifest.json` automatically. Decrypting to some other
+name still works — the restore is checked against the dump's own contents
+instead — but you lose the SHA-256 check, so pass `--manifest <file>`
+explicitly if you do.
 
 ### 3. Restore
 
@@ -274,8 +287,12 @@ if any of them disagrees with the dump.
 Both scripts work locally, against whatever `DATABASE_URL` resolves to — see
 [Reaching production deliberately](../README.md#reaching-production-deliberately).
 They need `pg_dump` and `psql` on your PATH (`brew install libpq`, or
-`postgresql-client` on Debian and Ubuntu); `pg_dump` must be at least as new
-as the server it reads.
+`postgresql-client` on Debian and Ubuntu). Two version rules, both one-way:
+`pg_dump` must be at least as new as the server it reads, and `psql` must be
+at least as new as the `pg_dump` that wrote the file — recent versions emit a
+`\restrict` line that older ones do not understand. Restoring a backup taken
+by the workflow (PostgreSQL 17 client) with an older local `psql` fails on
+that line rather than partway through the data.
 
 ```bash
 npm run db:backup                      # writes to ./backups (gitignored)

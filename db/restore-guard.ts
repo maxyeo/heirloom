@@ -59,20 +59,24 @@ export function assertRestoreTarget(
   const target = classifyDestructiveTarget(databaseUrl);
 
   switch (target.kind) {
+    // Both variables are named, in the order `db/restore.ts` consults them.
+    // An operator mid-incident has usually just set one of the two, and a
+    // message naming only the other sends them to check the wrong thing.
     case "missing":
       return {
         allowed: false,
         message:
-          "DATABASE_URL is not set, so there is no way to tell what would be " +
-          `overwritten. Refusing to run: ${DAMAGE}.`,
+          "Neither RESTORE_DATABASE_URL nor DATABASE_URL is set, so there is " +
+          `no way to tell what would be overwritten. Refusing to run: ${DAMAGE}.`,
       };
 
     case "unparseable":
       return {
         allowed: false,
         message:
-          "DATABASE_URL could not be parsed as a URL. Refusing to run rather " +
-          `than assume it is safe to overwrite — ${DAMAGE}.`,
+          "The connection string (RESTORE_DATABASE_URL, or DATABASE_URL if " +
+          "that is unset) could not be parsed as a URL. Refusing to run " +
+          `rather than assume it is safe to overwrite — ${DAMAGE}.`,
       };
 
     case "local":
