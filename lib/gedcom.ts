@@ -929,8 +929,8 @@ function readInterpretedDate(
 /**
  * `HUSB` or `WIFE`: at most one, and it has to be a pointer.
  *
- * The pointer is read off the node rather than parsed out of `node.value`
- * here, and the three readers below do the same. `lib/gedcom-lines.ts` decided
+ * Every pointer in this module is read off the node rather than parsed out of
+ * `node.value` — this reader and the two below it. `lib/gedcom-lines.ts` decided
  * it while it still had the value as the file wrote it; a value of `@@I1@@` is
  * the name `@I1@` and is not a pointer, and by the time it reaches this module
  * the escape is gone and nothing here could tell.
