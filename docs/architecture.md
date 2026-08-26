@@ -1080,11 +1080,13 @@ short-lived signed URLs "changes `put` and `get` in this one file and no call
 site". `YEO-86` made the move: `lib/storage.ts` changed, its tests changed,
 and the tripwire stayed green because the two new vendor calls
 (`issueSignedToken`, `presignUrl`) landed inside the same file as the old
-ones. The exported surface is still exactly `put` / `get` / `delete` — signing
-is not a fourth function, which matters, because a `presign` export would have
-narrowed the seam to hosts that agree with Vercel about how signing works.
-S3, GCS and R2 all sign; a directory on disk can mint its own token. What they
-do not agree on is the shape of the call, which is why it stays in here.
+ones. Signing added no exported function, which matters, because a `presign`
+export would have narrowed the seam to hosts that agree with Vercel about how
+signing works. S3, GCS and R2 all sign; a directory on disk can mint its own
+token. What they do not agree on is the shape of the call, which is why it
+stays in here — and it is the reason `presign` stayed out even after
+[the fourth function](#the-fourth-function-and-why-this-section-used-to-forbid-it)
+established that `list` belonged in.
 
 **Fifteen minutes**, chosen against what the URL has to survive rather than
 against a round number. Its real job is the gap between rendering a page and

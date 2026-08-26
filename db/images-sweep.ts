@@ -158,10 +158,16 @@ async function main() {
   console.log(`\nDeleting ${plan.orphaned.count} object(s) …`);
   let deleted = 0;
   let failed = 0;
+  // Accumulated from what actually succeeded rather than from the plan.
+  // Reporting the planned total after a partial run would overstate the
+  // reclaim by exactly the objects that are still sitting there, which is
+  // the number somebody would go on to trust.
+  let reclaimed = 0;
   for (const object of plan.orphans) {
     try {
       await storage.delete(object.key);
       deleted += 1;
+      reclaimed += object.size;
     } catch (error) {
       // One unreachable object must not abandon the rest: the run has
       // already decided these are orphans, and stopping halfway leaves the
@@ -173,7 +179,7 @@ async function main() {
 
   console.log(
     `Deleted ${deleted} object(s), reclaiming about ` +
-      `${formatBytes(plan.orphaned.bytes)}.` +
+      `${formatBytes(reclaimed)}.` +
       (failed > 0 ? ` ${failed} could not be deleted; re-run to retry.` : ""),
   );
   if (failed > 0) process.exitCode = 1;
