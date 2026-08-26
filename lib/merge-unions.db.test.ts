@@ -7,6 +7,7 @@ import { mergeUnions } from "@/lib/merge-unions";
 import { attachChild } from "@/lib/save-child";
 import { createIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
+import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
 /**
  * Database tests for merging two families recorded between the same two people
@@ -49,7 +50,10 @@ async function removeFixture() {
 }
 
 async function makePerson(suffix: string): Promise<string> {
-  const result = await createIndividual({ givenName: name(suffix) });
+  const result = await createIndividual(
+    { givenName: name(suffix) },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "created") {
     throw new Error(`Expected created, got ${result.status}.`);
   }
@@ -62,13 +66,16 @@ async function marry(
   partnerId: string,
   union: Record<string, unknown> = {},
 ): Promise<string> {
-  const result = await addSpouse({
-    personId,
-    partnerMode: "existing",
-    partnerId,
-    partner: {},
-    union,
-  });
+  const result = await addSpouse(
+    {
+      personId,
+      partnerMode: "existing",
+      partnerId,
+      partner: {},
+      union,
+    },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -77,13 +84,16 @@ async function marry(
 
 /** Record a union with one partner named and the other left unknown. */
 async function loneUnion(personId: string): Promise<string> {
-  const result = await addSpouse({
-    personId,
-    partnerMode: "unknown",
-    partnerId: null,
-    partner: {},
-    union: {},
-  });
+  const result = await addSpouse(
+    {
+      personId,
+      partnerMode: "unknown",
+      partnerId: null,
+      partner: {},
+      union: {},
+    },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -97,12 +107,16 @@ async function addChildTo(
   relation: "biological" | "adopted" | "step" | "foster" = "biological",
 ): Promise<void> {
   const result = await db.transaction((tx) =>
-    attachChild(tx, {
-      childMode: "existing",
-      childId,
-      child: {},
-      link: { unionId, relation },
-    }),
+    attachChild(
+      tx,
+      {
+        childMode: "existing",
+        childId,
+        child: {},
+        link: { unionId, relation },
+      },
+      FIXTURE_MEMBER,
+    ),
   );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);

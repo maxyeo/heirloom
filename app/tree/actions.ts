@@ -21,6 +21,7 @@ import {
   invalidFormState,
   savedFormState,
 } from "@/lib/individual-form-state";
+import { type IndividualAuthor, memberAuthor } from "@/lib/individual-author";
 import { individualInputFromFormData } from "@/lib/individual-input";
 import { createEntryForPerson, setPersonEntry } from "@/lib/link-person-entry";
 import { mergeUnions } from "@/lib/merge-unions";
@@ -110,6 +111,29 @@ function revalidateTree() {
 }
 
 /**
+ * The signed-in member, as the author of whatever they are about to create
+ * (`YEO-104`).
+ *
+ * `requireSession` is still the security boundary; this adds the one narrowing
+ * every creating action then needs. Its return type is next-auth's `Session`,
+ * whose `user.email` is optional, and the compiler cannot see that
+ * `requireSession` has already thrown for a session without one — the same
+ * gap `createEntryForPersonAction` below and `app/wiki/actions.ts` each
+ * re-close in place. Doing it once here is what keeps the four actions that
+ * write a person from each having their own copy of a check whose failure
+ * would be a person attributed to nobody.
+ *
+ * Not exported: a `"use server"` module may only export async functions
+ * meant to be POST endpoints, and this is neither.
+ */
+async function requireAuthor(): Promise<IndividualAuthor> {
+  const session = await requireSession();
+  const email = session.user?.email;
+  if (!email) throw new UnauthorizedError();
+  return memberAuthor(email);
+}
+
+/**
  * Add a person to the tree (for E3-T2's form).
  *
  * Shaped for `useActionState`, so it takes the previous state and the form's
@@ -125,9 +149,12 @@ export async function createIndividualAction(
   _previous: IndividualFormState,
   form: FormData,
 ): Promise<IndividualFormState> {
-  await requireSession();
+  const author = await requireAuthor();
 
-  const result = await createIndividual(individualInputFromFormData(form));
+  const result = await createIndividual(
+    individualInputFromFormData(form),
+    author,
+  );
 
   if (result.status === "invalid") return invalidFormState(result.issues);
 
@@ -219,9 +246,9 @@ export async function addSpouseAction(
   _previous: SpouseFormState,
   form: FormData,
 ): Promise<SpouseFormState> {
-  await requireSession();
+  const author = await requireAuthor();
 
-  const result = await addSpouse(addSpouseInputFromFormData(form));
+  const result = await addSpouse(addSpouseInputFromFormData(form), author);
 
   switch (result.status) {
     case "invalid":
@@ -282,9 +309,9 @@ export async function addChildAction(
   _previous: ChildFormState,
   form: FormData,
 ): Promise<ChildFormState> {
-  await requireSession();
+  const author = await requireAuthor();
 
-  const result = await addChild(addChildInputFromFormData(form));
+  const result = await addChild(addChildInputFromFormData(form), author);
 
   switch (result.status) {
     case "invalid":
@@ -483,9 +510,9 @@ export async function setParentsAction(
   _previous: ParentsFormState,
   form: FormData,
 ): Promise<ParentsFormState> {
-  await requireSession();
+  const author = await requireAuthor();
 
-  const result = await setParents(setParentsInputFromFormData(form));
+  const result = await setParents(setParentsInputFromFormData(form), author);
 
   switch (result.status) {
     case "invalid":

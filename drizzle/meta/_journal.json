@@ -78,6 +78,13 @@
       "when": 1787722586031,
       "tag": "0010_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787751069660,
+      "tag": "0011_individual_author",
+      "breakpoints": true
     }
   ]
 }

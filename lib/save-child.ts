@@ -8,6 +8,7 @@ import {
   validateAddChild,
 } from "@/lib/child-input";
 import { getFamilyGraph } from "@/lib/family-graph";
+import { authorColumns, type IndividualAuthor } from "@/lib/individual-author";
 import type { ValidationIssue } from "@/lib/individual-input";
 import { individualExists } from "@/lib/save-individual";
 import type { Transaction } from "@/lib/save-page";
@@ -115,10 +116,16 @@ export type AddChildResult =
  * here needs to know whose panel the flow was opened from.
  *
  * @param input the submission as it arrived, untrusted and untyped
+ * @param author who is adding them, for the child this flow may create
+ *   (`YEO-104`) — sourced from the session rather than from `input`, for the
+ *   reason `createIndividual` gives at length
  * @returns the child's id, or what to fix
  */
-export async function addChild(input: AddChildInput): Promise<AddChildResult> {
-  return db.transaction((tx) => attachChild(tx, input));
+export async function addChild(
+  input: AddChildInput,
+  author: IndividualAuthor,
+): Promise<AddChildResult> {
+  return db.transaction((tx) => attachChild(tx, input, author));
 }
 
 /**
@@ -138,11 +145,18 @@ export async function addChild(input: AddChildInput): Promise<AddChildResult> {
  *
  * @param tx the caller's transaction; every read and write here joins it
  * @param input the submission as it arrived, untrusted and untyped
+ * @param author who is adding the child, for `new` mode's insert (`YEO-104`).
+ *   Required rather than optional even though `lib/set-parents.ts` only ever
+ *   reaches the `existing` branch: the argument belongs to the *function*,
+ *   which can create a person, not to the caller that happens not to. An
+ *   optional one would be a default waiting to be taken, which is the thing
+ *   `individuals.created_by_source` has no default in order to prevent.
  * @returns the child's id, or what to fix
  */
 export async function attachChild(
   tx: Transaction,
   input: AddChildInput,
+  author: IndividualAuthor,
 ): Promise<AddChildResult> {
   const checked = validateAddChild(input);
   if (!checked.ok) {
@@ -254,7 +268,7 @@ export async function attachChild(
      */
     const [created] = await tx
       .insert(schema.individuals)
-      .values(child)
+      .values({ ...child, ...authorColumns(author) })
       .returning({ id: schema.individuals.id });
     childId = created.id;
   }

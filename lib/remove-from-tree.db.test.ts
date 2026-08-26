@@ -7,6 +7,7 @@ import {
   detachPartner,
   removePerson,
 } from "@/lib/remove-from-tree";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * Database tests for removal (E3-T8, `YEO-36`). Run with `npm run test:db`;
@@ -97,18 +98,20 @@ async function seed() {
     bodyHtml: "<p>A life.</p>",
   });
 
-  await db.insert(schema.individuals).values([
-    { id: MARY, givenName: "Mary", surname: "Ellis" },
-    { id: THOMAS, givenName: "Thomas", surname: "Hale", sex: "male" },
-    { id: ROSE, givenName: "Rose", surname: "Hale", pageId: ROSE_PAGE },
-    { id: WALTER, givenName: "Walter", surname: "Doyle", sex: "male" },
-    { id: ALICE, givenName: "Alice", surname: "Hale" },
-    { id: BRIAN, givenName: "Brian", surname: "Hale" },
-    { id: CLARA, givenName: "Clara", surname: "Hale" },
-    { id: DORA, givenName: "Dora", surname: "Doyle" },
-    { id: IVY, givenName: "Ivy", surname: "Unknown" },
-    { id: JUNE, givenName: "June", surname: "Doyle" },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      { id: MARY, givenName: "Mary", surname: "Ellis" },
+      { id: THOMAS, givenName: "Thomas", surname: "Hale", sex: "male" },
+      { id: ROSE, givenName: "Rose", surname: "Hale", pageId: ROSE_PAGE },
+      { id: WALTER, givenName: "Walter", surname: "Doyle", sex: "male" },
+      { id: ALICE, givenName: "Alice", surname: "Hale" },
+      { id: BRIAN, givenName: "Brian", surname: "Hale" },
+      { id: CLARA, givenName: "Clara", surname: "Hale" },
+      { id: DORA, givenName: "Dora", surname: "Doyle" },
+      { id: IVY, givenName: "Ivy", surname: "Unknown" },
+      { id: JUNE, givenName: "June", surname: "Doyle" },
+    ]),
+  );
 
   await db.insert(schema.unions).values([
     { id: U1, partnerAId: MARY, partnerBId: THOMAS, sequence: 1 },

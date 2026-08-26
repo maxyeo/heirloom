@@ -1005,6 +1005,57 @@ separate, harder problem from the duplicate _unions_ `lib/merge-unions.ts`
 already reconciles, and it is out of scope here for the same reason merging an
 import into a populated tree is (`docs/epics.md`, E6, _Not in this epic_).
 
+### Who added a person, and the three ways there is no answer
+
+`individuals` records who created a row, and — since the answer is often
+genuinely "nobody we can name" — it records _why_ it cannot in the column
+beside it. `created_by` holds an email; `created_by_source` says how to read
+it, and is `not null` (`YEO-104`).
+
+That pairing is the same one `birth_date` and `birth_date_qualifier` make one
+table up, for the same reason: a lone nullable column would have to answer
+three different questions with one null.
+
+| `created_by_source` | `created_by` | What it means                                                             |
+| ------------------- | ------------ | ------------------------------------------------------------------------- |
+| `member`            | their email  | Somebody signed in typed this person in.                                  |
+| `import`            | null         | A GEDCOM file wrote the row. The author is one join away — see below.     |
+| `legacy`            | null         | The row predates the column. The migration's backfill is its only writer. |
+
+Two properties are worth stating outright, because both are load-bearing and
+neither is obvious from the column list.
+
+**The column has no default, deliberately.** A default would be stamped onto
+every row that already existed, inventing authorship for people nobody can
+attribute — and it would quietly disarm the enforcement, because a column with
+a default is optional in Drizzle's insert type. Without one, every insert into
+`individuals` must name an author or fail to compile, which is how "a new
+write path that forgets" is caught: by `npm run typecheck`, before any test
+runs. `db/individual-author.db.test.ts` asserts the column is still shaped that
+way, so the compile error cannot be silenced by adding a default.
+
+**`legacy` is unwritable from TypeScript.** `IndividualAuthor` in
+`lib/individual-author.ts` has arms for a member and for an import and none for
+`legacy`, so the only thing that ever produced one is
+`drizzle/0011_individual_author.sql`. That is what keeps its meaning exactly
+"written before this column existed" rather than becoming a general-purpose
+"we do not know".
+
+**The import derives its author rather than storing one.** An imported row
+already carries `import_id`, and the ledger row it points at already records
+`imported_by` from the session. Copying that email onto each of a file's few
+hundred people would be a second copy of a fact the schema holds once, free to
+disagree with the first, and it would answer a question nothing asks of an
+imported individual: the "Recently changed" feed reports the _file_ as one line
+(see `lib/recent-changes-feed.ts`) precisely so that one afternoon's upload
+does not become three hundred feed rows, and that line names who ran it.
+
+The feed is where all of this is visible, and it renders the distinction rather
+than flattening it: the `person-added` row carries an **optional** author, so a
+row with nobody to name has no field to render — not a null that something
+downstream could turn into "Unknown". "Unknown" is what a _lost_ name reads
+as, and none of these three nulls is a lost name.
+
 ## Rendering
 
 Generation maps to dagre rank. Unions are laid out as their own small nodes,

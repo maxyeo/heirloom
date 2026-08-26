@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { db, schema } from "@/db";
 import { createEntryForPerson, setPersonEntry } from "@/lib/link-person-entry";
 import { raceWriters } from "@/test/db-concurrency";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * Database tests for the person↔entry link (E2-T2, `YEO-25`). Run with
@@ -43,10 +44,12 @@ async function removeFixture() {
 beforeEach(async () => {
   await removeFixture();
 
-  await db.insert(schema.individuals).values([
-    { id: ROSE, givenName: `${PREFIX} Rose`, surname: "Hale" },
-    { id: THOMAS, givenName: `${PREFIX} Thomas`, surname: "Hale" },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      { id: ROSE, givenName: `${PREFIX} Rose`, surname: "Hale" },
+      { id: THOMAS, givenName: `${PREFIX} Thomas`, surname: "Hale" },
+    ]),
+  );
 
   await db.insert(schema.pages).values({
     id: LOOSE_PAGE,

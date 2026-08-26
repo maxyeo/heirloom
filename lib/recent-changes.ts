@@ -1,6 +1,7 @@
 import { asc, desc, gt, isNull } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { individualAuthorEmail } from "@/lib/individual-author";
 import { formatPersonName } from "@/lib/person-format";
 import {
   mergeRecentChanges,
@@ -180,6 +181,20 @@ async function listRecentlyChangedEntries(
  * The name is joined here rather than in the component because
  * `formatPersonName` is the one place that knows a surname can be missing —
  * the same reason every other surface goes through it.
+ *
+ * ## Why the author is decided here and not in the component (`YEO-104`)
+ *
+ * Two columns are selected and at most one string leaves this function.
+ * `individualAuthorEmail` is the only sanctioned reading of the pair, and
+ * running it here is what keeps `created_by_source` out of the feed's type
+ * altogether: a component holding the raw pair would be a component able to
+ * render `created_by` for a source that does not have an author, which is the
+ * "Unknown" this ticket exists to keep off the screen. What crosses into
+ * `RecentChange` is an address or nothing.
+ *
+ * The predicate above does the rest of the work: `import_id is null` already
+ * excludes every row whose source is `import`, so the only sources reaching
+ * `individualAuthorEmail` here are `member` and `legacy`.
  */
 async function listRecentlyAddedPeople(limit: number): Promise<RecentChange[]> {
   const rows = await db
@@ -188,6 +203,8 @@ async function listRecentlyAddedPeople(limit: number): Promise<RecentChange[]> {
       givenName: schema.individuals.givenName,
       surname: schema.individuals.surname,
       createdAt: schema.individuals.createdAt,
+      createdBySource: schema.individuals.createdBySource,
+      createdBy: schema.individuals.createdBy,
     })
     .from(schema.individuals)
     .where(isNull(schema.individuals.importId))
@@ -199,6 +216,9 @@ async function listRecentlyAddedPeople(limit: number): Promise<RecentChange[]> {
     personId: row.id,
     name: formatPersonName(row.givenName, row.surname),
     when: row.createdAt,
+    // `undefined` when there is nobody to name, which is the property that
+    // makes the field absent rather than empty — see the `person-added` arm.
+    addedBy: individualAuthorEmail(row),
   }));
 }
 

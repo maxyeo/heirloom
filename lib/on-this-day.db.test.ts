@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db, schema } from "@/db";
 import { listOnThisDay } from "@/lib/on-this-day";
 import type { AnniversaryDate } from "@/lib/on-this-day-feed";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * The half of E8-T5 that only a real Postgres can answer.
@@ -173,161 +174,164 @@ const FEB_28_COMMON: AnniversaryDate = { year: 2027, month: 2, day: 28 };
 const MAR_1_COMMON: AnniversaryDate = { year: 2027, month: 3, day: 1 };
 
 beforeAll(async () => {
-  await db.insert(schema.individuals).values([
-    /* Shown: an exact, day-precision date that is not a range. */
-    {
-      id: P_BORN,
-      givenName: "Rose",
-      surname: "Whitfield",
-      birthDate: "1890-06-04",
-    },
-    /*
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      /* Shown: an exact, day-precision date that is not a range. */
+      {
+        id: P_BORN,
+        givenName: "Rose",
+        surname: "Whitfield",
+        birthDate: "1890-06-04",
+      },
+      /*
       The ticket's own example. "About 1890" does not claim its stored day, so
       the person has no birthday to celebrate on it — and the row was written
       with a real day only because Postgres has nowhere else to put one.
     */
-    {
-      id: P_BORN_ABOUT,
-      givenName: "About",
-      surname: "Whitfield",
-      birthDate: "1891-06-04",
-      birthDateQualifier: "about",
-    },
-    /* `before` and `after` on the same terms — three of the four members of
+      {
+        id: P_BORN_ABOUT,
+        givenName: "About",
+        surname: "Whitfield",
+        birthDate: "1891-06-04",
+        birthDateQualifier: "about",
+      },
+      /* `before` and `after` on the same terms — three of the four members of
        `date_qualifier` are "this day is not the day". */
-    {
-      id: P_BORN_BEFORE,
-      givenName: "Before",
-      surname: "Whitfield",
-      birthDate: "1892-06-04",
-      birthDateQualifier: "before",
-    },
-    {
-      id: P_BORN_AFTER,
-      givenName: "After",
-      surname: "Whitfield",
-      birthDate: "1893-06-04",
-      birthDateQualifier: "after",
-    },
-    /*
+      {
+        id: P_BORN_BEFORE,
+        givenName: "Before",
+        surname: "Whitfield",
+        birthDate: "1892-06-04",
+        birthDateQualifier: "before",
+      },
+      {
+        id: P_BORN_AFTER,
+        givenName: "After",
+        surname: "Whitfield",
+        birthDate: "1893-06-04",
+        birthDateQualifier: "after",
+      },
+      /*
       `YEO-88`'s range: `BET 1894 AND 1900`. It legally carries `exact` —
       there is deliberately no `between` member on the enum — so the
       qualifier clause does not catch it and the upper-bound clause has to.
       Two points are an anniversary of neither.
     */
-    {
-      id: P_BORN_RANGE,
-      givenName: "Range",
-      surname: "Whitfield",
-      birthDate: "1894-06-04",
-      birthDateUpper: "1900-06-04",
-    },
-    /* The day next door, which a query comparing only the month would show. */
-    {
-      id: P_BORN_NEXT_DAY,
-      givenName: "Fifth",
-      surname: "Whitfield",
-      birthDate: "1890-06-05",
-    },
-    /* The same day one month later, which a query comparing only the day
+      {
+        id: P_BORN_RANGE,
+        givenName: "Range",
+        surname: "Whitfield",
+        birthDate: "1894-06-04",
+        birthDateUpper: "1900-06-04",
+      },
+      /* The day next door, which a query comparing only the month would show. */
+      {
+        id: P_BORN_NEXT_DAY,
+        givenName: "Fifth",
+        surname: "Whitfield",
+        birthDate: "1890-06-05",
+      },
+      /* The same day one month later, which a query comparing only the day
        would show — the two decoys together pin both halves of the
        comparison. */
-    {
-      id: P_BORN_NEXT_MONTH,
-      givenName: "July",
-      surname: "Whitfield",
-      birthDate: "1890-07-04",
-    },
-    /* Shown, from the deaths query: this person has no birth date at all. */
-    {
-      id: P_DIED,
-      givenName: "Walter",
-      surname: "Whitfield",
-      deathDate: "1947-06-04",
-    },
-    /* The qualifier rule again, on the other pair of columns — a query that
+      {
+        id: P_BORN_NEXT_MONTH,
+        givenName: "July",
+        surname: "Whitfield",
+        birthDate: "1890-07-04",
+      },
+      /* Shown, from the deaths query: this person has no birth date at all. */
+      {
+        id: P_DIED,
+        givenName: "Walter",
+        surname: "Whitfield",
+        deathDate: "1947-06-04",
+      },
+      /* The qualifier rule again, on the other pair of columns — a query that
        filtered births and forgot deaths would pass every test above. */
-    {
-      id: P_DIED_ABOUT,
-      givenName: "Departed",
-      surname: "Whitfield",
-      deathDate: "1948-06-04",
-      deathDateQualifier: "about",
-    },
-    /*
+      {
+        id: P_DIED_ABOUT,
+        givenName: "Departed",
+        surname: "Whitfield",
+        deathDate: "1948-06-04",
+        deathDateQualifier: "about",
+      },
+      /*
       Born and died on the same date, so this person is two rows. The surname
       is null on purpose: for the oldest generations it is routinely unknown,
       and `formatPersonName` has to drop it rather than leave a trailing space.
     */
-    {
-      id: P_BORN_AND_DIED,
-      givenName: "Agnes",
-      surname: null,
-      birthDate: "1900-06-04",
-      deathDate: "1975-06-04",
-    },
+      {
+        id: P_BORN_AND_DIED,
+        givenName: "Agnes",
+        surname: null,
+        birthDate: "1900-06-04",
+        deathDate: "1975-06-04",
+      },
 
-    /* The New Year trio — same stored date, three different precisions. */
-    {
-      id: P_JAN_EXACT,
-      givenName: "NewYear",
-      surname: "Whitfield",
-      birthDate: "1895-01-01",
-    },
-    {
-      id: P_JAN_YEAR,
-      givenName: "YearOnly",
-      surname: "Whitfield",
-      // "1894", off a headstone. The day is an anchor the schema had to
-      // invent, not something a source recorded.
-      birthDate: "1894-01-01",
-      birthDatePrecision: "year",
-    },
-    {
-      id: P_JAN_MONTH,
-      givenName: "MonthOnly",
-      surname: "Whitfield",
-      // "January 1896", off a parish register. The 1st is an anchor too.
-      birthDate: "1896-01-01",
-      birthDatePrecision: "month",
-    },
+      /* The New Year trio — same stored date, three different precisions. */
+      {
+        id: P_JAN_EXACT,
+        givenName: "NewYear",
+        surname: "Whitfield",
+        birthDate: "1895-01-01",
+      },
+      {
+        id: P_JAN_YEAR,
+        givenName: "YearOnly",
+        surname: "Whitfield",
+        // "1894", off a headstone. The day is an anchor the schema had to
+        // invent, not something a source recorded.
+        birthDate: "1894-01-01",
+        birthDatePrecision: "year",
+      },
+      {
+        id: P_JAN_MONTH,
+        givenName: "MonthOnly",
+        surname: "Whitfield",
+        // "January 1896", off a parish register. The 1st is an anchor too.
+        birthDate: "1896-01-01",
+        birthDatePrecision: "month",
+      },
 
-    /*
-      The leap day itself (`YEO-109`). This person was born and died on a 29
-      February — 1896 and 1968 are both leap years — so one row is both a
-      birth and a death, and `U_LEAP` below carries the third pair of date
-      columns. The predicate is literally one function, so a leap-day fixture
-      on any one of the three would prove the rule; all three are here because
-      the cost is two rows and the thing being protected is a decision a later
-      "simplification" of one query could lose without touching the others.
-    */
-    {
-      id: P_LEAP,
-      givenName: "LeapDay",
-      surname: "Whitfield",
-      birthDate: "1896-02-29",
-      deathDate: "1968-02-29",
-    },
-    /*
-      The two neighbours, and the reason the exclusions are not vacuous: a
-      predicate that matched nothing whatsoever on 28 February or 1 March
-      would satisfy "the leap-day person is absent" perfectly and mean
-      nothing. These two are present on exactly those days, so each assertion
-      below is a whole answer rather than an absence.
-    */
-    {
-      id: P_FEB_28,
-      givenName: "FebTwentyEighth",
-      surname: "Whitfield",
-      birthDate: "1895-02-28",
-    },
-    {
-      id: P_MAR_1,
-      givenName: "MarchFirst",
-      surname: "Whitfield",
-      birthDate: "1897-03-01",
-    },
-  ]);
+      /*
+        The leap day itself (`YEO-109`). This person was born and died on a 29
+        February — 1896 and 1968 are both leap years — so one row is both a
+        birth and a death, and `U_LEAP` below carries the third pair of date
+        columns. The predicate is literally one function, so a leap-day fixture
+        on any one of the three would prove the rule; all three are here
+        because the cost is two rows and the thing being protected is a
+        decision a later "simplification" of one query could lose without
+        touching the others.
+      */
+      {
+        id: P_LEAP,
+        givenName: "LeapDay",
+        surname: "Whitfield",
+        birthDate: "1896-02-29",
+        deathDate: "1968-02-29",
+      },
+      /*
+        The two neighbours, and the reason the exclusions are not vacuous: a
+        predicate that matched nothing whatsoever on 28 February or 1 March
+        would satisfy "the leap-day person is absent" perfectly and mean
+        nothing. These two are present on exactly those days, so each
+        assertion below is a whole answer rather than an absence.
+      */
+      {
+        id: P_FEB_28,
+        givenName: "FebTwentyEighth",
+        surname: "Whitfield",
+        birthDate: "1895-02-28",
+      },
+      {
+        id: P_MAR_1,
+        givenName: "MarchFirst",
+        surname: "Whitfield",
+        birthDate: "1897-03-01",
+      },
+    ]),
+  );
 
   await db.insert(schema.unions).values([
     /* Shown, and the only arm that names two people. */
@@ -812,14 +816,16 @@ describe("ties", () => {
 
   beforeAll(async () => {
     await db.insert(schema.individuals).values(
-      // Inserted highest-id-first, so that "the order they were written in"
-      // and "the order the query must return" disagree.
-      [...TIED_IDS].reverse().map((id, index) => ({
-        id,
-        givenName: `Tied ${index}`,
-        surname: "Whitfield",
-        birthDate: "1601-07-07",
-      })),
+      addedByHand(
+        // Inserted highest-id-first, so that "the order they were written in"
+        // and "the order the query must return" disagree.
+        [...TIED_IDS].reverse().map((id, index) => ({
+          id,
+          givenName: `Tied ${index}`,
+          surname: "Whitfield",
+          birthDate: "1601-07-07",
+        })),
+      ),
     );
   });
 

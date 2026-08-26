@@ -10,6 +10,7 @@ import { createIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import { setParents } from "@/lib/set-parents";
 import { findUnionsBetween } from "@/lib/union-merge";
+import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
 /**
  * Database tests for the set-parents write path (E3-T6, `YEO-34`). Run with
@@ -52,7 +53,10 @@ async function removeFixture() {
 
 /** Create a fixture person, failing loudly rather than returning a union. */
 async function makePerson(suffix: string): Promise<string> {
-  const result = await createIndividual({ givenName: name(suffix) });
+  const result = await createIndividual(
+    { givenName: name(suffix) },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "created") {
     throw new Error(`Expected created, got ${result.status}.`);
   }
@@ -64,13 +68,16 @@ async function makeUnion(
   personId: string,
   partnerId: string | null,
 ): Promise<string> {
-  const result = await addSpouse({
-    personId,
-    partnerMode: partnerId === null ? "unknown" : "existing",
-    partnerId: partnerId ?? "",
-    partner: {},
-    union: {},
-  });
+  const result = await addSpouse(
+    {
+      personId,
+      partnerMode: partnerId === null ? "unknown" : "existing",
+      partnerId: partnerId ?? "",
+      partner: {},
+      union: {},
+    },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -79,12 +86,15 @@ async function makeUnion(
 
 /** Record an existing person as a child of a union. */
 async function makeChild(unionId: string, childId: string): Promise<void> {
-  const result = await addChild({
-    childMode: "existing",
-    childId,
-    child: {},
-    link: { unionId, relation: "biological" },
-  });
+  const result = await addChild(
+    {
+      childMode: "existing",
+      childId,
+      child: {},
+      link: { unionId, relation: "biological" },
+    },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -106,7 +116,7 @@ function submission(overrides: Partial<SetParentsInput>): SetParentsInput {
 
 /** Set parents, failing loudly rather than returning a union of statuses. */
 async function set(input: SetParentsInput) {
-  const result = await setParents(input);
+  const result = await setParents(input, FIXTURE_MEMBER);
   if (result.status !== "set") {
     throw new Error(`Expected set, got ${result.status}.`);
   }
@@ -178,7 +188,9 @@ describe("attaching an existing person to an existing family", () => {
     const unionId = await makeUnion(rose, null);
     await makeChild(unionId, dora);
 
-    expect(await setParents(submission({ childId: dora, unionId }))).toEqual({
+    expect(
+      await setParents(submission({ childId: dora, unionId }), FIXTURE_MEMBER),
+    ).toEqual({
       status: "already-recorded",
     });
   });
@@ -188,7 +200,9 @@ describe("attaching an existing person to an existing family", () => {
     const thomas = await makePerson("Thomas");
     const unionId = await makeUnion(rose, thomas);
 
-    expect(await setParents(submission({ childId: rose, unionId }))).toEqual({
+    expect(
+      await setParents(submission({ childId: rose, unionId }), FIXTURE_MEMBER),
+    ).toEqual({
       status: "child-is-partner",
     });
   });
@@ -199,7 +213,9 @@ describe("attaching an existing person to an existing family", () => {
     const dora = await makePerson("Dora");
     await db.delete(schema.individuals).where(eq(schema.individuals.id, dora));
 
-    expect(await setParents(submission({ childId: dora, unionId }))).toEqual({
+    expect(
+      await setParents(submission({ childId: dora, unionId }), FIXTURE_MEMBER),
+    ).toEqual({
       status: "child-not-found",
     });
   });
@@ -210,7 +226,9 @@ describe("attaching an existing person to an existing family", () => {
     const unionId = await makeUnion(rose, null);
     await db.delete(schema.unions).where(eq(schema.unions.id, unionId));
 
-    expect(await setParents(submission({ childId: dora, unionId }))).toEqual({
+    expect(
+      await setParents(submission({ childId: dora, unionId }), FIXTURE_MEMBER),
+    ).toEqual({
       status: "union-not-found",
     });
   });
@@ -280,6 +298,7 @@ describe("creating the family inline", () => {
         parentAId: rose,
         parentBId: thomas,
       }),
+      FIXTURE_MEMBER,
     );
 
     expect(result).toEqual({ status: "union-exists", unionIds: [marriage] });
@@ -367,6 +386,7 @@ describe("creating the family inline", () => {
           parentAId: rose,
           parentBId: thomas,
         }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "union-exists", unionIds: [marriage] });
   });
@@ -455,6 +475,7 @@ describe("creating the family inline", () => {
           parentAId: rose,
           parentBId: ghost,
         }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "parent-not-found" });
 
@@ -498,7 +519,10 @@ describe("refusing a link that would make somebody their own ancestor", () => {
     const { gran, parentUnion } = await pedigree();
 
     expect(
-      await setParents(submission({ childId: gran, unionId: parentUnion })),
+      await setParents(
+        submission({ childId: gran, unionId: parentUnion }),
+        FIXTURE_MEMBER,
+      ),
     ).toEqual({ status: "child-is-ancestor" });
 
     expect(await familiesOf(gran)).toEqual([]);
@@ -519,6 +543,7 @@ describe("refusing a link that would make somebody their own ancestor", () => {
           unionId: null,
           parentAId: child,
         }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "child-is-ancestor" });
 
@@ -643,6 +668,7 @@ describe("moving a child from one family to another", () => {
     expect(
       await setParents(
         submission({ childId: stranger, unionId: right, fromUnionId: wrong }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "not-recorded-there" });
 
@@ -665,6 +691,7 @@ describe("moving a child from one family to another", () => {
     expect(
       await setParents(
         submission({ childId: dora, unionId: right, fromUnionId: wrong }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "already-recorded" });
 
@@ -695,6 +722,7 @@ describe("moving a child from one family to another", () => {
           parentBId: ghost,
           fromUnionId: wrong,
         }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "parent-not-found" });
 
@@ -731,6 +759,7 @@ describe("moving a child from one family to another", () => {
           unionId: doraUnion,
           fromUnionId: granUnion,
         }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "child-is-ancestor" });
 

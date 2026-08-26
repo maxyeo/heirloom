@@ -4,6 +4,7 @@ import { db, schema } from "@/db";
 import type { GedcomMapping } from "@/lib/gedcom-map";
 import type { PriorImport } from "@/lib/import-endpoint";
 import { batchesOf } from "@/lib/import-batches";
+import { authorColumns, IMPORT_AUTHOR } from "@/lib/individual-author";
 import { priorImportFrom } from "@/lib/import-ledger";
 import { rowsFromMapping } from "@/lib/import-rows";
 
@@ -486,8 +487,24 @@ export async function importGedcom(
 
       const importId = ledger.id;
 
+      /**
+       * `authorColumns(IMPORT_AUTHOR)` rather than the importer's email
+       * (`YEO-104`), and this is the ticket's explicit question about the
+       * import: it **derives** the author, it does not store one.
+       *
+       * `import_id` is being written on the very next line, and the row it
+       * points at already records `imported_by` from the session. Copying
+       * that email onto each of a file's few hundred people would be a second
+       * copy of a fact the schema holds once, free to disagree with the first,
+       * to answer a question the feed never asks of an imported row:
+       * `listRecentlyAddedPeople` filters them out precisely because the file
+       * is reported as one line instead. The reasoning in full is in
+       * `authorColumns`.
+       */
+      const importedAuthor = authorColumns(IMPORT_AUTHOR);
+
       for (const batch of batchesOf(
-        individuals.map((row) => ({ ...row, importId })),
+        individuals.map((row) => ({ ...row, importId, ...importedAuthor })),
         INDIVIDUAL_COLUMNS,
       )) {
         await tx.insert(schema.individuals).values(batch);

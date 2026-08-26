@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { authorColumns, type IndividualAuthor } from "@/lib/individual-author";
 import {
   type IndividualFields,
   type IndividualInput,
@@ -101,11 +102,27 @@ const FIELD_NAMES = Object.keys({
 /**
  * Create a person.
  *
+ * ## Why the author is a second argument
+ *
+ * Because it is the one thing here the caller is *not* allowed to make up
+ * (`YEO-104`). `input` is untrusted by construction — it is a `FormData`, a
+ * GEDCOM record or a hand-made POST — and an author carried inside it would
+ * be a column any direct POST could set to anybody's address. The session is
+ * the only place a member's email may come from, so it arrives separately,
+ * from the action that already called `requireSession`, and never goes
+ * through `validateIndividual`.
+ *
+ * It is *required* rather than optional, which is the whole enforcement:
+ * `individuals.created_by_source` is `not null` with no default, so a write
+ * path that does not name an author does not compile. See `db/schema.ts`.
+ *
  * @param input the details as they arrived, untrusted and untyped
+ * @param author who is adding them — a signed-in member, or an import
  * @returns the new person's id, or every problem with the input
  */
 export async function createIndividual(
   input: IndividualInput,
+  author: IndividualAuthor,
 ): Promise<CreateIndividualResult> {
   const checked = validateIndividual(input);
   if (!checked.ok) return { status: "invalid", issues: checked.issues };
@@ -120,7 +137,7 @@ export async function createIndividual(
    */
   const [created] = await db
     .insert(schema.individuals)
-    .values(checked.value)
+    .values({ ...checked.value, ...authorColumns(author) })
     .returning({ id: schema.individuals.id });
 
   return { status: "created", id: created.id };
