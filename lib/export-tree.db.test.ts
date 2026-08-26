@@ -2,7 +2,12 @@ import { inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
-import { exportTreeAsGedcom } from "@/lib/export-tree";
+import {
+  exportTreeAsGedcom,
+  individualsQuery,
+  unionChildrenQuery,
+  unionsQuery,
+} from "@/lib/export-tree";
 
 /**
  * What only Postgres can prove about `lib/export-tree.ts` (E7-T1, `YEO-51`).
@@ -41,6 +46,15 @@ import { exportTreeAsGedcom } from "@/lib/export-tree";
  * primary key `information_schema` reports for that table. Drop a tie-breaker
  * and it goes red immediately, for all three queries, including the one on
  * `union_children` that no fixture could reach at all.
+ *
+ * Getting hold of those statements used to be the expensive part. `YEO-94`
+ * wrapped `db` in a `Proxy` that intercepted `select()` and re-wrapped every
+ * link of the chain, so that the builders `exportTreeAsGedcom` ran could be
+ * compiled afterwards — some seventy lines to obtain three objects. `YEO-101`
+ * named the builders in the module instead, so this file imports them and
+ * calls `toSQL()`. The proxy's one real virtue survives the move: what is
+ * compiled here is what the export runs, because it is the same function.
+ * `lib/export-tree.test.ts` is what keeps it that way.
  *
  * ## And why the others still read rows
  *
@@ -241,76 +255,19 @@ describe("the rows it reads", () => {
   });
 });
 
-/** Anything Drizzle can compile — a select, at any point in its chain. */
-type Compilable = { toSQL(): { sql: string } };
-
-function isCompilable(value: unknown): value is Compilable {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "toSQL" in value &&
-    typeof value.toSQL === "function"
-  );
-}
-
-/** A link in a chain: `select()` has `from`, and everything after it compiles. */
-function isBuilder(value: unknown): value is object {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    ("from" in value || "toSQL" in value)
-  );
-}
-
 /**
- * Wrap a chain so that every select in it is kept, and let it run for real.
+ * The statement each of the export's three reads compiles to.
  *
- * A `Set` rather than a list because `orderBy` returns the same builder it was
- * called on: one entry per query, holding the builder in its finished state,
- * which is the state whose `toSQL()` includes the `order by`.
+ * The module's own builders, called with the same `db` `exportTreeAsGedcom`
+ * defaults to — not a second declaration of the queries, which would only
+ * prove something about the second declaration. `toSQL()` renders a builder
+ * without running it, so nothing here touches Postgres; the tests below that
+ * read rows are the ones that do.
  */
-function watch(value: unknown, queries: Set<Compilable>): unknown {
-  if (!isBuilder(value)) return value;
-  if (isCompilable(value)) queries.add(value);
-
-  return new Proxy(value, {
-    get(target, property) {
-      const member = Reflect.get(target, property);
-      if (typeof member !== "function") return member;
-
-      return (...args: unknown[]) =>
-        watch(Reflect.apply(member, target, args), queries);
-    },
-  });
-}
-
-/**
- * The SQL of every select `exportTreeAsGedcom` runs, through a reader that is
- * the real `db` with a note-taker in front of it.
- *
- * Not a mock: the queries execute against Postgres exactly as they otherwise
- * would, and the export comes back. All the proxy does is keep the builders so
- * that the statements can be read afterwards.
- */
-async function compiledSelects(): Promise<string[]> {
-  const queries = new Set<Compilable>();
-
-  await exportTreeAsGedcom(
-    new Proxy(db, {
-      get(target, property, receiver) {
-        if (property !== "select") {
-          return Reflect.get(target, property, receiver);
-        }
-
-        // `lib/export-tree.ts` selects whole rows, so there is no argument to
-        // forward — and taking none is what would make a future one visible
-        // here rather than silently dropped.
-        return () => watch(target.select(), queries);
-      },
-    }),
+function compiledSelects(): string[] {
+  return [individualsQuery(db), unionsQuery(db), unionChildrenQuery(db)].map(
+    (query) => query.toSQL().sql,
   );
-
-  return [...queries].map((query) => query.toSQL().sql);
 }
 
 /** The one of those statements that reads from this table. */
@@ -327,14 +284,19 @@ function selectFrom(statements: string[], table: string): string {
 
 /** The columns a statement's `order by` names, in the order it names them. */
 function orderedColumns(statement: string): string[] {
-  const clause = /\border by\s+([\s\S]+)$/i.exec(statement);
+  // To the end of the statement or to the first clause that can follow an
+  // `order by`, whichever comes first. None of these three queries has one
+  // today; `YEO-94` left the greedy version with a comment saying a `limit`
+  // would be swallowed as if it were another ordering term, and `YEO-101` was
+  // in the file anyway. The keywords are matched unquoted, so a column called
+  // `limit` — which Drizzle would render as `"t"."limit"` — cannot end the
+  // clause early.
+  const clause =
+    /\border by\s+([\s\S]+?)(?=\s+\b(?:limit|offset|fetch|for)\b|$)/i.exec(
+      statement,
+    );
   if (clause === null) throw new Error(`no \`order by\` in: ${statement}`);
 
-  // Reading to the end of the statement, which is where these three put their
-  // `order by`. A `limit` after it would be swallowed as if it were another
-  // term — loudly, since the assertion then names a column nobody wrote, and
-  // this is the line to fix when one of these queries grows one.
-  //
   // Each term is `"table"."column" asc`; the column is the second identifier.
   return [...clause[1].matchAll(/"[^"]+"\."([^"]+)"/g)].map(
     (column) => column[1],
@@ -396,9 +358,7 @@ describe("the order it reads them in", () => {
      * comes first decides how the rows are grouped, not whether the order is
      * decided, and the export is entitled to choose.
      */
-    const statements = await compiledSelects();
-    expect(statements, "one select per table").toHaveLength(TABLES.length);
-
+    const statements = compiledSelects();
     const keys = await primaryKeyColumns(TABLES);
 
     for (const table of TABLES) {
