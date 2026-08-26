@@ -94,6 +94,7 @@ export function ArticleHatnote({
       {hasManual ? (
         <div
           className={HATNOTE_CLASS}
+          /* sanitize-html-exempt: hatnote-already-sanitised */
           dangerouslySetInnerHTML={{ __html: hatnoteHtml }}
         />
       ) : null}
