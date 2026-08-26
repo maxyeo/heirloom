@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { db, schema } from "@/db";
 import { NAMESAKE_LIMIT } from "@/lib/hatnote";
 import { findNamesakes } from "@/lib/namesakes";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * Database tests for the name-collision lookup behind the automatic hatnote
@@ -69,35 +70,37 @@ beforeEach(async () => {
     { id: ELDER_PAGE, slug: `${PREFIX}-elder`, title: `${PREFIX} elder` },
   ]);
 
-  await db.insert(schema.individuals).values([
-    {
-      id: SUBJECT,
-      pageId: SUBJECT_PAGE,
-      givenName: GIVEN,
-      surname: SURNAME,
-      birthDate: "1921-01-01",
-    },
-    {
-      id: ELDER,
-      pageId: ELDER_PAGE,
-      givenName: GIVEN,
-      surname: SURNAME,
-      birthDate: "1890-01-01",
-      deathDate: "1962-01-01",
-    },
-    // No entry of her own: the case the `left join` exists for.
-    {
-      id: YOUNGER,
-      givenName: GIVEN,
-      surname: SURNAME,
-      birthDate: "1948-01-01",
-      birthDateQualifier: "about",
-    },
-    { id: UNDATED, givenName: GIVEN, surname: SURNAME },
-    { id: DIFFERENT_SURNAME, givenName: GIVEN, surname: `${SURNAME} Hale` },
-    { id: NO_SURNAME_SUBJECT, givenName: `${PREFIX} Mary`, surname: null },
-    { id: NO_SURNAME_OTHER, givenName: `${PREFIX} Mary`, surname: null },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      {
+        id: SUBJECT,
+        pageId: SUBJECT_PAGE,
+        givenName: GIVEN,
+        surname: SURNAME,
+        birthDate: "1921-01-01",
+      },
+      {
+        id: ELDER,
+        pageId: ELDER_PAGE,
+        givenName: GIVEN,
+        surname: SURNAME,
+        birthDate: "1890-01-01",
+        deathDate: "1962-01-01",
+      },
+      // No entry of her own: the case the `left join` exists for.
+      {
+        id: YOUNGER,
+        givenName: GIVEN,
+        surname: SURNAME,
+        birthDate: "1948-01-01",
+        birthDateQualifier: "about",
+      },
+      { id: UNDATED, givenName: GIVEN, surname: SURNAME },
+      { id: DIFFERENT_SURNAME, givenName: GIVEN, surname: `${SURNAME} Hale` },
+      { id: NO_SURNAME_SUBJECT, givenName: `${PREFIX} Mary`, surname: null },
+      { id: NO_SURNAME_OTHER, givenName: `${PREFIX} Mary`, surname: null },
+    ]),
+  );
 });
 
 afterAll(removeFixture);
@@ -174,12 +177,16 @@ describe("findNamesakes", () => {
   it("ignores a second row claiming this very entry", async () => {
     // Only reachable through a hand-run `UPDATE`, and the failure it would
     // produce is a hatnote sending the reader to the page they are on.
-    await db.insert(schema.individuals).values({
-      id: CLAIMS_SUBJECT_PAGE,
-      pageId: SUBJECT_PAGE,
-      givenName: GIVEN,
-      surname: SURNAME,
-    });
+    await db.insert(schema.individuals).values(
+      addedByHand([
+        {
+          id: CLAIMS_SUBJECT_PAGE,
+          pageId: SUBJECT_PAGE,
+          givenName: GIVEN,
+          surname: SURNAME,
+        },
+      ]),
+    );
 
     const { people } = await findNamesakes(subject, SUBJECT_PAGE);
     expect(people.map((person) => person.id)).not.toContain(
@@ -193,12 +200,14 @@ describe("findNamesakes", () => {
       id(0xb0 + index),
     );
     await db.insert(schema.individuals).values(
-      overflow.map((personId, index) => ({
-        id: personId,
-        givenName: GIVEN,
-        surname: SURNAME,
-        birthDate: `19${(70 + index).toString()}-01-01`,
-      })),
+      addedByHand(
+        overflow.map((personId, index) => ({
+          id: personId,
+          givenName: GIVEN,
+          surname: SURNAME,
+          birthDate: `19${(70 + index).toString()}-01-01`,
+        })),
+      ),
     );
 
     try {

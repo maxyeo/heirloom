@@ -1,11 +1,29 @@
 import "../lib/load-env";
 
 import { slugFromTitle } from "../lib/entry-slug";
+import { authorColumns, memberAuthor } from "../lib/individual-author";
 import { db, schema } from "./index";
 import { assertSeedTarget } from "./seed-guard";
 import { THOMAS_ENTRY_ID, seedFamily, seedPerson } from "./seed-family";
 
-/** Who the seeded entry and its first revision are attributed to. */
+/**
+ * Who the seeded entry, its first revision, and the seeded people are
+ * attributed to.
+ *
+ * The people joined that list in `YEO-104`, and they joined it as a `member`
+ * rather than getting a source of their own. A seeded row is not a row that
+ * predates the author column and it is not a row an import wrote — it is a
+ * row this address created, in exactly the sense the entry above it was
+ * created by the same address. Inventing a fourth author source to say
+ * "a script did it" would put a value in the enum that no production database
+ * can ever hold, to describe rows a developer is looking at because they ran
+ * `npm run db:seed` a moment ago.
+ *
+ * What it buys is that a freshly seeded home page shows the "Recently
+ * changed" feed with its bylines populated — including the `person-added`
+ * rows this ticket added one to — which is the state a developer needs to be
+ * able to see.
+ */
 const SEED_AUTHOR = "seed@example.com";
 
 /**
@@ -66,7 +84,16 @@ async function main() {
   });
 
   console.log("Inserting individuals...");
-  await db.insert(schema.individuals).values(seedFamily.people);
+  await db.insert(schema.individuals).values(
+    // The author columns are added here rather than in `db/seed-family.ts`,
+    // which holds the family as a `FamilyGraph` — the shape the application
+    // *reads*, which has no author columns in it. Who wrote the rows is a
+    // fact about this script rather than about the family.
+    seedFamily.people.map((person) => ({
+      ...person,
+      ...authorColumns(memberAuthor(SEED_AUTHOR)),
+    })),
+  );
 
   console.log("Inserting unions...");
   await db.insert(schema.unions).values(seedFamily.unions);

@@ -1,8 +1,9 @@
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { listRecentChanges } from "@/lib/recent-changes";
+import { addedByHand, addedByImport } from "@/test/people-fixtures";
 
 /**
  * The half of E8-T4 that only a real Postgres can answer.
@@ -48,12 +49,27 @@ const ENTRY_OLDER = "00000000-0000-4000-8000-000000005802";
 const PERSON_TYPED_RECENT = "00000000-0000-4000-8000-000000005803";
 const PERSON_TYPED_OLDER = "00000000-0000-4000-8000-000000005804";
 const PERSON_IMPORTED = "00000000-0000-4000-8000-000000005805";
+/**
+ * A row whose source says `member` and whose email is null — the one state
+ * this application cannot produce (`memberAuthor` takes a `string`) and a
+ * hand-run `UPDATE` can. Here because "no author" has to render the same way
+ * however it arose, and this is the arm of that rule nothing else covers.
+ */
+const PERSON_TYPED_NO_EMAIL = "00000000-0000-4000-8000-000000005809";
 const IMPORT_LIVE = "00000000-0000-4000-8000-000000005806";
 const IMPORT_RELEASED = "00000000-0000-4000-8000-000000005807";
 const IMPORT_EMPTY = "00000000-0000-4000-8000-000000005808";
 
 const PAGE_IDS = [ENTRY_RECENT, ENTRY_OLDER];
-const PERSON_IDS = [PERSON_TYPED_RECENT, PERSON_TYPED_OLDER, PERSON_IMPORTED];
+const PERSON_IDS = [
+  PERSON_TYPED_RECENT,
+  PERSON_TYPED_OLDER,
+  PERSON_IMPORTED,
+  PERSON_TYPED_NO_EMAIL,
+];
+
+/** The member who typed in the one person this fixture attributes. */
+const AGNES_AUTHOR = "agnes@example.com";
 const IMPORT_IDS = [IMPORT_LIVE, IMPORT_RELEASED, IMPORT_EMPTY];
 
 const SLUG_RECENT = "recent-changes-fixture-rose";
@@ -68,12 +84,18 @@ const at = (hhmm: string) => new Date(`2024-06-01T${hhmm}:00.000Z`);
  *
  *   13:00  an import that added nobody      excluded (individual_count = 0)
  *   12:00  an entry saved                   shown
- *   11:00  a person typed in                shown
+ *   11:00  a person typed in by a member    shown, added by agnes@example.com
  *   10:30  an import of three people        shown, once
  *   10:30  one of those three people        excluded (import_id is not null)
  *   09:00  an entry saved, by nobody        shown, author Unknown
- *   08:00  a person typed in                shown
+ *   08:00  a person from before the column  shown, with no author at all
+ *   07:30  a `member` row with no email     shown, with no author at all
  *   07:00  an import, since released        shown — releasing retracts nothing
+ *
+ * The last three lines are the whole of `YEO-104` in this file: one person
+ * the feed can attribute, and two it must not — differently unattributable,
+ * identically silent, and neither of them rendered as "Unknown", which is
+ * what a *lost* name reads as.
  */
 beforeAll(async () => {
   await db.insert(schema.pages).values([
@@ -136,6 +158,13 @@ beforeAll(async () => {
     },
   ]);
 
+  /*
+    The author columns are written out here rather than taken from
+    `addedByHand`, because in this file they *are* the subject: three people
+    with three different answers to "who added them", and a fourth that a
+    GEDCOM file wrote. `test/people-fixtures.ts` is for the files where the
+    answer is "somebody, it does not matter who".
+  */
   await db.insert(schema.individuals).values([
     {
       id: PERSON_TYPED_RECENT,
@@ -145,20 +174,43 @@ beforeAll(async () => {
       // trailing space behind the given name.
       surname: null,
       createdAt: at("11:00"),
+      // The one row the feed can attribute.
+      createdBySource: "member",
+      createdBy: AGNES_AUTHOR,
     },
     {
       id: PERSON_TYPED_OLDER,
       givenName: "Thomas",
       surname: "Whitfield",
       createdAt: at("08:00"),
+      /*
+        A row from before `individuals.created_by` existed — which is what
+        every row in every real database was on the morning `YEO-104` shipped,
+        and what the migration's backfill wrote. Only a fixture can create one
+        now: `IndividualAuthor` has no arm that produces `legacy`.
+      */
+      createdBySource: "legacy",
+      createdBy: null,
     },
     {
-      id: PERSON_IMPORTED,
-      givenName: "Imported",
-      surname: "Person",
-      createdAt: at("10:30"),
-      importId: IMPORT_LIVE,
+      id: PERSON_TYPED_NO_EMAIL,
+      givenName: "Nameless",
+      surname: "Author",
+      createdAt: at("07:30"),
+      // See the constant: unreachable through this application, reachable by
+      // hand, and rendered exactly like the row above it.
+      createdBySource: "member",
+      createdBy: null,
     },
+    ...addedByImport([
+      {
+        id: PERSON_IMPORTED,
+        givenName: "Imported",
+        surname: "Person",
+        createdAt: at("10:30"),
+        importId: IMPORT_LIVE,
+      },
+    ]),
   ]);
 });
 
@@ -224,6 +276,7 @@ describe("listRecentChanges", () => {
         // The surname was null, so the name is the given name and no more.
         name: "Agnes",
         when: at("11:00"),
+        addedBy: AGNES_AUTHOR,
       },
       {
         kind: "people-imported",
@@ -245,6 +298,19 @@ describe("listRecentChanges", () => {
         personId: PERSON_TYPED_OLDER,
         name: "Thomas Whitfield",
         when: at("08:00"),
+        // No `addedBy`, because the row records no author. `toEqual` treats
+        // an absent property and an `undefined` one alike, which is the right
+        // reading here — the arm's field is optional, and the assertion that
+        // it is genuinely absent rather than empty is the dedicated test
+        // below.
+        addedBy: undefined,
+      },
+      {
+        kind: "person-added",
+        personId: PERSON_TYPED_NO_EMAIL,
+        name: "Nameless Author",
+        when: at("07:30"),
+        addedBy: undefined,
       },
       {
         kind: "people-imported",
@@ -270,6 +336,59 @@ describe("listRecentChanges", () => {
 
     const imports = feed.filter((change) => change.kind === "people-imported");
     expect(imports.map((entry) => entry.importId)).toContain(IMPORT_LIVE);
+  });
+
+  /**
+   * `YEO-104`'s acceptance criteria, read off the feed.
+   *
+   * Stated separately from the ordered assertion above because `toEqual`
+   * cannot distinguish "the property is absent" from "the property is
+   * `undefined`", and the distinction the ticket is about is a level below
+   * that: whichever of the two it is, what must never happen is a *string*
+   * appearing where no author exists. "Unknown" would be a string.
+   */
+  it("names the member who added a person, and nobody otherwise", async () => {
+    const feed = await fixtureFeed();
+    const people = feed.filter((change) => change.kind === "person-added");
+    const addedBy = (personId: string) =>
+      people.find((person) => person.personId === personId)?.addedBy;
+
+    expect(addedBy(PERSON_TYPED_RECENT)).toBe(AGNES_AUTHOR);
+
+    // The row that predates the column, and the row whose email a hand-run
+    // `UPDATE` removed. Two different reasons, one rendering, and it is the
+    // absence of a value rather than a value meaning absence.
+    expect(addedBy(PERSON_TYPED_OLDER)).toBeUndefined();
+    expect(addedBy(PERSON_TYPED_NO_EMAIL)).toBeUndefined();
+  });
+
+  /**
+   * The other half of the same criterion, and the reason the import stores no
+   * email of its own: an imported person is *attributed*, just not here. The
+   * feed reports the file, the file's ledger row records who ran it, and the
+   * person's own row points at the ledger. Nothing is lost by the person arm
+   * declining to answer — see `authorColumns` in `lib/individual-author.ts`.
+   */
+  it("attributes imported people through their import, not their own row", async () => {
+    const [imported] = await db
+      .select({
+        createdBySource: schema.individuals.createdBySource,
+        createdBy: schema.individuals.createdBy,
+        importedBy: schema.gedcomImports.importedBy,
+      })
+      .from(schema.individuals)
+      .innerJoin(
+        schema.gedcomImports,
+        eq(schema.individuals.importId, schema.gedcomImports.id),
+      )
+      .where(eq(schema.individuals.id, PERSON_IMPORTED));
+
+    expect(imported).toEqual({
+      createdBySource: "import",
+      // Not a gap. The next line is where the author is.
+      createdBy: null,
+      importedBy: "walter@example.com",
+    });
   });
 
   it("still reports an import whose digest claim was released", async () => {
@@ -431,14 +550,16 @@ describe("ties", () => {
 
   beforeAll(async () => {
     await db.insert(schema.individuals).values(
-      // Inserted newest-id-first, so that "the order they were written in"
-      // and "the order the query must return" disagree.
-      [...TIED_IDS].reverse().map((id, index) => ({
-        id,
-        givenName: `Tied ${index}`,
-        surname: "Whitfield",
-        createdAt: TIED_AT,
-      })),
+      addedByHand(
+        // Inserted newest-id-first, so that "the order they were written in"
+        // and "the order the query must return" disagree.
+        [...TIED_IDS].reverse().map((id, index) => ({
+          id,
+          givenName: `Tied ${index}`,
+          surname: "Whitfield",
+          createdAt: TIED_AT,
+        })),
+      ),
     );
   });
 

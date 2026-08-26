@@ -6,6 +6,7 @@ import { DATA_PREFIX, MANIFEST_MEMBER } from "@/lib/export-archive";
 import { fullExportStream, readFullExport } from "@/lib/export-full";
 import { IMAGE_ROUTE } from "@/lib/storage-key";
 import { readZip, zipText } from "@/test/read-zip";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * What only Postgres can prove about `lib/export-full.ts`.
@@ -115,16 +116,18 @@ beforeAll(async () => {
     },
   ]);
 
-  await db.insert(schema.individuals).values([
-    { id: PERSON, pageId: PAGE, givenName: "Rose", surname: "Hall" },
-    {
-      id: PORTRAIT_PERSON,
-      givenName: "Walter",
-      surname: "Portrait",
-      portraitKey: PORTRAIT_IMAGE,
-      portraitThumbKey: PORTRAIT_THUMB_IMAGE,
-    },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      { id: PERSON, pageId: PAGE, givenName: "Rose", surname: "Hall" },
+      {
+        id: PORTRAIT_PERSON,
+        givenName: "Walter",
+        surname: "Portrait",
+        portraitKey: PORTRAIT_IMAGE,
+        portraitThumbKey: PORTRAIT_THUMB_IMAGE,
+      },
+    ]),
+  );
 });
 
 afterAll(removeFixture);

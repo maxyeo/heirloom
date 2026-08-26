@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { searchPeopleByName } from "@/lib/people";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * The part of `searchPeopleByName` only a real Postgres can answer:
@@ -36,23 +37,25 @@ beforeAll(async () => {
   // would otherwise greet the next one with a duplicate-key error.
   await removeFixture();
 
-  await db.insert(schema.individuals).values([
-    {
-      id: KATHARINE_ID,
-      givenName: "Katharine",
-      surname: "Reed",
-      sex: "female",
-      birthDate: "1888-04-02",
-    },
-    {
-      id: THOMAS_ID,
-      givenName: "Thomas",
-      surname: "Hale",
-      sex: "male",
-      birthDate: "1898-11-20",
-      deathDate: "1947-06-11",
-    },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      {
+        id: KATHARINE_ID,
+        givenName: "Katharine",
+        surname: "Reed",
+        sex: "female",
+        birthDate: "1888-04-02",
+      },
+      {
+        id: THOMAS_ID,
+        givenName: "Thomas",
+        surname: "Hale",
+        sex: "male",
+        birthDate: "1898-11-20",
+        deathDate: "1947-06-11",
+      },
+    ]),
+  );
 });
 
 afterAll(removeFixture);

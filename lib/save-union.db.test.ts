@@ -5,6 +5,7 @@ import { db, schema } from "@/db";
 import { createIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import type { AddSpouseInput } from "@/lib/union-input";
+import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
 /**
  * Database tests for the add-spouse write path (E3-T4, `YEO-32`). Run with
@@ -44,7 +45,10 @@ async function removeFixture() {
 
 /** Create a fixture person, failing loudly rather than returning a union. */
 async function makePerson(suffix: string): Promise<string> {
-  const result = await createIndividual({ givenName: name(suffix) });
+  const result = await createIndividual(
+    { givenName: name(suffix) },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "created") {
     throw new Error(`Expected created, got ${result.status}.`);
   }
@@ -88,7 +92,7 @@ function submission(overrides: Partial<AddSpouseInput>): AddSpouseInput {
 
 /** Add a spouse, failing loudly rather than returning a union of statuses. */
 async function add(input: AddSpouseInput) {
-  const result = await addSpouse(input);
+  const result = await addSpouse(input, FIXTURE_MEMBER);
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -206,6 +210,7 @@ describe("creating the partner inline", () => {
         // Ongoing contradicts an end date, so validation refuses the union.
         union: { endDate: "1938-02-19", endReason: "ongoing" },
       }),
+      FIXTURE_MEMBER,
     );
 
     expect(result.status).toBe("invalid");
@@ -298,7 +303,10 @@ describe("when somebody has gone", () => {
     await db.delete(schema.individuals).where(eq(schema.individuals.id, rose));
 
     expect(
-      await addSpouse(submission({ personId: rose, partnerId: thomas })),
+      await addSpouse(
+        submission({ personId: rose, partnerId: thomas }),
+        FIXTURE_MEMBER,
+      ),
     ).toEqual({ status: "person-not-found" });
   });
 
@@ -306,7 +314,10 @@ describe("when somebody has gone", () => {
     const thomas = await makePerson("Thomas");
 
     expect(
-      await addSpouse(submission({ personId: "nobody", partnerId: thomas })),
+      await addSpouse(
+        submission({ personId: "nobody", partnerId: thomas }),
+        FIXTURE_MEMBER,
+      ),
     ).toEqual({ status: "person-not-found" });
   });
 
@@ -324,7 +335,10 @@ describe("when somebody has gone", () => {
       .where(eq(schema.individuals.id, thomas));
 
     expect(
-      await addSpouse(submission({ personId: rose, partnerId: thomas })),
+      await addSpouse(
+        submission({ personId: rose, partnerId: thomas }),
+        FIXTURE_MEMBER,
+      ),
     ).toEqual({ status: "partner-not-found" });
 
     expect(await unionsFor(rose)).toEqual([]);
@@ -335,6 +349,7 @@ describe("when somebody has gone", () => {
 
     const result = await addSpouse(
       submission({ personId: rose, partnerId: rose }),
+      FIXTURE_MEMBER,
     );
 
     expect(result.status).toBe("invalid");

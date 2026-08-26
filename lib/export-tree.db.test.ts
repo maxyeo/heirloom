@@ -8,6 +8,7 @@ import {
   unionChildrenQuery,
   unionsQuery,
 } from "@/lib/export-tree";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * What only Postgres can prove about `lib/export-tree.ts` (E7-T1, `YEO-51`).
@@ -148,19 +149,21 @@ beforeAll(async () => {
   // otherwise greet the next one with a duplicate key on these ids.
   await removeFixture();
 
-  await db.insert(schema.individuals).values([
-    { ...TWIN, id: TWIN_HIGHER_ID, birthPlace: HIGHER_TWIN_PLACE },
-    { ...TWIN, id: TWIN_LOWER_ID, birthPlace: LOWER_TWIN_PLACE },
-    { id: PARTNER_A_ID, givenName: "Ambrose", surname: SURNAME },
-    { id: PARTNER_B_ID, givenName: "Beatrix", surname: SURNAME },
-    // The children are named against the id order of the unions they belong
-    // to, for the same reason the twins' places are: "Cuthbert" before
-    // "Drusilla" is what a stray sort on the child would produce, and the
-    // assertions below expect the opposite.
-    { id: CHILD_OF_LOWER_ID, givenName: "Drusilla", surname: SURNAME },
-    { id: CHILD_OF_HIGHER_ID, givenName: "Cuthbert", surname: SURNAME },
-    { id: CHILD_OF_EARLIER_ID, givenName: "Eglantine", surname: SURNAME },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      { ...TWIN, id: TWIN_HIGHER_ID, birthPlace: HIGHER_TWIN_PLACE },
+      { ...TWIN, id: TWIN_LOWER_ID, birthPlace: LOWER_TWIN_PLACE },
+      { id: PARTNER_A_ID, givenName: "Ambrose", surname: SURNAME },
+      { id: PARTNER_B_ID, givenName: "Beatrix", surname: SURNAME },
+      // The children are named against the id order of the unions they belong
+      // to, for the same reason the twins' places are: "Cuthbert" before
+      // "Drusilla" is what a stray sort on the child would produce, and the
+      // assertions below expect the opposite.
+      { id: CHILD_OF_LOWER_ID, givenName: "Drusilla", surname: SURNAME },
+      { id: CHILD_OF_HIGHER_ID, givenName: "Cuthbert", surname: SURNAME },
+      { id: CHILD_OF_EARLIER_ID, givenName: "Eglantine", surname: SURNAME },
+    ]),
+  );
 
   /**
    * Three unions between the same two people, which is a row shape the schema
@@ -453,11 +456,15 @@ describe("the reader it is given", () => {
 
     await expect(
       db.transaction(async (tx) => {
-        await tx.insert(schema.individuals).values({
-          id: ROLLED_BACK_ID,
-          givenName: "Ephraim",
-          surname: SURNAME,
-        });
+        await tx.insert(schema.individuals).values(
+          addedByHand([
+            {
+              id: ROLLED_BACK_ID,
+              givenName: "Ephraim",
+              surname: SURNAME,
+            },
+          ]),
+        );
 
         inside = await exportTreeAsGedcom(tx);
         throw new Rollback();

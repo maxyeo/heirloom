@@ -1,6 +1,7 @@
 import { inArray, max, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { authorColumns, type IndividualAuthor } from "@/lib/individual-author";
 import type { ValidationIssue } from "@/lib/individual-input";
 import { isRowId } from "@/lib/row-id";
 import { individualExists } from "@/lib/save-individual";
@@ -157,10 +158,14 @@ export async function nextSequence(
  * second union adds a second marker rather than a second copy of the person.
  *
  * @param input the submission as it arrived, untrusted and untyped
+ * @param author who is adding them, for the partner this flow may create
+ *   (`YEO-104`) — sourced from the session rather than from `input`, for the
+ *   reason `createIndividual` gives at length
  * @returns the new union's id, or what to fix
  */
 export async function addSpouse(
   input: AddSpouseInput,
+  author: IndividualAuthor,
 ): Promise<AddSpouseResult> {
   /**
    * The one field checked before validation rather than by it. `personId`
@@ -216,7 +221,7 @@ export async function addSpouse(
        */
       const [created] = await tx
         .insert(schema.individuals)
-        .values(partner)
+        .values({ ...partner, ...authorColumns(author) })
         .returning({ id: schema.individuals.id });
       partnerId = created.id;
     }
