@@ -1107,14 +1107,45 @@ what makes the resulting change actually apply. A canvas passing `nodes`
 without that handler swallows the keystroke and looks entirely normal doing
 it — see the note on `onNodesChange` in `components/FamilyTree.tsx`.
 
-**One thing this does not solve.** A canvas of two hundred people is two
-hundred tab stops, and there is no way to skip past them. That is WCAG's
-"bypass blocks" and it is not answered here, for a reason rather than by
-omission: the canvas is the last thing on `/tree`, so there is nothing after
-it to be trapped in front of, and a skip link is worth adding on the day
-something is put below it. Reaching a _particular_ person is already answered
-from the other direction — the header's search box, and the `?person=` deep
-link it navigates to.
+**Getting past it again.** A canvas of two hundred people is two hundred tab
+stops, which is WCAG's "bypass blocks", and `YEO-108` is where that
+was answered. `YEO-69` had left it open on the grounds that the canvas is the
+last thing on `/tree`, so nothing is trapped behind it — which was true, and
+was a fact about the current page rather than about the tree. Reaching a
+_particular_ person was already answered from the other direction: the header's
+search box, and the `?person=` deep link it navigates to.
+
+The answer is a **skip link**, `components/SkipLink.tsx`, and the choice worth
+recording is that there is one of them rather than two. The application has two
+repeated blocks — the shell's header and sidebar, on every signed-in page, and
+the canvas — so the same component serves both, with the appearance in one
+class (`.skip-link`, `app/globals.css`) and a different target at each call
+site. Three things about it:
+
+- **The canvas owns its own bypass, not `/tree`.** The link and the element it
+  lands on are both rendered by `components/FamilyTree.tsx`, immediately before
+  and immediately after the flow. So the canvas brings the way over it wherever
+  it is mounted, and — the criterion that was the point — the skip arrives in
+  front of whatever is added below the canvas next, rather than past it.
+  `components/FamilyTree.test.tsx` mounts a button after the canvas and checks
+  exactly that.
+- **The target needs `tabindex="-1"` and that is the whole mechanism.**
+  Following a fragment link moves the scroll for free; it moves _focus_ only if
+  what it arrives at can hold focus. Without it the next Tab carries on from
+  the link, which is to say straight back into the block the reader asked to
+  leave — a skip link that looks implemented and is not. Everything is asserted
+  through `document.activeElement` for that reason: presence of the markup is
+  not the property.
+- **Nothing about `YEO-69`'s order changed.** The link is an anchor and the
+  target is `tabindex="-1"`, so neither is a stop for a reader who does not
+  skip, and every person is still on the way through in layout order. A
+  `tabindex="-1"` sweep over the nodes would have "fixed" this by undoing the
+  ticket above it.
+
+Off-screen rather than hidden, because `display: none` and `visibility: hidden`
+both take an element out of the tab order and the tab order is the only place a
+skip link can be found. `app/globals.test.ts` holds that, and the z-index that
+keeps it from being revealed behind the sticky header.
 
 Dismissal and focus return are a separate mechanism and were built by
 `YEO-83`: `lib/surface-stack.ts` and `components/surface-stack.ts` own which

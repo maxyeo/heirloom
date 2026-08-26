@@ -112,17 +112,26 @@ export const ARTICLE_CONTENTS_SLOT_ID = "site-contents";
  * addresses, for the same reason, and it works the same way: the name counts
  * as taken, so the first heading to want it gets the `-2`. The literals are
  * repeated from the components that declare them — `components/AppShell.tsx`
- * (`SIDEBAR_ID`), `components/SiteSidebar.tsx` (its `-heading`) and
- * `components/ArticleContents.tsx` — because a `lib/` module reaching into
- * `components/` would invert the layering the rest of `lib/` keeps.
- * `lib/article-outline.test.ts` checks the set against those files, so a
- * renamed id cannot quietly stop being reserved.
+ * (`SIDEBAR_ID` and `CONTENT_ID`), `components/SiteSidebar.tsx` (its
+ * `-heading`) and `components/ArticleContents.tsx` — because a `lib/` module
+ * reaching into `components/` would invert the layering the rest of `lib/`
+ * keeps. `lib/article-outline.test.ts` checks the set against those files, so
+ * a renamed id cannot quietly stop being reserved.
+ *
+ * Only the chrome that renders *on an article page* belongs here. The tree
+ * canvas's own skip target (`TREE_SKIP_TARGET_ID`, `YEO-108`) deliberately does
+ * not: `/tree` renders no article body, so there is no heading for it to
+ * collide with, and reserving it would take a word away from every entry in
+ * the wiki to prevent a collision that cannot happen.
  */
 export const RESERVED_HEADING_IDS: ReadonlySet<string> = new Set([
   // components/AppShell.tsx — the `<nav>` the hamburger's `aria-controls`
   // points at, and the heading `components/SiteSidebar.tsx` labels it with.
   "site-sidebar",
   "site-sidebar-heading",
+  // components/AppShell.tsx — the content region, and so where `YEO-108`'s
+  // "skip to content" link lands.
+  "site-content",
   // components/ArticleContents.tsx — the contents panel's own three.
   ARTICLE_CONTENTS_SLOT_ID,
   `${ARTICLE_CONTENTS_SLOT_ID}-heading`,

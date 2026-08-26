@@ -252,6 +252,9 @@ describe("readArticleOutline", () => {
       expect(source("components/AppShell.tsx")).toContain(
         'const SIDEBAR_ID = "site-sidebar";',
       );
+      expect(source("components/AppShell.tsx")).toContain(
+        'const CONTENT_ID = "site-content";',
+      );
       expect(source("components/SiteSidebar.tsx")).toContain("`${id}-heading`");
 
       const panel = source("components/ArticleContents.tsx");
@@ -261,6 +264,7 @@ describe("readArticleOutline", () => {
       for (const id of [
         "site-sidebar",
         "site-sidebar-heading",
+        "site-content",
         ARTICLE_CONTENTS_SLOT_ID,
         `${ARTICLE_CONTENTS_SLOT_ID}-heading`,
         `${ARTICLE_CONTENTS_SLOT_ID}-list`,
@@ -272,6 +276,20 @@ describe("readArticleOutline", () => {
     it("puts the slot in the sidebar the shell renders", () => {
       expect(source("components/AppShell.tsx")).toContain(
         "<div id={ARTICLE_CONTENTS_SLOT_ID} />",
+      );
+    });
+
+    it("makes the content region focusable, so the skip link can land on it", () => {
+      // `YEO-108`. Without the negative tabindex the fragment link
+      // scrolls to this element and leaves focus where it was — which is to
+      // say inside the block the reader asked to skip. The tripwire is here
+      // rather than in a component test because the shell reads the session
+      // and is not mountable in a suite with no `AUTH_*`.
+      expect(source("components/AppShell.tsx")).toContain(
+        '<div id={CONTENT_ID} tabIndex={-1} className="min-w-0 flex-1">',
+      );
+      expect(source("components/AppShell.tsx")).toContain(
+        "<SkipLink targetId={CONTENT_ID}>Skip to content</SkipLink>",
       );
     });
   });

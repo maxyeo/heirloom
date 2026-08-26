@@ -332,6 +332,46 @@ describe("the family tree's focus ring", () => {
   });
 });
 
+/**
+ * The skip link (`YEO-108`).
+ *
+ * Every property that matters about this element is a CSS one — where it is,
+ * whether it is on screen, and whether it is still in the tab order while it
+ * is not. jsdom applies no stylesheet, so `components/SkipLink.test.tsx` can
+ * assert that focus moves and cannot assert any of that; this is where the
+ * other half lives, exactly as it does for the focus ring above.
+ */
+describe("the skip link", () => {
+  function rule(selector: string): string {
+    const found = new RegExp(
+      `${selector.replace(/[.:]/g, "\\$&")}\\s*\\{([^}]*)\\}`,
+    ).exec(css);
+    if (!found) throw new Error(`no rule for \`${selector}\``);
+    return found[1];
+  }
+
+  it("stays in the tab order while it is off screen", () => {
+    // The one thing a skip link cannot do is be hidden: `display: none` and
+    // `visibility: hidden` both take an element out of the tab order, and the
+    // tab order is the only place this link can be found at all.
+    const declarations = rule(".skip-link");
+    expect(declarations).not.toMatch(/display:\s*none/);
+    expect(declarations).not.toMatch(/visibility:\s*hidden/);
+    expect(declarations).toMatch(/transform:\s*translateY\(-\d+%\)/);
+  });
+
+  it("comes back on focus", () => {
+    expect(rule(".skip-link:focus")).toMatch(/transform:\s*none/);
+  });
+
+  it("clears the sticky header it is revealed over", () => {
+    // The header and the sidebar drawer are both `z-index: 40`. A link that
+    // appears behind the wordmark has not appeared.
+    expect(rule(".skip-link")).toMatch(/z-index:\s*50/);
+    expect(rule(".skip-link")).toMatch(/position:\s*fixed/);
+  });
+});
+
 describe("call sites", () => {
   /**
    * `.css` on top of the shared footprint (`YEO-102`).

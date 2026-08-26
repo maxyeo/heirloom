@@ -641,6 +641,52 @@
       display: none;
     }
   }
+
+  /*
+   * The "skip past this" link (`YEO-108`).
+   *
+   * WCAG 2.4.1 ("Bypass Blocks") asks that a block of content repeated across
+   * pages have a mechanism to jump over it. This application has two such
+   * blocks and one class serves both — the shell's header and sidebar, which
+   * sit above every signed-in page, and the tree canvas, which spends one tab
+   * stop per person in the family. `components/SkipLink.tsx` is the element;
+   * this is everything about how it looks and when.
+   *
+   * **Off-screen, not hidden.** `display: none` and `visibility: hidden` both
+   * take an element out of the tab order, and the tab order is the only place
+   * this link can be found. So it is moved out of the viewport instead and
+   * moved back on focus.
+   *
+   * **A transform rather than `sr-only`.** Tailwind's `sr-only` would hide it
+   * just as well, but undoing it on focus means `focus:not-sr-only`, which
+   * writes `position: static` — and this link also needs `position: fixed`.
+   * Two utilities setting the same property in the same variant is a cascade
+   * order to be at the mercy of, and this is a link a keyboard user cannot see
+   * failing. One property, moved and put back, cannot be ambiguous.
+   *
+   * **`z-index: 50`** clears the sticky header and the sidebar drawer, both of
+   * which are 40. A skip link revealed behind the wordmark is not revealed.
+   *
+   * `:focus` rather than `:focus-visible`: the element is off-screen until it
+   * is focused, so there is no pointer path to it and nothing to distinguish.
+   */
+  .skip-link {
+    position: fixed;
+    top: 0.5rem;
+    inset-inline-start: 0.5rem;
+    z-index: 50;
+    padding: 0.375rem 0.75rem;
+    background-color: var(--color-paper);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-panel);
+    font-size: var(--text-note);
+    line-height: var(--text-note--line-height);
+    transform: translateY(-300%);
+  }
+
+  .skip-link:focus {
+    transform: none;
+  }
 }
 
 /*
