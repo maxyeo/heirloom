@@ -412,8 +412,18 @@ function referencedImages(
 
     if (table.table !== "pages" && table.table !== "revisions") continue;
     for (const row of table.rows) {
-      const body = row.body_html;
-      if (typeof body === "string") html.push(body);
+      // `hatnote` as well as `body_html`, and today that finds nothing:
+      // `normaliseHatnote` flattens a hatnote to text and anchors, so no
+      // `img` survives into the column. It is here so that the sentence
+      // docs/export.md now prints — that the export and E5-T5's sweep ask
+      // one question through one function — is true of the code rather than
+      // true by accident of what hatnotes currently hold. The sweep scans
+      // both columns; an export that scanned one would start quietly
+      // omitting images on the day the hatnote allowlist widened.
+      for (const column of ["body_html", "hatnote"]) {
+        const value = row[column];
+        if (typeof value === "string") html.push(value);
+      }
     }
   }
 

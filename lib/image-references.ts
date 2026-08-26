@@ -150,6 +150,9 @@ export interface ImageReferenceCensus {
  * means the sweep is already right on the day the hatnote allowlist widens
  * rather than becoming a deletion bug that ships with that change.
  * Over-collecting is the cheap direction — see the module docblock.
+ * `lib/export-full.ts` scans the same two columns, so the claim that the two
+ * ask one question is a property of the code rather than of what hatnotes
+ * happen to contain right now.
  *
  * @param reader the pool by default; pass a transaction so that the three
  *   reads describe one instant, which is what `db/images-sweep.ts` does

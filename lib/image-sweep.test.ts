@@ -64,6 +64,12 @@ function plan(
 const orphanKeys = (result: ImageSweepPlan) =>
   result.orphans.map((object) => object.key);
 
+const reasons = (result: ImageSweepPlan) =>
+  result.refusals.map((refusal) => refusal.reason);
+
+const messages = (result: ImageSweepPlan) =>
+  result.refusals.map((refusal) => refusal.message).join("\n");
+
 describe("what counts as an orphan", () => {
   it("reports an image nothing refers to", () => {
     // The whole point of the feature: an upload that was never saved into
@@ -251,13 +257,13 @@ describe("refusing to delete", () => {
     // indistinguishable from a wiki that genuinely lost every reference.
     const result = plan([listed(key(1))]);
 
-    expect(result.refusal?.reason).toBe("no-references");
-    expect(result.refusal?.message).toMatch(/--allow-unreferenced-store/);
+    expect(reasons(result)).toEqual(["no-references"]);
+    expect(messages(result)).toMatch(/--allow-unreferenced-store/);
   });
 
   it("does not refuse over an empty store", () => {
     // A wiki with no photographs yet is not a misconfiguration.
-    expect(plan([]).refusal).toBeNull();
+    expect(plan([]).refusals).toEqual([]);
   });
 
   it("refuses when it would take more of the store than the limit allows", () => {
@@ -269,8 +275,8 @@ describe("refusing to delete", () => {
 
     const result = plan(objects, referenced);
 
-    expect(result.refusal?.reason).toBe("too-many");
-    expect(result.refusal?.message).toMatch(/--max-orphan-fraction=/);
+    expect(reasons(result)).toEqual(["too-many"]);
+    expect(messages(result)).toMatch(/--max-orphan-fraction=/);
   });
 
   it("allows a sweep that stays under the limit", () => {
@@ -282,7 +288,7 @@ describe("refusing to delete", () => {
 
     const result = plan(objects, referenced);
 
-    expect(result.refusal).toBeNull();
+    expect(result.refusals).toEqual([]);
     expect(result.orphaned.count).toBeGreaterThan(0);
   });
 
@@ -295,7 +301,7 @@ describe("refusing to delete", () => {
       referenced,
     );
 
-    expect(result.refusal).toBeNull();
+    expect(result.refusals).toEqual([]);
     expect(orphanKeys(result)).toEqual([key(3)]);
   });
 
@@ -306,7 +312,34 @@ describe("refusing to delete", () => {
     const objects = Array.from({ length: 20 }, (_, i) => listed(key(i % 9)));
     const referenced = collectImageReferences({ keys: [key(0)] });
 
-    expect(plan(objects, referenced).refusal).not.toBeNull();
+    expect(reasons(plan(objects, referenced))).not.toEqual([]);
+  });
+
+  it("raises both refusals when both apply", () => {
+    // The regression. These two overlap exactly in the worst case: a store
+    // the database refers to *none* of is also a store the sweep wants to
+    // empty. An earlier version returned the first refusal it found, so this
+    // case reported only `no-references` — and `--allow-unreferenced-store`,
+    // which is allowed to lift that one, then lifted the only refusal that
+    // had been computed. The fraction cap that is supposed to be unliftable
+    // never ran, and one flag could delete a family's whole archive.
+    const objects = Array.from({ length: 20 }, (_, i) => listed(key(i % 9)));
+
+    const result = plan(objects, []);
+
+    expect(reasons(result).sort()).toEqual(["no-references", "too-many"]);
+  });
+
+  it("still refuses on the fraction after the unreferenced-store reason is lifted", () => {
+    // The same property stated the way the script consumes it: lifting the
+    // liftable reason must leave the other one standing.
+    const objects = Array.from({ length: 20 }, (_, i) => listed(key(i % 9)));
+
+    const standing = plan(objects, []).refusals.filter(
+      (refusal) => refusal.reason !== "no-references",
+    );
+
+    expect(standing.map((refusal) => refusal.reason)).toEqual(["too-many"]);
   });
 
   it("honours a caller's own limit", () => {
@@ -314,8 +347,8 @@ describe("refusing to delete", () => {
     const referenced = collectImageReferences({ keys: [key(0)] });
 
     expect(
-      plan(objects, referenced, { maxOrphanFraction: 1 }).refusal,
-    ).toBeNull();
+      plan(objects, referenced, { maxOrphanFraction: 1 }).refusals,
+    ).toEqual([]);
   });
 });
 

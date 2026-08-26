@@ -147,12 +147,22 @@ export interface ImageSweepPlan {
   /** The orphans, as totals. */
   orphaned: SweepTotals;
   /**
-   * Why deleting is refused, or `null` if it is allowed.
+   * Every reason deleting is refused — empty when it is allowed.
+   *
+   * A list rather than the first reason found, and that is a correctness
+   * property rather than a presentation one. The two refusals overlap
+   * precisely in the worst case: a store the database refers to *none* of is
+   * also a store the sweep wants to delete all of. Returning only the first
+   * meant `--allow-unreferenced-store`, which is allowed to lift that one,
+   * lifted the only refusal that had been computed — and the fraction cap
+   * that was supposed to be unliftable never ran. One flag could then empty a
+   * family's archive, which is the exact wrong-pairing catastrophe the guards
+   * exist for.
    *
    * Computed on every run, including dry ones, so that the report says "this
    * would be refused" *before* an operator adds `--delete` and finds out.
    */
-  refusal: SweepRefusal | null;
+  refusals: SweepRefusal[];
 }
 
 function totals(objects: readonly ListedObject[]): SweepTotals {
@@ -226,24 +236,35 @@ export function planImageSweep(input: SweepInput): ImageSweepPlan {
     tooNew: totals(tooNew),
     unrecognised: totals(unrecognised),
     orphaned: totals(orphans),
-    refusal: null,
+    refusals: [],
   };
 
-  return { ...plan, refusal: refuse(plan, input, maxOrphanFraction) };
+  return { ...plan, refusals: refusalsFor(plan, input, maxOrphanFraction) };
 }
 
-function refuse(
+/**
+ * Every reason this run may not delete.
+ *
+ * Both rules are evaluated, always, and neither is allowed to short-circuit
+ * the other. They are at their most alike exactly when things are at their
+ * worst — a store nothing refers to is also a store the sweep wants to empty
+ * — so an implementation that stopped at the first match would report the
+ * liftable reason and silently skip the unliftable one.
+ */
+function refusalsFor(
   plan: ImageSweepPlan,
   input: SweepInput,
   maxOrphanFraction: number,
-): SweepRefusal | null {
+): SweepRefusal[] {
+  const found: SweepRefusal[] = [];
+
   // An empty store is not suspicious, it is just empty — and neither is a
   // fresh wiki with nothing in it. What is suspicious is a store with
   // photographs in it that the database has never heard of, which is what a
   // wrong `DATABASE_URL`, a half-applied migration, or a restore in progress
   // all look like from here.
   if (plan.listed.count > 0 && input.referenced.size === 0) {
-    return {
+    found.push({
       reason: "no-references",
       message:
         `The store holds ${plan.listed.count} object(s) and the database ` +
@@ -253,14 +274,14 @@ function refuse(
         "every reference. Check that DATABASE_URL and STORAGE_TOKEN name the " +
         "same deployment. If the store really is all abandoned uploads, " +
         "pass --allow-unreferenced-store.",
-    };
+    });
   }
 
-  if (plan.listed.count <= FRACTION_APPLIES_ABOVE) return null;
+  if (plan.listed.count <= FRACTION_APPLIES_ABOVE) return found;
 
   const fraction = plan.orphaned.count / plan.listed.count;
   if (fraction > maxOrphanFraction) {
-    return {
+    found.push({
       reason: "too-many",
       message:
         `This would delete ${plan.orphaned.count} of ${plan.listed.count} ` +
@@ -271,10 +292,10 @@ function refuse(
         "STORAGE_TOKEN are not checked against each other, and nothing else " +
         "would notice. Read the list above, and if it is right, re-run with " +
         `--max-orphan-fraction=${Math.min(1, Math.ceil(fraction * 100) / 100)}.`,
-    };
+    });
   }
 
-  return null;
+  return found;
 }
 
 function percent(fraction: number): string {
@@ -327,8 +348,8 @@ export function formatSweepReport(
     }
   }
 
-  if (plan.refusal) {
-    lines.push("", `This run would be refused: ${plan.refusal.message}`);
+  for (const refusal of plan.refusals) {
+    lines.push("", `This run would be refused: ${refusal.message}`);
   }
 
   return lines;

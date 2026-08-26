@@ -188,22 +188,29 @@ async function main() {
 /**
  * Why this run may not delete, or `null`.
  *
- * `--allow-unreferenced-store` lifts exactly one of the two refusals. It
- * cannot lift the other, which is what keeps it from becoming the flag people
- * paste in to make the script stop arguing: a sweep that wants most of the
- * store is refused whatever this says, and is answered by
- * `--max-orphan-fraction`, which has to be given a number the operator chose
- * after reading the report.
+ * `--allow-unreferenced-store` lifts exactly one of the two refusals, and
+ * every other one still standing is returned. That is what keeps it from
+ * becoming the flag people paste in to make the script stop arguing: a sweep
+ * that wants most of the store is refused whatever this says, and is answered
+ * by `--max-orphan-fraction`, which has to be given a number the operator
+ * chose after reading the report.
+ *
+ * The two overlap exactly in the worst case — a store the database refers to
+ * none of is also a store the sweep wants to empty — which is why
+ * `planImageSweep` evaluates both rather than returning the first. An earlier
+ * version returned one refusal, so lifting the liftable one here left nothing
+ * behind it and a single flag could empty the store.
  */
 function deletionRefusal(
   plan: ImageSweepPlan,
   allowUnreferencedStore: boolean,
 ): string | null {
-  if (!plan.refusal) return null;
-  if (plan.refusal.reason === "no-references" && allowUnreferencedStore) {
-    return null;
-  }
-  return plan.refusal.message;
+  const standing = plan.refusals.filter(
+    (refusal) =>
+      !(refusal.reason === "no-references" && allowUnreferencedStore),
+  );
+  if (standing.length === 0) return null;
+  return standing.map((refusal) => refusal.message).join("\n\n");
 }
 
 /**

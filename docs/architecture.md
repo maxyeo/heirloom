@@ -1003,7 +1003,7 @@ That first bullet is the one that needs enforcing rather than asserting, and
 that imports a storage vendor's SDK.
 
 Both halves of that are checked. `lib/storage.test.ts` asserts the export list
-is exactly those three names, and `lib/storage.call-sites.test.ts` scans the
+is exactly those four names, and `lib/storage.call-sites.test.ts` scans the
 source tree and fails if any other file names a `@vercel/*` package — the same
 tripwire shape `lib/sanitize-html.call-sites.test.ts` uses, and for the same
 reason. The claim above is not hard to keep true; it is hard to _notice_
