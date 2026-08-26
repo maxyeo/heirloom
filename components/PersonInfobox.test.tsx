@@ -28,9 +28,15 @@ function personLink(
   return { id, name, slug };
 }
 
+const PORTRAIT_SRC = "/api/images/ab/abcdef01-2345-4678-89ab-cdef01234567.jpg";
+
 const ROSE: PersonInfoboxData = {
   id: "00000000-0000-4000-8000-0000e11t5001",
   name: "Rose Bennett",
+  // The ordinary case: most people in a real tree have no photograph, and the
+  // box says so by leaving the figure out. `describe("the portrait")` below
+  // overrides it for the case that does.
+  portraitSrc: null,
   birth: { date: "30 May 1908", place: "Kilbride" },
   death: { date: "19 January 1989", place: "Ardmore" },
   spouses: [
@@ -273,5 +279,76 @@ describe("the Wikipedia styling", () => {
     // heading here would put "Rose Bennett" in the contents of the entry about
     // Rose Bennett.
     expect(box().querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+  });
+});
+
+/**
+ * The portrait (`YEO-97`) — the row the box was built with a hole for.
+ *
+ * What is worth a document here is the *absence*: that no portrait produces
+ * no element rather than a silhouette, which is the acceptance criterion and
+ * the opposite of what the tree node does on purpose. The `src` itself is
+ * decided in `lib/person-infobox.ts` and asserted there without a DOM.
+ */
+describe("the portrait", () => {
+  function figure(element: Element): HTMLElement | null {
+    return element.querySelector("figure");
+  }
+
+  it("renders a figure between the name and the table", () => {
+    const element = box({ portraitSrc: PORTRAIT_SRC });
+    const found = figure(element);
+    if (!found) throw new Error("no figure rendered");
+
+    // Source order is the reading order: name, portrait, table.
+    const children = [...element.children].map((child) =>
+      child.tagName.toLowerCase(),
+    );
+    expect(children).toEqual(["p", "figure", "table", "p"]);
+  });
+
+  it("renders nothing at all when there is no portrait", () => {
+    // Not an empty figure, not a placeholder silhouette — which would be a
+    // picture of somebody nobody uploaded. The tree node reserves its box for
+    // layout stability; an article is ordinary flow and needs no such thing.
+    const element = box({ portraitSrc: null });
+
+    expect(figure(element)).toBeNull();
+    expect(element.querySelector("img")).toBeNull();
+    expect(element.querySelector("svg")).toBeNull();
+  });
+
+  it("loads it through this application's own image route", () => {
+    // Never a storage URL: the sanitiser drops one and a signed one expires
+    // fifteen minutes after it is minted.
+    const image = box({ portraitSrc: PORTRAIT_SRC }).querySelector("img");
+    if (!image) throw new Error("no image rendered");
+
+    // `next/image` reassigns `img.src = img.src` after mount, which
+    // absolutises the attribute in jsdom; the path is what this application
+    // controls and what the criterion is about.
+    const raw = image.getAttribute("src") ?? "";
+    expect(new URL(raw, "http://localhost").pathname).toBe(PORTRAIT_SRC);
+  });
+
+  it("names whose face it is", () => {
+    const image = box({ portraitSrc: PORTRAIT_SRC }).querySelector("img");
+
+    expect(image?.getAttribute("alt")).toBe(`Portrait of ${ROSE.name}`);
+  });
+
+  it("reserves a square before the image arrives", () => {
+    // The box floats, so a figure that grew on load would re-wrap the article
+    // text around it. Nothing stores a photograph's dimensions, so the ratio
+    // is reserved rather than discovered. jsdom has no layout engine and
+    // cannot measure the reflow; the reserved ratio is the property that
+    // entails its absence.
+    const found = figure(box({ portraitSrc: PORTRAIT_SRC }));
+    const frame = found?.firstElementChild;
+
+    expect(frame?.className).toContain("aspect-square");
+    // Capped at the floated width, so the box below `sm` — where it is as
+    // wide as the article — does not open on a portrait that tall.
+    expect(frame?.className).toContain("max-w-infobox");
   });
 });
