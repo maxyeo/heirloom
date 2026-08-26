@@ -310,6 +310,30 @@ idempotent, so the second pass costs a parse and nothing else.
 This matters more here than it would elsewhere. With no RLS underneath and no
 CSP over the top, the allowlist is the whole defence.
 
+#### And the allowlist has to be _reached_
+
+`lib/sanitize-html.call-sites.test.ts` enumerates every
+`dangerouslySetInnerHTML` in `app`, `components` and `lib` from the syntax tree
+— both shapes that reach the sink, a JSX attribute and a property of that name
+in a props object — and fails if one sits in a file that never calls an entry
+point. Reading the tree rather than the text is what lets it tell a call site
+from the several docblocks in here that name the API in prose. Two of them
+are exempt today, each argued in that file: the sidebar boot script, which is a
+constant this repository wrote rather than anything a person typed, and the
+hatnote, whose markup has already been through the allowlist and would lose the
+`class` and `title` that paint its red links to a second pass.
+
+**An exemption covers a call site, not a file** (`YEO-96`). The site carries a
+marker comment naming an id; the test registers that id against that file, with
+the reason. Both halves have to agree, in both directions — a marker nobody
+registered fails, and a registered id that has stopped matching a call site
+fails too, so a stale entry is deleted rather than left to widen. The earlier
+version exempted the _filename_, which meant a second `dangerouslySetInnerHTML`
+added to an exempt component was invisible to the guard and caught only by
+somebody reading the note beside it. That is the same "the caller's discipline,
+enforced at a distance" the ZIP writer gave up in `YEO-93`, in a module where
+the failure it prevents is stored XSS.
+
 #### The one attribute whose _value_ is checked
 
 `img[src]` (E5-T3). An allowlist of tag and attribute names cannot say _which
