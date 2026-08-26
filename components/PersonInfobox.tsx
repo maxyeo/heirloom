@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { InfoboxPortrait } from "@/components/InfoboxPortrait";
+
 import {
   type InfoboxEvent,
   type InfoboxPerson,
@@ -49,13 +51,32 @@ import { personSearch } from "@/lib/tree-selection";
  * — the same answer, at the same breakpoint, that `.wiki-body figure` gives in
  * `app/globals.css`.
  *
- * ## Where the portrait goes
+ * ## The portrait
  *
- * The first row in the ticket is the portrait, and E5 — the images epic — is
- * unbuilt: there is no upload, no storage and no column to read one from. So
- * the row is left out rather than faked, and the seam is marked below: a
- * `<figure>` between the name and the table, which is where the reference
- * mockup puts it and what E5-T4 has to fill in.
+ * The first row in the ticket was the portrait, and it is now filled in
+ * (`YEO-97`): a `<figure>` between the name and the table, where the
+ * reference mockup puts it. E5-T4 (`YEO-44`) built the column; this reads it.
+ *
+ * **No silhouette when there is no portrait.** The figure is absent, not
+ * empty — the same rule every row below follows, and the reason the seam was
+ * left unfilled rather than stubbed in the first place: a placeholder here
+ * would be a picture of somebody nobody uploaded, on the majority of people
+ * in a real tree. The tree node deliberately answers the other way and draws
+ * a placeholder box regardless, because a canvas laid out by dagre must not
+ * move when a photograph loads; an article is ordinary flow with one box in
+ * it, so nothing depends on this figure existing.
+ *
+ * **A fixed square, and the full-resolution image.** The box floats, so a
+ * figure that grew when its image arrived would re-wrap the article text
+ * around it — the layout shift the ticket names. Nothing stores a
+ * photograph's dimensions, so the ratio is reserved rather than discovered:
+ * one square, `object-cover`, which is the crop the same face already gets on
+ * the tree and in the detail panel, so no framing is invented here that the
+ * author has not already seen. The thumbnail is not used — it exists because
+ * the canvas paints hundreds of faces into 48-pixel boxes, and this is one
+ * face in a box 328 across. `components/InfoboxPortrait.tsx` holds the
+ * figure, and holds the one case this file cannot see: a key whose image is
+ * no longer in the store.
  *
  * ## Why it is not a heading, and why the name is repeated
  *
@@ -102,12 +123,26 @@ export function PersonInfobox({
       </p>
 
       {/*
-        The portrait row (E5-T4, `YEO-44`) belongs here, between the name and
-        the table — a `<figure>` with the image and its caption, as the
-        reference mockup has it. E5 is unbuilt, so there is nothing to render
-        and nothing is rendered: no placeholder silhouette, which would be a
-        picture of somebody nobody uploaded.
+        The portrait (`YEO-97`), between the name and the table. Absent
+        entirely when there is none — see the header for why this box says
+        nothing rather than drawing a silhouette, and why the tree node
+        answers differently.
+
+        No `<figcaption>`: nothing anywhere records a caption for a portrait,
+        and the only text there is to put under it is the name printed
+        directly above it and in the page title above that. A figure without
+        one is the ordinary shape for a picture that is already labelled by
+        what surrounds it.
+
+        The figure itself is `components/InfoboxPortrait.tsx` rather than
+        markup here, and that file says why: an image is the one thing in this
+        box that can fail after the server has rendered it, noticing needs an
+        `onError`, and this component should not become a client component to
+        hold one.
       */}
+      {infobox.portraitSrc ? (
+        <InfoboxPortrait src={infobox.portraitSrc} name={infobox.name} />
+      ) : null}
 
       <table className="w-full border-collapse">
         <tbody>

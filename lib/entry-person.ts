@@ -34,10 +34,15 @@ import type { DatePrecision, DateQualifier } from "@/lib/family-graph";
  * and `sex` are the deliberate omissions — this states who somebody is and
  * when they lived, and `notes` in particular is authored prose that belongs in
  * the entry body rather than duplicated above it.
+ *
+ * `YEO-97` is the first widening since, and it was one edit: the infobox's
+ * portrait needed `portrait_key`, so the `select` and {@link EntryPerson}
+ * grew together in the same change. `portrait_thumb_key` is the new
+ * deliberate omission and is argued at the field below.
  */
 
 /**
- * The person an entry is about, and the dates that place them.
+ * The person an entry is about, the dates that place them, and their face.
  *
  * Each date arrives as the three columns that are only meaningful together —
  * the day, how far the source can be trusted (`qualifier`), and how much of it
@@ -50,6 +55,27 @@ export type EntryPerson = {
   id: string;
   givenName: string;
   surname: string | null;
+  /**
+   * The person's portrait, as a **storage key** (E5-T4, `YEO-44`), or null
+   * when nobody has uploaded one — which is most people in a real tree.
+   *
+   * A key rather than a URL, because that is all the column holds:
+   * `lib/storage.ts` mints signed URLs that expire after fifteen minutes, so
+   * a stored one would render for an afternoon and be broken for the rest of
+   * the row's life. `portraitSrc` in `lib/portrait.ts` is the single place a
+   * key becomes something an `<img src>` can hold.
+   *
+   * ## Why the thumbnail key is not here
+   *
+   * `individuals` holds two portrait columns, and the second one exists for
+   * the tree canvas: it paints a few hundred people at once into boxes 48
+   * pixels wide, so it cannot afford the originals (`lib/portrait.ts`). An
+   * entry is one page about one person showing one image, so that reason does
+   * not reach here, and the box below the name is 328 pixels wide — wider
+   * than a stored thumbnail's longest edge. Selecting a column no reader of
+   * this row would use is how a narrow select stops being one.
+   */
+  portraitKey: string | null;
   birthDate: string | null;
   birthDateQualifier: DateQualifier;
   birthDatePrecision: DatePrecision;
@@ -92,6 +118,7 @@ export async function getEntryPerson(
       id: schema.individuals.id,
       givenName: schema.individuals.givenName,
       surname: schema.individuals.surname,
+      portraitKey: schema.individuals.portraitKey,
       birthDate: schema.individuals.birthDate,
       birthDateQualifier: schema.individuals.birthDateQualifier,
       birthDatePrecision: schema.individuals.birthDatePrecision,
