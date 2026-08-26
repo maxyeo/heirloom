@@ -124,6 +124,12 @@ export function connectedFamilies(graph: FamilyGraph): string[][] {
      * outside `graph.people` is dropped too. The layout tolerates the second
      * — `setEdge` invents a dagre node for an id it has not seen — but there
      * is no person node for it, so it is nobody's family.
+     *
+     * Partners and children share this one expression, and the tests name the
+     * dangling case on each side separately anyway (`YEO-110`). Splitting the
+     * two apart is a plausible enough refactor, and a partner id is the one
+     * that can also be `null` — so it is the side a rewrite is most likely to
+     * reduce to a null check and leave the membership question behind.
      */
     const named = [
       union.partnerAId,

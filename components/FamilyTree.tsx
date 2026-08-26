@@ -29,6 +29,7 @@ import { PersonPanel } from "@/components/PersonPanel";
 import { PersonPortrait } from "@/components/PersonPortrait";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
+import { SkipLink } from "@/components/SkipLink";
 import { TreeLegend } from "@/components/TreeLegend";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
 import { UnionMerge } from "@/components/UnionMerge";
@@ -117,6 +118,25 @@ function UnionNode() {
 }
 
 const nodeTypes = { person: PersonNode, union: UnionNode };
+
+/**
+ * Where "skip the family tree" lands (`YEO-108`).
+ *
+ * `YEO-69` put every person in the tab order, which is what made the canvas
+ * reachable and also made it two hundred stops long on a family of two
+ * hundred. WCAG 2.4.1 asks for a way over a repeated block, and the block is
+ * the canvas — so the way over it belongs to the canvas rather than to
+ * `app/tree/page.tsx`. Anywhere the canvas is mounted it brings its own
+ * bypass, and the marker sits immediately after the flow, so that whatever is
+ * put below the canvas next is what the skip arrives in front of. Nothing
+ * currently is; that is precisely the assumption `YEO-69` recorded and this
+ * ticket exists to stop depending on.
+ *
+ * Not in `RESERVED_HEADING_IDS`, unlike the shell's ids: this one renders only
+ * on `/tree`, and an article body and a tree canvas are never in the same
+ * document to collide.
+ */
+export const TREE_SKIP_TARGET_ID = "tree-canvas-end";
 
 /**
  * The default for `entries`, hoisted so it is the same array on every render.
@@ -600,6 +620,14 @@ function FamilyTreeCanvas({
 
   return (
     <div ref={containerRef} className="relative h-full w-full">
+      {/*
+        The last stop before the family (`YEO-108`). It has to be
+        *before* the flow in the document, because that is the whole of what
+        "before" means to Tab — React Flow's nodes carry no `tabindex` above 0
+        and neither does this, so document order is the order.
+      */}
+      <SkipLink targetId={TREE_SKIP_TARGET_ID}>Skip the family tree</SkipLink>
+
       <ReactFlow
         nodes={nodes}
         edges={layout.edges}
@@ -639,6 +667,20 @@ function FamilyTreeCanvas({
         <Controls showInteractive={false} />
         <MiniMap pannable zoomable />
       </ReactFlow>
+
+      {/*
+        The other end of the link above: the first thing past the people.
+        `tabIndex={-1}` is what makes it a place focus can be *put* without
+        making it a place Tab stops, so a reader who ignores the link walks the
+        generations exactly as `YEO-69` left them.
+
+        It carries a line of text rather than being an empty box, because a
+        reader who cannot see the canvas is owed confirmation that the jump
+        happened — an unlabelled div announces nothing at all on arrival.
+      */}
+      <div id={TREE_SKIP_TARGET_ID} tabIndex={-1} className="sr-only">
+        End of the family tree
+      </div>
 
       {/*
         People on the canvas and nothing joining them (E3-T9). Hidden while a
