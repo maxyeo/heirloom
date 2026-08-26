@@ -1,4 +1,4 @@
-import { desc, gt, isNull } from "drizzle-orm";
+import { asc, desc, gt, isNull } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { formatPersonName } from "@/lib/person-format";
@@ -57,28 +57,51 @@ export async function listRecentChanges(
  *
  * ## Why this uses `pages_updated_at_idx`
  *
- * Because there is nothing in it that would stop the planner: the `ORDER BY`
- * is `updated_at` descending and nothing else, there is no `WHERE`, no join
- * and no aggregate, and the `LIMIT` is small. That is the exact shape a
- * B-tree on `(updated_at)` serves as a **backward index scan with no sort
- * step** — Postgres walks the index from its high end and stops after `limit`
- * rows, touching ten heap tuples rather than reading and sorting the table.
+ * `updated_at` descending leads the `ORDER BY`, there is no `WHERE`, no join
+ * and no aggregate, and the `LIMIT` is small. So a B-tree on `(updated_at)`
+ * answers the ordering directly: Postgres walks the index from its high end
+ * rather than reading the table and sorting it.
  *
  * The honest half, the same one `lib/people.ts` states for
  * `individuals_surname_idx`: on today's data — a family's few hundred entries
- * — the planner will very often choose a sequential scan and a sort anyway,
- * because at that size it is cheaper. That is not the index failing to be
- * used; it is the planner being right. What matters is that the query
- * *remains* index-eligible as the table grows, with no rewrite. That property
- * is asserted rather than asserted-in-a-comment: `lib/recent-changes.db.test.ts`
- * runs `EXPLAIN` with `enable_seqscan` off and checks the plan names
- * `pages_updated_at_idx` with no `Sort` node above it.
+ * — the planner will very often choose a sequential scan anyway, because at
+ * that size it is cheaper. That is not the index failing to be used; it is
+ * the planner being right. What matters is that the query *remains*
+ * index-eligible as the table grows, with no rewrite, and
+ * `lib/recent-changes.db.test.ts` asserts that as a plan rather than as a
+ * claim in this comment.
  *
  * Two things would quietly cost it. A `WHERE` on any other column, which
  * would make the index scan a filter over the whole table; and joining
  * `revisions` to find each entry's author, which is why the author is read
  * from `pages.updated_by` instead — see `RecentChange`'s `entry-changed` arm
  * for why the two cannot disagree.
+ *
+ * ## Why `id` is in the `ORDER BY`, even though it costs a sort node
+ *
+ * Because `updated_at` alone does not identify *which* ten rows this is. Ties
+ * are not hypothetical — a bulk update, a restore, or two saves in one
+ * transaction all give rows the same `now()` — and `ORDER BY` + `LIMIT` over
+ * a tie that straddles the boundary returns whichever rows the plan happened
+ * to produce. The feed would then drop a different entry on two requests that
+ * read identical data. That is the "make it total, not merely stable" rule
+ * `searchEntries` states for its own sort, applied one layer down; the
+ * in-memory tie-break in `mergeRecentChanges` cannot rescue it, because by
+ * then the dropped row is already gone.
+ *
+ * It is not free, and the trade is worth writing down. With `id` as a second
+ * key the plan gains a sort node above the index scan — an `Incremental Sort`
+ * on real data, which is only possible *because* the index already supplies
+ * the leading key, and which orders within each group of equal `updated_at`
+ * rather than sorting the table. The index still does the work; what it can
+ * no longer do is emit the final order with no step above it.
+ *
+ * Correctness wins that trade. "The feed silently drops a different row each
+ * time" is a defect a reader would eventually notice and never be able to
+ * explain; an incremental sort over a handful of rows sharing a millisecond
+ * is not measurable. The acceptance criterion is that the query uses
+ * `pages_updated_at_idx`, and it does — the db test asserts the plan reaches
+ * the rows through that index rather than through a sequential scan.
  *
  * The select is narrow for the reason `lib/pages.ts` gives for every one of
  * its own: `body_html` is the article, and a feed that renders four fields
@@ -96,7 +119,7 @@ async function listRecentlyChangedEntries(
       updatedBy: schema.pages.updatedBy,
     })
     .from(schema.pages)
-    .orderBy(desc(schema.pages.updatedAt))
+    .orderBy(desc(schema.pages.updatedAt), asc(schema.pages.id))
     .limit(limit);
 
   return rows.map((row) => ({
@@ -134,6 +157,26 @@ async function listRecentlyChangedEntries(
  * ever holds tens of thousands of people, `individuals_created_at_idx` is an
  * additive migration and this query does not change shape to use it.
  *
+ * ## Why `id` is in the `ORDER BY`, and why this query needs it most
+ *
+ * `created_at` is very far from unique here, and the proof is in this
+ * repository rather than in theory: `db/seed.ts` inserts every seeded person
+ * in a *single* statement, and `db/seed-family.ts` sets no `created_at` on
+ * any of them, so on a freshly seeded database the whole family shares one
+ * timestamp to the microsecond. There are more of them than
+ * `RECENT_CHANGES_LIMIT`, so a `LIMIT` with no tie-break would cut through
+ * the middle of that tie and return whichever rows the plan happened to
+ * produce — a different two people dropped after an autovacuum reorders the
+ * heap, with nothing on screen to suggest the list is arbitrary.
+ *
+ * `id` is unique, so `(created_at desc, id asc)` is total and the same
+ * database always answers the same way — `lib/entry-person.ts` makes exactly
+ * this argument for exactly this reason. It costs nothing here: there is no
+ * index on `created_at`, so this query was sorting already and the second key
+ * rides along in the sort that was happening anyway. That is the difference
+ * from `listRecentlyChangedEntries`, where the same fix does cost a plan step
+ * and its own docblock argues why it is still worth paying.
+ *
  * The name is joined here rather than in the component because
  * `formatPersonName` is the one place that knows a surname can be missing —
  * the same reason every other surface goes through it.
@@ -148,7 +191,7 @@ async function listRecentlyAddedPeople(limit: number): Promise<RecentChange[]> {
     })
     .from(schema.individuals)
     .where(isNull(schema.individuals.importId))
-    .orderBy(desc(schema.individuals.createdAt))
+    .orderBy(desc(schema.individuals.createdAt), asc(schema.individuals.id))
     .limit(limit);
 
   return rows.map((row) => ({
@@ -183,6 +226,12 @@ async function listRecentlyAddedPeople(limit: number): Promise<RecentChange[]> {
  * `findImportByDigest` asks "will pressing Import be refused?", and only a
  * live claim refuses anything. This asks "what happened?", and a released
  * import happened.
+ *
+ * `id` breaks ties on `imported_at` for the same reason it does in the two
+ * queries above — a release and the re-import it was for commit together, so
+ * two ledger rows genuinely can share an instant — and at the same price,
+ * which is none: `gedcom_imports` has one row per uploaded file and no index
+ * on `imported_at`, so this sorts either way.
  */
 async function listRecentImports(limit: number): Promise<RecentChange[]> {
   const rows = await db
@@ -195,7 +244,10 @@ async function listRecentImports(limit: number): Promise<RecentChange[]> {
     })
     .from(schema.gedcomImports)
     .where(gt(schema.gedcomImports.individualCount, 0))
-    .orderBy(desc(schema.gedcomImports.importedAt))
+    .orderBy(
+      desc(schema.gedcomImports.importedAt),
+      asc(schema.gedcomImports.id),
+    )
     .limit(limit);
 
   return rows.map((row) => ({

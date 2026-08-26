@@ -330,7 +330,7 @@ describe("listRecentChanges", () => {
 });
 
 describe("the entries query and pages_updated_at_idx", () => {
-  it("is served by a backward index scan with no sort step", async () => {
+  it("reaches the rows through the index rather than scanning the table", async () => {
     /*
       The ticket's second acceptance criterion, checked as a plan rather than
       asserted in prose.
@@ -338,13 +338,13 @@ describe("the entries query and pages_updated_at_idx", () => {
       `enable_seqscan = off` is what makes this a test of the *query* instead
       of a test of how many rows happen to be in the table. On a family's few
       hundred entries the planner will usually and correctly prefer a
-      sequential scan and a sort, so asserting the plan it picks by default
-      would assert the size of the fixture set. Turning the alternative off
-      asks the question this criterion is actually about: given the choice,
-      can this query be answered from `pages_updated_at_idx`? A query with a
-      `WHERE` on another column, or a join onto `revisions` to find each
-      entry's author, could not — and both are the natural next edits here,
-      which is why this is worth pinning down.
+      sequential scan, so asserting the plan it picks by default would assert
+      the size of the fixture set. Turning the alternative off asks the
+      question this criterion is actually about: given the choice, can this
+      query be answered from `pages_updated_at_idx`? A query with a `WHERE` on
+      another column, or a join onto `revisions` to find each entry's author,
+      could not — and both are the natural next edits here, which is why this
+      is worth pinning down.
 
       `set local` inside a transaction, because postgres.js pools connections:
       a bare `SET` could land on a different connection than the `EXPLAIN` and
@@ -357,7 +357,7 @@ describe("the entries query and pages_updated_at_idx", () => {
       const rows = await tx.execute<{ "QUERY PLAN": string }>(sql`
         explain select slug, title, updated_at, updated_by
         from pages
-        order by updated_at desc
+        order by updated_at desc, id asc
         limit 10
       `);
 
@@ -366,10 +366,94 @@ describe("the entries query and pages_updated_at_idx", () => {
 
     expect(plan).toContain("pages_updated_at_idx");
     // Backward, because the feed is newest-first — the index is ascending and
-    // Postgres walks it from the high end rather than sorting the result.
+    // Postgres walks it from the high end.
     expect(plan).toContain("Index Scan Backward");
-    // And no separate sort: the ordering comes out of the index itself, which
-    // is the whole point of the index being usable here.
-    expect(plan).not.toContain("Sort");
+
+    /*
+      Deliberately *not* `expect(plan).not.toContain("Sort")`, which is what
+      this assertion said while the query ordered on `updated_at` alone.
+
+      Adding `id` as a tie-break — which the query needs in order to return a
+      well-defined ten rows, see the function's docblock — puts a sort node
+      above the scan: an `Incremental Sort` on real data, ordering within each
+      group of equal `updated_at` rather than sorting the table. Asserting its
+      absence would be asserting that this query has no tie-break, which is
+      the bug rather than the property.
+
+      What the criterion actually asks is that the index is what finds the
+      rows, and the honest way to state that is that nothing here falls back
+      to reading the whole table.
+    */
+    expect(plan).not.toContain("Seq Scan");
+  });
+});
+
+describe("ties", () => {
+  /**
+   * The failure this file would otherwise not have caught, and the reason
+   * every source query orders on its id as well as on its timestamp.
+   *
+   * `db/seed.ts` inserts every seeded person in one statement with no
+   * explicit `created_at`, so a freshly seeded database holds a whole family
+   * sharing one timestamp to the microsecond — more people than
+   * `RECENT_CHANGES_LIMIT`. A `LIMIT` cutting through the middle of that tie
+   * with no tie-break returns whichever rows the plan happened to produce,
+   * and which people are missing from "recently added" changes when the heap
+   * is reordered. Nothing on screen would ever suggest the list was
+   * arbitrary.
+   *
+   * `mergeRecentChanges` cannot rescue this: by the time it sorts, the rows
+   * the database declined to return are already gone.
+   */
+  /*
+    Newer than every other fixture in this file, so that these three rows are
+    what a small limit actually reaches. Tied rows the merge would discard for
+    being old could not show whether the tie was cut deterministically.
+  */
+  const TIED_AT = new Date("2024-07-01T00:00:00.000Z");
+  const TIED_IDS = [
+    "00000000-0000-4000-8000-000000005811",
+    "00000000-0000-4000-8000-000000005812",
+    "00000000-0000-4000-8000-000000005813",
+  ];
+
+  beforeAll(async () => {
+    await db.insert(schema.individuals).values(
+      // Inserted newest-id-first, so that "the order they were written in"
+      // and "the order the query must return" disagree.
+      [...TIED_IDS].reverse().map((id, index) => ({
+        id,
+        givenName: `Tied ${index}`,
+        surname: "Whitfield",
+        createdAt: TIED_AT,
+      })),
+    );
+  });
+
+  afterAll(async () => {
+    await db
+      .delete(schema.individuals)
+      .where(inArray(schema.individuals.id, TIED_IDS));
+  });
+
+  it("cuts a tie the same way every time", async () => {
+    const tiedPeople = async () => {
+      // A limit that lands inside the tie group rather than around it, which
+      // is the only case where the tie-break can be observed at all.
+      const changes = await listRecentChanges(2);
+      return changes
+        .filter((change) => change.kind === "person-added")
+        .map((person) => person.personId)
+        .filter((id) => TIED_IDS.includes(id));
+    };
+
+    const first = await tiedPeople();
+    const second = await tiedPeople();
+
+    // Same answer twice, and specifically the *lowest* ids — `id asc` is the
+    // tie-break, so which rows survive the limit is a property of the data
+    // rather than of the plan.
+    expect(first).toEqual(second);
+    expect(first).toEqual([TIED_IDS[0], TIED_IDS[1]]);
   });
 });
