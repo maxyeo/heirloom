@@ -7,6 +7,7 @@ import { seedFamily } from "@/db/seed-family";
 import { CHILD_RELATIONS } from "@/lib/child-input";
 import { DATE_PRECISIONS, DATE_QUALIFIERS } from "@/lib/field-input";
 import { parseGedcom, parseGedcomText } from "@/lib/gedcom";
+import { decodeGedcom } from "@/lib/gedcom-encoding";
 import {
   type ExportChild,
   type ExportIndividual,
@@ -25,6 +26,7 @@ import {
 import {
   diffGedcom,
   roundTrip,
+  roundTripBytes,
   roundTripFile,
   splitRecords,
 } from "@/test/gedcom-round-trip";
@@ -52,20 +54,25 @@ import {
  * exports, re-imports and exports again gets their file back rather than a
  * slightly smaller one each time.
  *
- * ## Three subjects, and why each is here
+ * ## Four subjects, and why each is here
  *
  * - **The seeded family**, because it is the graph the data model was
  *   designed around and the only one in the repository with a remarriage
  *   chain in it. A round trip that dropped a union would leave that chain
  *   half-connected, which is the "loses a generation" failure the ticket is
  *   about.
- * - **A dirty third-party file**, because clean input is not the case that
- *   breaks. Real GEDCOM is dirty and E6 exists because of it.
- * - **Generated trees**, because the two fixtures between them contain a few
- *   dozen records and the defect this ticket found needed a union with an
- *   end reason of `divorce`, a type that was not `marriage`, and no start
- *   date — a combination neither fixture had. The generator is seeded, so it
- *   is a fixed set of trees rather than a different suite on every run.
+ * - **A dirty synthetic file**, because clean input is not the case that
+ *   breaks. Real GEDCOM is dirty and E6 exists because of it. Every piece of
+ *   dirt in it is dirt this pipeline has actually met.
+ * - **A real third-party file** — the published GEDCOM 5.5 torture test,
+ *   added by `YEO-92` — because the fixture above it is dirty in the ways
+ *   somebody here thought to imagine, and that is a smaller set than it
+ *   looks. It found three ANSEL letters this repository had never decoded.
+ * - **Generated trees**, because the fixtures between them still contain only
+ *   a few dozen records and the defect E7-T2 found needed a union with an end
+ *   reason of `divorce`, a type that was not `marriage`, and no start date —
+ *   a combination no fixture had. The generator is seeded, so it is a fixed
+ *   set of trees rather than a different suite on every run.
  *
  * ## Why none of it needs a database
  *
@@ -81,6 +88,14 @@ const FIXTURES = join(import.meta.dirname, "..", "test", "fixtures", "gedcom");
 
 function fixture(name: string): string {
   return readFileSync(join(FIXTURES, name), "utf8");
+}
+
+/**
+ * The same file undecoded, for the one fixture whose encoding is not ours to
+ * assume. See `roundTripBytes` in the harness.
+ */
+function fixtureBytes(name: string): Uint8Array {
+  return new Uint8Array(readFileSync(join(FIXTURES, name)));
 }
 
 /** The messages, which is what a failure should read as. */
@@ -372,12 +387,21 @@ describe("a dirty third-party file", () => {
    * `test/fixtures/gedcom/dirty-third-party.ged` is **synthetic**: it is
    * written to look like the output of a mid-2000s Windows genealogy program
    * rather than taken from one, because a real family's file is not ours to
-   * commit and the public sample files are either trivially clean or a
-   * torture test whose point is the parser rather than the round trip.
+   * commit.
    *
    * What makes it a fair subject is that every piece of dirt in it is dirt
    * this pipeline has actually met, and each is asserted below by the issue
    * it provokes — so the fixture cannot quietly stop being dirty.
+   *
+   * `YEO-92` put a genuinely third-party file beside it and **kept this one**,
+   * because the two fail differently and neither covers the other. This
+   * fixture is a catalogue of things that go wrong — a `31 FEB`, a range
+   * running backwards, a `CHIL` pointing at nothing — and the real file has
+   * none of them, being a valid file whose author was testing tag coverage
+   * rather than dirt. Every assertion below is about a message this pipeline
+   * produces, and losing them to replace a synthetic file with a real one
+   * would trade a suite that says what went wrong for one that says a
+   * stranger's file survived.
    */
   const text = fixture("dirty-third-party.ged");
   const trip = roundTripFile(text);
@@ -466,6 +490,137 @@ describe("a dirty third-party file", () => {
     expect(text).toContain("2 DATE FROM 1874 TO 1876");
     expect(trip.first).not.toContain("FROM 1874 TO 1876");
     expect(trip.first).toContain("2 DATE BET 1874 AND 1876\r\n");
+  });
+});
+
+describe("a real third-party file", () => {
+  /**
+   * `test/fixtures/gedcom/TGC55C.ged` is the **GEDCOM 5.5 Torture Test**:
+   * H. Eichmann's 1997 file as extended by J. A. Nairn, published since 2003
+   * and committed here unmodified. `test/fixtures/gedcom/README.md` records
+   * where it came from, when, and on what terms.
+   *
+   * It is here because the fixture beside it is synthetic (`YEO-92`). A
+   * synthetic file is dirty in the ways somebody thought to imagine, and
+   * `YEO-52` made the limit of that concrete: the `DIV`-without-`MARR` defect
+   * was found by 500 generated trees rather than by either fixture, because it
+   * needed a combination no hand-written file happened to contain. Generated
+   * trees cover the shapes this schema can hold. A file written by somebody
+   * who had never seen this application covers the shapes it cannot.
+   *
+   * It earned its place immediately. The file spells out the whole upper half
+   * of ANSEL a byte at a time, with a label on each — and three of the bytes
+   * came back as replacement characters that the standard does assign, which
+   * is the defect `lib/ansel.ts` was fixed for. Nothing invented the case
+   * because nobody here would have thought to write a fixture that recites a
+   * character set.
+   */
+  const bytes = fixtureBytes("TGC55C.ged");
+  const trip = roundTripBytes(bytes);
+
+  it("is read as ANSEL on the strength of its own declaration", () => {
+    // No byte order mark and no UTF-8 to fall back on: `HEAD.CHAR` is the
+    // only evidence, which is the branch `accents-ansel.ged` cannot test
+    // honestly because we encoded that one ourselves knowing the answer.
+    expect(trip.parsed.declaredEncoding).toBe("ANSEL");
+    expect(trip.parsed.encoding).toBe("ansel");
+    expect(bytes[0]).toBe("0".charCodeAt(0));
+  });
+
+  it("is terminated with carriage returns and nothing else", () => {
+    // Legal in 5.5, emitted by Mac-era software, and a form no other fixture
+    // here has. What comes out is CRLF regardless, as 5.5.1 requires.
+    expect(bytes.includes(0x0d)).toBe(true);
+    expect(bytes.includes(0x0a)).toBe(false);
+    expect(/[^\r]\n/.test(trip.first)).toBe(false);
+  });
+
+  it("decodes to real letters, with four refusals it names itself", () => {
+    // The file recites ANSEL byte by byte with a description of each, so what
+    // this application does with the character set is legible in the fixture
+    // rather than only in `lib/ansel.test.ts`. Every remaining replacement
+    // character sits on a line the file has already labelled "LDS extension"
+    // — an addition to ANSEL rather than part of it, with no Unicode
+    // character that means the same thing. That is the narrowing, and the
+    // count is exact so that a fifth one cannot appear unremarked.
+    const text = decodeGedcom(bytes).text;
+    const refused = text.split("\r").filter((line) => line.includes("�"));
+
+    expect(refused).toHaveLength(4);
+    for (const line of refused) expect(line).toContain("LDS extension");
+
+    // And the three that were refused before `YEO-92` and are not any more.
+    expect(text).toContain("ơ");
+    expect(text).toContain("ư");
+    expect(text).toContain("ß");
+    expect(text).toContain("1 COPR © 1997 by H. Eichmann");
+  });
+
+  it("uses 124 tag paths with nowhere to go, and reports every one", () => {
+    // "Nothing is dropped in silence" is a contract every other fixture tests
+    // against a handful of tags somebody chose. This file uses most of 5.5,
+    // including six whole record types with no table behind them and a vendor
+    // extension — and the exact count is asserted because the interesting
+    // regression is the list getting *shorter* without the parser learning
+    // anything.
+    const paths = trip.parsed.unknownTags.map((entry) => entry.path);
+
+    expect(paths).toHaveLength(124);
+    expect(paths).toEqual(expect.arrayContaining(["SUBM", "SUBN", "REPO"]));
+    expect(paths).toContain("HEAD._HME"); // a vendor tag from 1998
+    // The name pieces the mapping cannot keep. `@PERSON1@` is "Prof. Joseph
+    // 'Joe' Le Torture Jr." in the file and "Joseph Torture" in this tree, and
+    // these four entries are the difference being stated rather than lost.
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "INDI.NAME.NPFX",
+        "INDI.NAME.NICK",
+        "INDI.NAME.SPFX",
+        "INDI.NAME.NSFX",
+      ]),
+    );
+  });
+
+  it("provokes four narrowings and no complaint of any other kind", () => {
+    // The acceptance criterion is that whatever a real file exposes is either
+    // fixed or written down. These four are written down in `docs/gedcom.md`;
+    // the ANSEL gaps were the fixed ones. Asserting the length is what makes
+    // this an inventory rather than a sample: a fifth issue is a fifth thing
+    // this application does to somebody's file, and it should have to be
+    // added here on purpose.
+    const said = trip.imported.issues.map((issue) => issue.message);
+    const places = said.filter((message) =>
+      message.includes("nowhere to keep a place"),
+    );
+
+    expect(said).toHaveLength(4);
+    expect(said.join("\n")).toContain(
+      '"INT 1995 (from estimated age)" was interpreted from a phrase',
+    );
+    expect(said.join("\n")).toContain('"William John Smith" left out'); // 2 NAMEs
+    expect(places).toHaveLength(2); // the PLAC on MARR and the one on DIV
+  });
+
+  it("refuses nobody: every record it holds survives to the rows", () => {
+    // Unlike the synthetic fixture, which is written with a person the
+    // validators must decline. Nothing in a file this awkward happens to be
+    // a shape this schema refuses, which is worth knowing.
+    expect(trip.parsed.individuals).toHaveLength(15);
+    expect(trip.parsed.families).toHaveLength(7);
+    expect(trip.rows.individuals).toHaveLength(15);
+    expect(trip.rows.unions).toHaveLength(7);
+    expect(trip.rows.unionChildren).toHaveLength(10);
+  });
+
+  it("exports, imports and exports again byte for byte", () => {
+    expectRoundTrip(trip);
+  });
+
+  it("is a fixed point rather than merely settling on the second pass", () => {
+    const third = roundTrip(trip.rows);
+
+    expectRoundTrip(third);
+    expect(third.first).toBe(trip.first);
   });
 });
 

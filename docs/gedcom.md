@@ -797,12 +797,14 @@ the diff reports itself rather than passing as success.
 The seeded family (`db/seed-family.ts`), because it is the graph the data
 model was designed around and the only one in the repository with a remarriage
 chain — the case where a dropped union severs a branch and still leaves a file
-that looks like a family tree. The dirty third-party fixture, because clean
-input is not the case that breaks. The other fixtures, because they are cheap.
-And 500 seeded generated trees, canonicalised through `validateIndividual` and
-`validateUnion` so the domain is every tree this application can actually
-hold — which is what found the `DIV`-without-`MARR` defect, a combination
-neither fixture happened to contain.
+that looks like a family tree. The dirty synthetic fixture, because clean input
+is not the case that breaks. `TGC55C.ged`, because a fixture written here is
+dirty only in the ways somebody here imagined, and a stranger's file is not
+(`YEO-92`, and see "Fixtures" below for what it found). The other fixtures,
+because they are cheap. And 500 seeded generated trees, canonicalised through
+`validateIndividual` and `validateUnion` so the domain is every tree this
+application can actually hold — which is what found the `DIV`-without-`MARR`
+defect, a combination no hand-written fixture happened to contain.
 
 ## Nothing is dropped in silence
 
@@ -963,6 +965,14 @@ The character set is chosen in this order, and every override is reported:
 `ANSI` is not accepted as a synonym for anything. It meant Windows-1252, and
 mapping it to UTF-8 would mangle exactly the characters somebody chose it for.
 
+Four ANSEL bytes are deliberately left unread — `0xbe`, `0xbf`, `0xcd` and
+`0xce`, the LDS empty box, black box, midline e and midline o. They are
+additions to the character set rather than part of it, and no Unicode
+character means the same thing, so each decodes to a visible replacement
+character rather than to a lookalike that would read as correct. `YEO-92` is
+where a real file made that list exact; the same file is why `0xbc`, `0xbd`
+and `0xcf` are no longer on it.
+
 ## Fixtures
 
 `test/fixtures/gedcom/`, loaded with `readFileSync` from the tests in `lib/`.
@@ -974,19 +984,25 @@ that an inline string cannot.
 Malformed input stays inline, in `lib/gedcom.test.ts`. Four broken lines next
 to the assertion about them read better than a file you have to open.
 
-| Fixture                  | What it is for                                     |
-| ------------------------ | -------------------------------------------------- |
-| `family.ged`             | Two unions, four dates, every qualifier, one range |
-| `continuations-crlf.ged` | `\r\n`, `CONC`, `GIVN`/`SURN`, unknown tags        |
-| `accents-utf8.ged`       | Accented names in UTF-8                            |
-| `accents-ansel.ged`      | The same content, byte for byte, in ANSEL          |
-| `dirty-third-party.ged`  | Everything a real export gets wrong at once        |
+| Fixture                  | Whose it is | What it is for                                     |
+| ------------------------ | ----------- | -------------------------------------------------- |
+| `family.ged`             | ours        | Two unions, four dates, every qualifier, one range |
+| `continuations-crlf.ged` | ours        | `\r\n`, `CONC`, `GIVN`/`SURN`, unknown tags        |
+| `accents-utf8.ged`       | ours        | Accented names in UTF-8                            |
+| `accents-ansel.ged`      | ours        | The same content, byte for byte, in ANSEL          |
+| `dirty-third-party.ged`  | ours        | Everything a real export gets wrong at once        |
+| `TGC55C.ged`             | third party | Most of 5.5, written by a stranger                 |
+
+The last row is the only one this repository did not write, and the column
+exists to keep that distinction in front of whoever reads the table next. What
+each kind is good for is below; `test/fixtures/gedcom/README.md` records where
+the third-party one came from and on what terms.
+
+### The synthetic one
 
 `dirty-third-party.ged` is **synthetic**, and that is worth saying plainly: it
 is written to look like the output of a mid-2000s Windows genealogy program
-rather than taken from one. A real family's file is not ours to commit, and
-the public sample files are either trivially clean or a torture test whose
-subject is the parser rather than the round trip.
+rather than taken from one, because a real family's file is not ours to commit.
 
 What makes it a fair subject is that every piece of dirt in it is dirt this
 pipeline has actually met, and `lib/gedcom-round-trip.test.ts` asserts each
@@ -1003,9 +1019,70 @@ tags (`_UID`, `_STAT`, `RFN`, `OBJE`, `CHAN`), a `NOTE` folded over `CONC` and
 `FROM x TO y` period, and two people who are identical in every field the
 export sorts on.
 
-The last two are a matched pair, and that is what makes the binary one
-reviewable: the test asserts the two parse to **identical** individuals, so
-whatever `accents-ansel.ged` contains, it has to mean what its readable twin
-means. To regenerate it, encode the UTF-8 twin by decomposing each character
-(NFD) and writing each combining mark _before_ its base letter, using the
-table in `lib/ansel.ts`.
+### The accent pair
+
+`accents-utf8.ged` and `accents-ansel.ged` are a matched pair, and that is what
+makes the binary one reviewable: the test asserts the two parse to **identical**
+individuals, so whatever `accents-ansel.ged` contains, it has to mean what its
+readable twin means. To regenerate it, encode the UTF-8 twin by decomposing
+each character (NFD) and writing each combining mark _before_ its base letter,
+using the table in `lib/ansel.ts`.
+
+### The real one
+
+`TGC55C.ged` is the published **GEDCOM 5.5 Torture Test** — H. Eichmann's 1997
+file as extended by J. A. Nairn, committed unmodified by `YEO-92`.
+`test/fixtures/gedcom/README.md` beside it records the URL it was downloaded
+from, the date, the SHA-256 of both the file and the archive, and the licence:
+_"Feel free to copy and use this GEDCOM file for any non-commercial purpose."_
+That permission is narrower than this repository's MIT licence and is the one
+path in the tree MIT does not cover, which is why it is written down twice.
+
+Nobody in it is real. Its individuals are called "Joseph Tag Torture" and
+"Torture GEDCOM Matriarch"; the only genuine personal details are the two
+authors' own published contact addresses, in `SUBM` records this application
+drops. A fixture containing a real family would not be ours to commit however
+freely it was published.
+
+**Why a real file when there is already a dirty one.** Because the dirty one is
+dirty in the ways somebody here thought to imagine, and that is a smaller set
+than it looks. `YEO-52` proved the point at this application's own expense: the
+`DIV`-without-`MARR` defect was found by 500 generated trees, not by either
+hand-written fixture, because it needed a combination nobody happened to write
+down. A stranger's file is the other way to get combinations nobody here would
+invent — and this one is 2,198 lines using **124 tag paths this schema has
+nowhere to put**, including six whole record types and a vendor extension from
+1998, against the handful in every other fixture.
+
+**What it found.** Three ANSEL letters `lib/ansel.ts` had never decoded. The
+file recites the upper half of the character set a byte at a time with a label
+on each, which is not a thing anybody would write a fixture to do, and three of
+those bytes came back as replacement characters:
+
+| Byte   | Character             | What happened                                                                                                                                                          |
+| ------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0xbc` | ơ — small o with hook | Added. Its capital (`0xac`) was already in the table, so the gap was an asymmetry rather than a decision, and a Vietnamese name written in lower case lost its vowels. |
+| `0xbd` | ư — small u with hook | Added, for the same reason (`0xad`).                                                                                                                                   |
+| `0xcf` | ß — es zet            | Added. One unambiguous Unicode code point, so mapping it is not the kind of guess `lib/ansel.ts` refuses.                                                              |
+
+**What it narrows.** Four bytes stay unmapped, and the fixture labels them
+itself: `0xbe` empty box, `0xbf` black box, `0xcd` midline e, `0xce` midline o.
+All four are LDS additions to ANSEL rather than assignments the standard makes,
+and none has a Unicode character that means the same thing — so they decode to
+the visible replacement character, on the same reasoning as every other
+unassigned byte. `lib/gedcom-round-trip.test.ts` asserts there are exactly four
+of them and that each sits on a line the file has already marked "LDS
+extension", so a fifth cannot appear unremarked.
+
+Otherwise it reports four narrowings, all of them ones this page already lists:
+an `INT … (…)` date read from its phrase, a second `NAME` structure dropped,
+and a `PLAC` on each of `MARR` and `DIV` that a union has nowhere to keep. It
+refuses nobody, keeps all fifteen individuals and all seven families, and is a
+fixed point on the first export.
+
+**And the synthetic one is kept.** The two fail differently and neither covers
+the other. The torture test is a _valid_ file whose author was testing tag
+coverage: it has no `31 FEB`, no backwards range, no `CHIL` pointing at
+nothing. Every assertion in the dirty fixture's block is about a message this
+pipeline produces when a file is wrong, and replacing it would trade a suite
+that says what went wrong for one that says a stranger's file survived.
