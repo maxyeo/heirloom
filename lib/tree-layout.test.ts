@@ -104,6 +104,56 @@ function sampleGraph(): FamilyGraph {
   };
 }
 
+/**
+ * An archive that is not one tree (`YEO-103`).
+ *
+ * Two lineages nobody has joined and one person attached to nobody, which is
+ * what a GEDCOM import of two branches looks like on the first render and what
+ * `lib/tree-onboarding.ts` calls `unconnected` while somebody is still typing a
+ * tree in. `sampleGraph` above is a single connected family and always was, so
+ * every ordering test written before this ticket exercised the one case where
+ * dagre's rank is the whole answer.
+ *
+ * The ids carry their family as a prefix so the tab order can be read as a
+ * sequence of families below. `abbott-alone` sorts before every other id here
+ * on purpose: families come out in order of their smallest id, so a version of
+ * this that had no rule about people joined to nobody would tab to her first.
+ */
+function unjoinedArchive(): FamilyGraph {
+  return {
+    people: [
+      // Not in family order and not in id order: `getFamilyGraph` puts no
+      // `ORDER BY` on `individuals`.
+      person({ id: "birch-root", givenName: "Bertha" }),
+      person({ id: "abbott-alone", givenName: "Ada", surname: "Abbott" }),
+      person({ id: "ash-child", givenName: "Alec", sex: "male" }),
+      person({ id: "birch-spouse", givenName: "Basil", sex: "male" }),
+      person({ id: "ash-root", givenName: "Agnes" }),
+      person({ id: "ash-grandchild", givenName: "Amy" }),
+      person({ id: "birch-child", givenName: "Bram", sex: "male" }),
+      person({ id: "ash-spouse", givenName: "Arthur", sex: "male" }),
+    ],
+    unions: [
+      union({
+        id: "u-ash-1",
+        partnerAId: "ash-root",
+        partnerBId: "ash-spouse",
+      }),
+      union({ id: "u-ash-2", partnerAId: "ash-child", partnerBId: null }),
+      union({
+        id: "u-birch-1",
+        partnerAId: "birch-root",
+        partnerBId: "birch-spouse",
+      }),
+    ],
+    childLinks: [
+      { unionId: "u-ash-1", childId: "ash-child", relation: "biological" },
+      { unionId: "u-ash-2", childId: "ash-grandchild", relation: "biological" },
+      { unionId: "u-birch-1", childId: "birch-child", relation: "biological" },
+    ],
+  };
+}
+
 function person(
   overrides: Partial<FamilyGraph["people"][number]> & {
     id: string;
@@ -171,6 +221,16 @@ function edgeById(edges: Edge[], id: string): Edge {
   const found = edges.find((edge) => edge.id === id);
   if (!found) throw new Error(`no edge produced for "${id}"`);
   return found;
+}
+
+/** The people, in the order React Flow hands them to the browser. */
+function peopleInTabOrder(nodes: Node[]): Node[] {
+  return nodes.filter((node) => node.type === "person");
+}
+
+/** Which family each stop belongs to, read off the id prefix. */
+function familyOf(node: Node): string {
+  return node.id.replace(/-.*$/, "");
 }
 
 /** Dagre positions from centres; the layout converts to React Flow's top-left. */
@@ -471,6 +531,100 @@ describe("layoutFamilyGraph", () => {
     expect(
       nodes.every((node) => node.type !== "union" || node.focusable === false),
     ).toBe(true);
+  });
+
+  it("finishes one family before it starts the next", () => {
+    const { nodes } = layoutFamilyGraph(unjoinedArchive());
+    const families = peopleInTabOrder(nodes).map(familyOf);
+
+    /**
+     * The bug this ticket is about, stated as a property (`YEO-103`).
+     *
+     * Dagre ranks every connected component from its own root, so both roots
+     * here land on rank 0 and sorting on `y` alone interleaved them:
+     * `ash-root, birch-root, abbott-alone, ash-child, birch-child, …`. Tab
+     * crossed between two unrelated lineages a generation at a time.
+     *
+     * Asserted as "each family occupies one unbroken run" rather than as a
+     * list of names, for the reason the walk above gives: which family is
+     * first is this file's business, but where dagre puts two siblings inside
+     * one is not.
+     */
+    const runs = families.filter(
+      (family, index) => index === 0 || families[index - 1] !== family,
+    );
+    expect(runs).toEqual([...new Set(families)]);
+
+    // And concretely, on this fixture: the Ash family in full, then the Birch
+    // family in full, then the one person joined to nobody.
+    expect(runs).toEqual(["ash", "birch", "abbott"]);
+  });
+
+  it("keeps each family in generation order inside its own run", () => {
+    const { nodes } = layoutFamilyGraph(unjoinedArchive());
+    const people = peopleInTabOrder(nodes);
+
+    // The E10-T5 rule, now scoped to a family rather than to the canvas: the
+    // grouping above must not have cost the order *within* a group. Neighbours
+    // in different families are skipped, because dagre's ranks are not
+    // comparable across components — which is the whole reason for the fix.
+    for (const [before, after] of people
+      .slice(0, -1)
+      .map((node, index) => [node, people[index + 1]] as const)) {
+      if (familyOf(before) !== familyOf(after)) continue;
+      const sameRank = before.position.y === after.position.y;
+      expect(
+        sameRank
+          ? before.position.x < after.position.x
+          : before.position.y < after.position.y,
+      ).toBe(true);
+    }
+  });
+
+  it("tabs to somebody joined to nobody last, not into the middle of a family", () => {
+    const { nodes } = layoutFamilyGraph(unjoinedArchive());
+    const people = peopleInTabOrder(nodes).map((node) => node.id);
+
+    // The decision `lib/family-components.ts` makes explicitly, asserted from
+    // the canvas: a loose end is where a keyboard finishes.
+    expect(people.at(-1)).toBe("abbott-alone");
+  });
+
+  it("tabs the same way whichever order the rows arrived in", () => {
+    // `getFamilyGraph` reads `individuals` with no `ORDER BY`, so the same
+    // archive can arrive in a different order tomorrow. The families it tabs
+    // through, and the order it tabs through them in, must not move when it
+    // does — which is why the family key is the smallest id in the family and
+    // not anything dagre decided from insertion order.
+    const forwards = unjoinedArchive();
+    const backwards: FamilyGraph = {
+      people: [...forwards.people].reverse(),
+      unions: [...forwards.unions].reverse(),
+      childLinks: [...forwards.childLinks].reverse(),
+    };
+
+    const families = (graph: FamilyGraph) => [
+      ...new Set(
+        peopleInTabOrder(layoutFamilyGraph(graph).nodes).map(familyOf),
+      ),
+    ];
+
+    expect(families(backwards)).toEqual(families(forwards));
+    expect(families(backwards)).toEqual(["ash", "birch", "abbott"]);
+  });
+
+  it("still puts the union markers after every person on a canvas of several families", () => {
+    const archive = unjoinedArchive();
+    const { nodes } = layoutFamilyGraph(archive);
+
+    // The people are grouped by family now, and the unions are still not
+    // sequenced among them at all — they are `focusable: false`, so they are
+    // no family's tab stop.
+    const firstUnion = nodes.findIndex((node) => node.type === "union");
+    expect(firstUnion).toBe(archive.people.length);
+    expect(nodes.slice(firstUnion).every((node) => node.type === "union")).toBe(
+      true,
+    );
   });
 
   it("says what a line means with a dash and never with a colour", () => {
