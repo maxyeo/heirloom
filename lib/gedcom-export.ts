@@ -126,6 +126,22 @@ import type { UnionFields } from "./union-input";
  * this module inventing a recovery policy that the import side deliberately
  * does not have, and hiding a broken row rather than surfacing it.
  *
+ * ## The `@` escape
+ *
+ * `@` is GEDCOM's only metacharacter, and 5.5.1 spells a literal one inside a
+ * value by doubling it. `emit` does that to every value it writes, and
+ * `emitPointer` writes the pointers that must not have it done to them — the
+ * split between those two functions is the whole of the rule, and each says
+ * why at its own definition.
+ *
+ * Neither this side nor the unescaping in `lib/gedcom-lines.ts` may be changed
+ * without the other. Until `YEO-105` both were missing, and the two absences
+ * cancelled: a surname of `O@@Brien` was read as `O@@Brien` and written back
+ * as `O@@Brien`, a perfect fixed point over a name that was wrong in the
+ * database the whole time. That is the defect shape a round trip cannot see,
+ * and `lib/gedcom-round-trip.test.ts` now asserts the *value* as well as the
+ * bytes because of it.
+ *
  * ## Pure, like everything else in this pipeline
  *
  * No `@/db`, no React, no npm package — `lib/gedcom.purity.test.ts` walks this
@@ -330,7 +346,7 @@ function writeHeader(lines: string[]): void {
   // An APPROVED_SYSTEM_ID, which is a single token rather than a title.
   emit(lines, 1, "SOUR", "HEIRLOOM");
   emit(lines, 2, "NAME", "Heirloom");
-  emit(lines, 1, "SUBM", pointer(submitter));
+  emitPointer(lines, 1, "SUBM", submitter);
   emit(lines, 1, "GEDC");
   emit(lines, 2, "VERS", "5.5.1");
   emit(lines, 2, "FORM", "LINEAGE-LINKED");
@@ -380,7 +396,7 @@ function writeIndividual(
     const family = index.positionOfUnion.get(link.unionId);
     if (family === undefined) continue;
 
-    emit(lines, 1, "FAMC", pointer(familyXref(family)));
+    emitPointer(lines, 1, "FAMC", familyXref(family));
 
     // `PEDI` lives on the child's `FAMC` and not on the family's `CHIL`,
     // which is finding four of E6-T2: one column, written on two records.
@@ -389,7 +405,7 @@ function writeIndividual(
   }
 
   for (const family of index.familiesOfPartner.get(individual.id) ?? []) {
-    emit(lines, 1, "FAMS", pointer(familyXref(family)));
+    emitPointer(lines, 1, "FAMS", familyXref(family));
   }
 }
 
@@ -520,7 +536,7 @@ function writeFamily(
     const child = index.positionOfIndividual.get(link.childId);
     if (child === undefined) continue;
 
-    emit(lines, 1, "CHIL", pointer(individualXref(child)));
+    emitPointer(lines, 1, "CHIL", individualXref(child));
   }
 
   writeMarriage(lines, union);
@@ -539,7 +555,7 @@ function writePartner(
   const position = positionOfIndividual.get(partnerId);
   if (position === undefined) return;
 
-  emit(lines, 1, tag, pointer(individualXref(position)));
+  emitPointer(lines, 1, tag, individualXref(position));
 }
 
 /**
@@ -931,9 +947,25 @@ function invert<Member extends string>(
   return inverted;
 }
 
-/** `@I1@` — an xref used as a value. */
-function pointer(xref: string): string {
-  return `@${xref}@`;
+/**
+ * `1 HUSB @I1@` — a line whose value is a pointer rather than text.
+ *
+ * Its own function rather than `emit(lines, 1, "HUSB", `@${xref}@`)`, because
+ * `emit` escapes and this must not be escaped: the `@`s here are the format's
+ * delimiters, and doubled they would spell out the *name* `@I1@` and point at
+ * nobody. That is the export half of the hazard `lib/gedcom-lines.ts` guards
+ * on the way back in (`YEO-105`).
+ *
+ * No continuation handling, because an xref cannot need it — this module
+ * mints them (`I1`, `F1`, `U1`) and 5.5.1 caps one at 20 characters anyway.
+ */
+function emitPointer(
+  lines: string[],
+  level: number,
+  tag: string,
+  xref: string,
+): void {
+  lines.push(`${level} ${tag} @${xref}@`);
 }
 
 /** `0 @I1@ INDI` — the line that opens a record. */
@@ -957,6 +989,12 @@ function record(lines: string[], xref: string, tag: string): void {
  * A value of `null` writes a bare tag — `1 BIRT` — which is a line that says a
  * structure follows rather than one whose value is empty. `lib/gedcom-lines.ts`
  * makes the same distinction from the other side and gives its reason there.
+ *
+ * Every value written through here is escaped, and a value that is a pointer
+ * must therefore go through `emitPointer` instead. That is the direction of
+ * the rule on purpose: the values this module writes are somebody's names and
+ * places, of which any number may contain an `@`, and the pointers are five
+ * call sites this file mints itself.
  */
 function emit(
   lines: string[],
@@ -969,7 +1007,7 @@ function emit(
     return;
   }
 
-  for (const [index, segment] of value.split("\n").entries()) {
+  for (const [index, segment] of escapeValue(value).split("\n").entries()) {
     const continued = index > 0;
 
     for (const [position, text] of chunk(segment).entries()) {
@@ -989,6 +1027,23 @@ function emit(
       );
     }
   }
+}
+
+/**
+ * Double every `@`, which is how 5.5.1 puts a literal one inside a value.
+ *
+ * Before `chunk` rather than after, so the doubling is counted against the
+ * line length and cannot push a line past 255 characters. The consequence is
+ * that a `@@` can land across a `CONC` boundary, which is legal and which
+ * `lib/gedcom-lines.ts` reads correctly because it unescapes the assembled
+ * value rather than each physical line — see its docblock, where the same
+ * ordering is argued from the other end.
+ *
+ * A value is escaped exactly once. Nothing upstream escapes, because nothing
+ * upstream is GEDCOM: the columns hold a person's name as a person wrote it.
+ */
+function escapeValue(value: string): string {
+  return value.replaceAll("@", "@@");
 }
 
 /**

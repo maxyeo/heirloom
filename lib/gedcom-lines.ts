@@ -41,6 +41,34 @@ import type { GedcomIssue } from "./gedcom-report";
  * here, into the value of the line they continue, so nothing downstream can
  * encounter one and have to decide again.
  *
+ * ## The `@` escape, and the order it forces
+ *
+ * `@` is the format's only metacharacter: it delimits a cross-reference, and
+ * 5.5.1 says a literal one inside a *value* is written doubled. A surname
+ * written `O@@Brien` in the file is the name `O@Brien`, and reading it any
+ * other way stores a name nobody has (`YEO-105`).
+ *
+ * Undoing that is one string replacement, and the only interesting thing
+ * about it is **when**. It happens last, per node, after the structure has
+ * been taken off the line and after `CONT`/`CONC` have been folded:
+ *
+ * - **After the line is split**, because the `@`s around `@I1@` in `0 @I1@
+ *   INDI` are delimiters and not content. Unescaping first would leave
+ *   `@@I1@@` looking exactly like a cross-reference the file never contained.
+ * - **After the continuations are folded**, because `@@` is two characters and
+ *   a writer that breaks at a fixed column may break between them. A replace
+ *   applied per physical line would see two lone `@`s and undo neither.
+ *
+ * The same ordering is why a pointer value is resolved from the value *as the
+ * file wrote it* and kept on the node — see `pointer` below. By the time a
+ * caller has the unescaped value, `@@I1@@` and `@I1@` have both become
+ * `@I1@` and the difference between a name and a cross-reference is gone.
+ *
+ * `lib/gedcom-export.ts` puts the doubling back, and neither side may be
+ * changed alone: they were both missing until `YEO-105`, and the two absences
+ * cancelled so exactly that the round trip in `lib/gedcom-round-trip.test.ts`
+ * was a fixed point on the wrong value.
+ *
  * ## Line endings
  *
  * `\r\n`, `\n` and a bare `\r` all split. The first two because GEDCOM files
@@ -66,15 +94,34 @@ export type GedcomNode = {
   tag: string;
   /**
    * Everything after the tag, with `CONT`/`CONC` continuations already folded
-   * in, or `null` when the line had no value at all.
+   * in and `@@` unescaped to `@`, or `null` when the line had no value at all.
    *
    * `null` rather than `""` because the difference is real: `1 BIRT` says a
    * birth is recorded and nothing about it is, whereas `1 NOTE` followed by an
    * empty value says somebody left the note blank. Untrimmed, because at this
    * level there is no way to know whether a trailing space is noise or part of
    * a continued value — trimming belongs where the tag's meaning is known.
+   *
+   * Unescaped, though, because that is not a matter of interpretation: `@@` is
+   * how the format spells one `@` and a consumer that had to undo it would be
+   * doing grammar, which is this module's job. See the module docblock for why
+   * it can only be done here and only in this order.
    */
   value: string | null;
+  /**
+   * The record this value points at, delimiters removed — `I1` for a value of
+   * `@I1@` — or `null` when the value is not a pointer.
+   *
+   * On the node rather than computed from `value` by whoever wants it, because
+   * by then it cannot be: `value` has been unescaped, and `@@I1@@` — which is
+   * the *text* `@I1@` and points at nobody — has become indistinguishable from
+   * a real pointer. Deciding it here, from the value exactly as the file wrote
+   * it, is what stops an escaped `@` from inventing a cross-reference.
+   *
+   * Decided after `CONT`/`CONC` folding for the same reason the unescaping is:
+   * a pointer split across a continuation is still one pointer.
+   */
+  pointer: string | null;
   /** 1-based line number in the file, for the import report. */
   line: number;
   children: GedcomNode[];
@@ -154,6 +201,7 @@ export function readGedcomTree(text: string): GedcomTree {
         xref: xref ?? null,
         tag,
         value: value ?? null,
+        pointer: null,
         line,
         children: [],
       };
@@ -189,6 +237,7 @@ export function readGedcomTree(text: string): GedcomTree {
       xref: xref ?? null,
       tag,
       value: value ?? null,
+      pointer: null,
       line,
       children: [],
     };
@@ -197,7 +246,29 @@ export function readGedcomTree(text: string): GedcomTree {
     stack[level] = node;
   }
 
+  // Only now, with every continuation folded in, is there such a thing as a
+  // whole value to read. See the module docblock: both of the things this pass
+  // does are wrong if they are done a line at a time.
+  for (const record of records) readValues(record);
+
   return { records, issues };
+}
+
+/**
+ * Settle a node's value and everything under it: is it a pointer, and what
+ * does it say once the escape is undone.
+ *
+ * The two questions are asked in this order and cannot be swapped. Recursive
+ * rather than iterative because GEDCOM nests three or four deep in practice
+ * and 5.5.1 caps a level number at two digits.
+ */
+function readValues(node: GedcomNode): void {
+  if (node.value !== null) {
+    node.pointer = readPointer(node.value);
+    node.value = unescapeValue(node.value);
+  }
+
+  for (const child of node.children) readValues(child);
 }
 
 /**
@@ -207,12 +278,28 @@ export function readGedcomTree(text: string): GedcomTree {
  * all — which is a real case rather than a defensive one: `1 HUSB` with no
  * value, or a file that writes a name where a pointer belongs. The caller
  * turns `null` into an issue against the tag it was expecting.
+ *
+ * `POINTER` cannot match an escaped `@` — its body excludes `@` — so a value
+ * of `@@I1@@` is read as text and not as a pointer, which is the whole point
+ * of asking before unescaping.
  */
-export function readPointer(value: string | null): string | null {
-  if (value === null) return null;
-
+function readPointer(value: string): string | null {
   const match = POINTER.exec(value.trim());
   return match === null ? null : match[1];
+}
+
+/**
+ * Undo the format's one escape: `@@` is a literal `@`.
+ *
+ * Left to right and non-overlapping, which is what `replaceAll` does and what
+ * the escaping is defined as: `@@@@` is an escaped `@@` and comes back as two
+ * characters, not one. A lone `@` — which no conforming writer emits but which
+ * real files are full of, in email addresses most of all — is left exactly as
+ * it is rather than treated as an error: this layer reports lines it cannot
+ * parse, and a value it can parse is not one of them.
+ */
+function unescapeValue(value: string): string {
+  return value.replaceAll("@@", "@");
 }
 
 /** Fold one continuation line into the value it continues. */

@@ -15,6 +15,7 @@ import {
   type GedcomExportInput,
   writeGedcom,
 } from "@/lib/gedcom-export";
+import { type GedcomNode, readGedcomTree } from "@/lib/gedcom-lines";
 import { mapGedcom } from "@/lib/gedcom-map";
 import { SEXES, validateIndividual } from "@/lib/individual-input";
 import { rowsFromMapping } from "@/lib/import-rows";
@@ -101,6 +102,20 @@ function fixtureBytes(name: string): Uint8Array {
 /** The messages, which is what a failure should read as. */
 function messages(divergences: { message: string }[]): string[] {
   return divergences.map((divergence) => divergence.message);
+}
+
+/**
+ * Every value in a parsed file, however deep, as one searchable string.
+ *
+ * For the `@` escape, which the mapping cannot be asked about: the tags the
+ * torture test escapes an `@` under are `ADDR` and `NOTE`, and this
+ * application keeps neither. The grammar layer is where the file's own
+ * escaping is visible, so that is the layer this reads.
+ */
+function everyValue(nodes: readonly GedcomNode[]): string {
+  return nodes
+    .flatMap((node) => [node.value ?? "", everyValue(node.children)])
+    .join("\n");
 }
 
 /**
@@ -601,6 +616,29 @@ describe("a real third-party file", () => {
     expect(places).toHaveLength(2); // the PLAC on MARR and the one on DIV
   });
 
+  it("has its doubled at-signs read as the single ones they spell", () => {
+    /**
+     * The fixture that found `YEO-105`, tested against the thing it was
+     * written to catch. It escapes an `@` the way 5.5.1 says to in four
+     * places, and then — being a torture test — explains in prose what it
+     * expects a reader to do about it:
+     *
+     * > If all "at" signs above appear above as 2 or 4 at signs, that GEDCOM
+     * > software is not converting double at signs to single at signs.
+     *
+     * This repository was that software until now. The last assertion is the
+     * pleasing one: the file escapes a literal `@@` as `@@@@`, so a reader
+     * that halved everything blindly would fail it in the other direction.
+     */
+    const values = everyValue(readGedcomTree(decodeGedcom(bytes).text).records);
+
+    expect(values).toContain("email: h.eichmann@mbox.iqo.uni-hannover.de");
+    expect(values).toContain("or: heiner_eichmann@h.maus.de");
+    expect(values).toContain("A single @ sign in some notes");
+    expect(values).toContain('the "@" sign should appear in any text');
+    expect(values).toContain('as double "@@" signs');
+  });
+
   it("refuses nobody: every record it holds survives to the rows", () => {
     // Unlike the synthetic fixture, which is written with a person the
     // validators must decline. Nothing in a file this awkward happens to be
@@ -621,6 +659,83 @@ describe("a real third-party file", () => {
 
     expectRoundTrip(third);
     expect(third.first).toBe(trip.first);
+  });
+});
+
+/**
+ * A value with an `@` in it (`YEO-105`).
+ *
+ * The one thing asserted in this file that is not about bytes, and it is here
+ * because of a defect the fixed point structurally could not see.
+ *
+ * `lib/gedcom-lines.ts` never undid GEDCOM's `@@` escape and
+ * `lib/gedcom-export.ts` never put it back, so a surname of `O@@Brien` parsed
+ * to `O@@Brien` and exported as `O@@Brien`. The two errors cancelled exactly:
+ * the file was a perfect fixed point, every assertion above passed, and the
+ * database held a name nobody has for as long as it took somebody to read the
+ * torture test by hand.
+ *
+ * The generated trees below could not see it either, and for a sharper reason
+ * worth writing down: their values reach the file through the same encoder,
+ * so whatever the encoder leaves out the generator leaves out too, and the
+ * trip agrees with itself about the omission. A round trip proves that a
+ * pipeline is *self-consistent*. It cannot prove the value in the middle is
+ * the value that went in — only an assertion on that value can, which is what
+ * this describe is.
+ */
+describe("a value with an @ in it", () => {
+  const givenName = "@home";
+  const surname = "O@Brien";
+  const birthPlace = "St @ Mary, Ceredigion";
+
+  const trip = roundTrip({
+    individuals: [
+      person(1, { givenName, surname, birthPlace }),
+      person(2, { givenName: "Mary", surname: "Byrne" }),
+    ],
+    unions: [union(100, { partnerAId: id(1), partnerBId: id(2) })],
+    unionChildren: [],
+  });
+
+  it("exports, imports and exports again byte for byte", () => {
+    // The property the old code also had, and which is why it was not enough.
+    expectRoundTrip(trip);
+  });
+
+  it("writes the @ doubled, and the pointers' @s single", () => {
+    expect(trip.first).toContain("2 GIVN @@home\r\n");
+    expect(trip.first).toContain("2 SURN O@@Brien\r\n");
+    expect(trip.first).toContain("2 PLAC St @@ Mary, Ceredigion\r\n");
+    expect(trip.first).toMatch(/1 HUSB @I\d+@\r\n/);
+  });
+
+  it("comes back as the same value and not merely as the same bytes", () => {
+    const back = trip.rows.individuals.find((row) => row.surname === surname);
+
+    expect(back).toBeDefined();
+    expect(back?.givenName).toBe(givenName);
+    expect(back?.birthPlace).toBe(birthPlace);
+  });
+
+  it("puts the doubled spelling nowhere in the rows", () => {
+    // The inverse of the assertion above, and the one that fails loudest on
+    // the code this replaced: `@@` is a thing files contain and columns do
+    // not.
+    const stored = trip.rows.individuals.flatMap((row) => [
+      row.givenName,
+      row.surname,
+      row.birthPlace,
+    ]);
+
+    expect(stored.join("\n")).not.toContain("@@");
+  });
+
+  it("keeps the family connected, so nothing read an escape as a delimiter", () => {
+    // The other half of the ordering: an `@` that reached the xref parse
+    // would have made `@I1@` unreadable and left this union with no partners.
+    expect(trip.rows.unions).toHaveLength(1);
+    expect(trip.rows.unions[0].partnerAId).not.toBeNull();
+    expect(trip.rows.unions[0].partnerBId).not.toBeNull();
   });
 });
 
@@ -829,6 +944,13 @@ function samePerson(
  * text that looks like a GEDCOM line, text that looks like a pointer, a
  * slash (which is `NAME`'s own delimiter), and two spellings of the same
  * accented letter (composed and decomposed).
+ *
+ * The three containing an `@` were here before `YEO-105` and passed anyway,
+ * which is the limit of the property rather than of the pool: the generator
+ * writes its values through the same encoder the trip reads them back with,
+ * so an escape neither side performed was invisible to both. They exercise
+ * the escaping now. The assertion that the value is *unchanged* is above, in
+ * "a value with an `@` in it", and had to be written by hand.
  */
 const NASTY = [
   "John",
@@ -848,6 +970,7 @@ const NASTY = [
   "Mc/Donald",
   "@home",
   "@@x",
+  "O@Brien",
   "0 HEAD",
   "1 NAME fake",
   "José",

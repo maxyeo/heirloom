@@ -3,7 +3,7 @@ import {
   readDeclaredCharacterSet,
   type GedcomEncoding,
 } from "./gedcom-encoding";
-import { readGedcomTree, readPointer, type GedcomNode } from "./gedcom-lines";
+import { readGedcomTree, type GedcomNode } from "./gedcom-lines";
 import {
   summariseUnknownTags,
   type GedcomIssue,
@@ -926,14 +926,22 @@ function readInterpretedDate(
   };
 }
 
-/** `HUSB` or `WIFE`: at most one, and it has to be a pointer. */
+/**
+ * `HUSB` or `WIFE`: at most one, and it has to be a pointer.
+ *
+ * The pointer is read off the node rather than parsed out of `node.value`
+ * here, and the three readers below do the same. `lib/gedcom-lines.ts` decided
+ * it while it still had the value as the file wrote it; a value of `@@I1@@` is
+ * the name `@I1@` and is not a pointer, and by the time it reaches this module
+ * the escape is gone and nothing here could tell.
+ */
 function readPartner(
   node: GedcomNode,
   path: string,
   existing: string | null,
   issues: GedcomIssue[],
 ): string | null {
-  const pointer = readPointer(node.value);
+  const { pointer } = node;
 
   if (pointer === null) {
     issues.push({
@@ -963,7 +971,7 @@ function collectPointer(
   into: string[],
   issues: GedcomIssue[],
 ): void {
-  const pointer = readPointer(node.value);
+  const { pointer } = node;
 
   if (pointer === null) {
     issues.push({
@@ -997,7 +1005,7 @@ function readChildLink(
   issues: GedcomIssue[],
   unknown: Sighting[],
 ): void {
-  const pointer = readPointer(node.value);
+  const { pointer } = node;
 
   if (pointer === null) {
     issues.push({
