@@ -126,6 +126,15 @@ export async function savePageAction(
      * payloads, once per save.
      */
     revalidatePath("/wiki/category/[slug]", "page");
+
+    /**
+     * And the index of every category, which a save can genuinely add a row
+     * to: filing an entry under a name nothing used before *creates* the
+     * category. The same argument as `/wiki` two blocks up — an author who
+     * invents a category and then opens "All categories" would otherwise be
+     * served the payload fetched before they invented it.
+     */
+    revalidatePath("/wiki/category");
   }
 
   return result;
@@ -321,6 +330,16 @@ export async function restoreRevisionAction(
   // And the index (E1-T9), which shows this entry's title and the date it last
   // changed — a restore can move both.
   revalidatePath("/wiki");
+  /**
+   * And every category listing (E11-T8, `YEO-78`). Not because a restore
+   * re-files anything — it cannot, since categories are not recorded in
+   * `revisions` — but because a restore can change an entry's *title*, and a
+   * category listing renders titles and sorts on them
+   * (`listEntriesInCategory` orders by `compareEntriesByTitle`). Without this,
+   * restoring a rename leaves the entry listed under its old name, in its old
+   * position, on every category page it appears on.
+   */
+  revalidatePath("/wiki/category/[slug]", "page");
 
   /**
    * To the entry, which is where "restore" actually finishes: the payoff is
@@ -366,9 +385,13 @@ export type DeleteCategoryFormState = {
  * ## Why the category is named rather than identified
  *
  * The form posts the slug, which is the address the reader is standing on and
- * is entitled to name. The id never crosses to the browser at all — see
- * `Category` in `lib/categories.ts` — which is the "send a reference plus the
- * user's change" shape the Next.js server-actions guide asks for.
+ * is entitled to name, rather than the primary key. `getCategoryBySlug` does
+ * read the id — the listing route needs it to ask what is filed here — but
+ * nothing hands it onward: the route passes `category.slug` to
+ * `CategoryRemoval` and stops, and the type every *rendering* path uses
+ * (`NamedCategory`, in `lib/category-name.ts`) has no `id` field to pass. So
+ * the id stays on the server, which is the "send a reference plus the user's
+ * change" shape the Next.js server-actions guide asks for.
  *
  * Shaped for `useActionState`, so it takes the previous state and the form's
  * own `FormData`, which also means the confirmation works as a plain form POST
@@ -420,11 +443,17 @@ export async function deleteCategoryAction(
    */
   revalidatePath("/wiki/[slug]", "page");
   revalidatePath(`/wiki/category/${slug}`);
+  // And the index of every category, which has just lost a row — the page the
+  // redirect below sends the reader to.
+  revalidatePath("/wiki/category");
 
   /**
-   * To the index, which is where "the category is gone" actually finishes:
-   * the address the reader was standing on no longer answers, so sending them
-   * back to it would be a 404 as the reward for a successful action.
+   * To the list of categories, which is where "the category is gone" is
+   * actually legible: the reader arrived from a category page and the payoff
+   * is seeing the heading absent from the set. The address they were standing
+   * on no longer answers, so sending them back to it would be a 404 as the
+   * reward for a successful action, and `/wiki` — the *entry* index — would
+   * answer a question they were not asking.
    */
-  redirect("/wiki");
+  redirect("/wiki/category");
 }

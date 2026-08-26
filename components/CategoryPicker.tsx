@@ -119,7 +119,6 @@ export function CategoryPicker({
           !chosen.has(category.slug) &&
           (needle === "" || category.name.toLowerCase().includes(needle)),
       )
-      .slice()
       .sort(compareCategoriesByName);
   }, [existing, chosen, typedName]);
 
@@ -138,8 +137,11 @@ export function CategoryPicker({
     !existing.some((category) => category.slug === typedSlug);
 
   function add(category: NamedCategory): void {
-    setQuery("");
+    // After the guard, not before: clearing first would make Enter on a
+    // category the entry already carries blank the field and do nothing, which
+    // reads as the control having lost what was typed.
     if (full || chosen.has(category.slug)) return;
+    setQuery("");
     onChange([...value, category]);
   }
 
@@ -212,6 +214,10 @@ export function CategoryPicker({
               add(existingMatch ?? { name: typedName, slug: typedSlug });
             }}
             placeholder="Search or type a new category"
+            // In UTF-16 code units, where `MAX_CATEGORY_NAME_LENGTH` is code
+            // points — so the field is stricter than the store for a name made
+            // of astral characters. That is the safe direction: the field never
+            // accepts something `normaliseCategoryName` would then cut.
             maxLength={MAX_CATEGORY_NAME_LENGTH}
             // Off: the browser's own history of what has been typed into a
             // field called "category" is noise over the list underneath it.

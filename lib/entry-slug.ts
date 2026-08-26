@@ -49,6 +49,20 @@ export const FALLBACK_SLUG = "entry";
  * present under `app/wiki`, so a static route added later cannot quietly
  * start shadowing entries.
  *
+ * **It guards new entries only.** This set is consulted in exactly one place —
+ * `lib/create-page.ts`, when choosing an address — so adding a name to it does
+ * nothing about a row that already holds that slug. Such an entry becomes
+ * unreachable the moment the matching route ships, silently, since Next
+ * resolves the static segment and nothing compares the two. Adding a member
+ * here is therefore also a question to ask of the deployed database:
+ *
+ * ```sql
+ * select slug, title from pages where slug in ('new', 'category');
+ * ```
+ *
+ * An entry that turns up is renamed by hand before the deploy. Neither name
+ * matched anything when it was added.
+ *
  * `category` is E11-T8's (`YEO-78`): `/wiki/category` lists every category and
  * `/wiki/category/[slug]` lists what is filed under one. Being in this set
  * buys a second thing there, worth knowing before anyone considers removing

@@ -196,7 +196,13 @@ async function resolveCategories(
 ): Promise<Map<string, string>> {
   if (wanted.length === 0) return new Map();
 
-  const ordered = [...wanted].sort((a, b) => (a.slug < b.slug ? -1 : 1));
+  // A *consistent* comparator, returning 0 for equal slugs rather than 1.
+  // `normaliseEntryCategories` has already made them unique, so the tie never
+  // arises — but an inconsistent comparator is a poor foundation for a line
+  // whose entire job is a deterministic lock order.
+  const ordered = [...wanted].sort((a, b) =>
+    a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0,
+  );
 
   await tx
     .insert(schema.categories)
@@ -320,6 +326,13 @@ export async function setEntryCategories(
        * that does not hold that lock, and a primary-key violation on a link
        * that already says what we wanted it to say is not an error worth
        * raising.
+       *
+       * Note that these values are in the *author's* order rather than sorted
+       * the way `resolveCategories` sorts its own, and that asymmetry is the
+       * row lock rather than an oversight: two writers can only reach this
+       * statement for one entry one at a time, so there is no pair of
+       * concurrent inserts here to take locks in opposite orders. Remove that
+       * lock and this would need the same ordering treatment.
        */
       .onConflictDoNothing();
   }

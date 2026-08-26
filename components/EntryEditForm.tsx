@@ -71,16 +71,28 @@ export interface EntryEditFormProps {
   /**
    * What the entry is filed under right now (E11-T8, `YEO-78`), alphabetically
    * as `readEntryCategories` returned it.
+   *
+   * **Required, unlike every other optional prop above, and deliberately so.**
+   * `SavePageEdit.categories` goes to real trouble to keep `undefined` ("no
+   * opinion") apart from `[]` ("un-file everything"), and a default of `[]`
+   * here would collapse exactly that distinction one layer up: a future route
+   * that mounted this form and forgot the prop would silently strip every
+   * category off the entry on its first save, with nothing to report it. A
+   * required prop makes that a compile error instead.
    */
-  initialCategories?: readonly NamedCategory[];
+  initialCategories: readonly NamedCategory[];
   /**
    * Every category that exists, for the picker to offer.
    *
    * Passed straight through, like `entries` above and for the same reason: the
    * route that reads the database is on the other side of this component, and
    * the picker is a Client Component that must not reach for `@/db` itself.
+   *
+   * Required for the same reason as `initialCategories` — though the failure
+   * here is milder and louder: a picker given no list offers nothing to choose
+   * from, which somebody notices immediately.
    */
-  categories?: readonly NamedCategory[];
+  categories: readonly NamedCategory[];
 }
 
 export function EntryEditForm({
@@ -90,8 +102,8 @@ export function EntryEditForm({
   initialHatnote,
   entries,
   initialHeadingIndex,
-  initialCategories = [],
-  categories = [],
+  initialCategories,
+  categories,
 }: EntryEditFormProps) {
   const router = useRouter();
   const titleId = useId();

@@ -27,13 +27,20 @@ import { requireSession } from "@/lib/session";
  * Categories are reached from the entries that use them, which is the same way
  * Wikipedia reaches them.
  *
- * Static metadata, unlike the sibling `[slug]` route's `generateMetadata`: the
- * title is the same on every request, so there is no reason to make Next call
- * a function — and no reason for that function to open a second, unguarded
- * door onto the data.
+ * Reads a session cookie and the `categories` table, so there is nothing to
+ * prerender — stated explicitly, the way every other database-backed route
+ * here does, rather than left to be inferred from the first request-time API
+ * this happens to touch.
  */
 export const dynamic = "force-dynamic";
 
+/**
+ * Static, unlike the sibling `[slug]` route's `generateMetadata`: this title is
+ * the same on every request, so there is no reason to make Next call a
+ * function — and no reason for that function to open a second, unguarded door
+ * onto the data, which is the risk the `[slug]` route documents.
+ * `robots: noindex` is inherited from the root layout.
+ */
 export const metadata: Metadata = {
   title: "All categories",
 };
