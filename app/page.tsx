@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { RecentChanges } from "@/app/recent-changes";
 import { SiteChrome } from "@/app/site-chrome";
 import { ArticleHeading } from "@/components/ArticleHeading";
 import { requireSession } from "@/lib/session";
@@ -9,18 +10,24 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   /*
-    This page reaches no database and names nobody, so the guard is not
-    protecting the content below — `proxy.ts` already turns an anonymous
-    visitor away at the edge, and would have to be misconfigured for anything
-    here to render for a stranger.
+    The only access boundary there is — no RLS underneath, one database role
+    for everyone. See `lib/session.ts`.
 
-    It is here because "the proxy is the only thing standing in front of this
-    route" is a sentence that should not be true of any route
-    (docs/architecture.md: a route with nothing underneath it has nothing to
-    fail safe). The matcher is one negative lookahead, and its exemptions are
-    prefixes rather than whole segments — `app/auth-boundary.test.ts` shows
-    what that lets through. Defence in depth costs one already-cached `auth()`
-    call here, and it means every route in the app answers the same way.
+    This call used to be defence in depth and nothing more. The page reached
+    no database and named nobody, so `proxy.ts` turning an anonymous visitor
+    away at the edge was already enough; the guard was here because "the proxy
+    is the only thing standing in front of this route" is a sentence that
+    should not be true of any route (docs/architecture.md: a route with
+    nothing underneath it has nothing to fail safe). The matcher is one
+    negative lookahead whose exemptions are prefixes rather than whole
+    segments — `app/auth-boundary.test.ts` shows what that lets through.
+
+    E8-T4 made it load-bearing. `<RecentChanges />` below reads `pages`,
+    `individuals` and `gedcom_imports`, so this page now puts family names and
+    signed-in email addresses on screen. The guard protects content rather
+    than a principle — which is the argument for having written it before
+    there was any content to protect, since nobody had to remember to add it
+    on the commit that brought the data.
   */
   await requireSession();
 
@@ -45,6 +52,25 @@ export default async function Home() {
       <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
         <ArticleHeading title={title} />
 
+        {/*
+          The home page is a heading and then a stack of sections, and this is
+          the seam. Every section below is one self-contained component that
+          fetches whatever it needs and renders its own `<h2>`, so adding
+          another one is an import at the top of this file and a line here —
+          no query threaded down from the route, no props to widen, and no
+          section that has to know what another section reads.
+
+          Browse stays first because it is navigation rather than content: it
+          is how a reader reaches an entry whose address they do not know, and
+          it must not move down the page as the page grows. New sections go
+          *after* `<RecentChanges />`, in the order they should be read.
+
+          E8-T5's "On this day" (`YEO-59`) is the next one, and it should be
+          exactly this shape — an `app/on-this-day.tsx` awaiting its own `lib/`
+          read and handing the rows to a plain synchronous component under
+          `components/` that a test can mount. `app/recent-changes.tsx` says
+          why the awaiting half lives in `app/` rather than beside the markup.
+        */}
         <div className="wiki-body">
           <h2>Browse</h2>
           <ul>
@@ -62,6 +88,8 @@ export default async function Home() {
             </li>
           </ul>
         </div>
+
+        <RecentChanges />
       </main>
     </SiteChrome>
   );
