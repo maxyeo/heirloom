@@ -129,10 +129,13 @@ import type { UnionFields } from "./union-input";
  * ## The `@` escape
  *
  * `@` is GEDCOM's only metacharacter, and 5.5.1 spells a literal one inside a
- * value by doubling it. `emit` does that to every value it writes, and
- * `emitPointer` writes the pointers that must not have it done to them — the
- * split between those two functions is the whole of the rule, and each says
- * why at its own definition.
+ * value by doubling it. `emit` does that to every value it writes;
+ * `emitPointer` and `record` write the two line shapes whose `@`s are
+ * structure rather than text and must not be doubled. Those three are the
+ * whole of the rule and the whole of the file's output — every line leaves
+ * through one `push` onto `lines` inside one of them, which is how to
+ * enumerate them: see `docs/gedcom.md`. Each says at its own definition why
+ * it escapes or why it need not.
  *
  * Neither this side nor the unescaping in `lib/gedcom-lines.ts` may be changed
  * without the other. Until `YEO-105` both were missing, and the two absences
@@ -968,7 +971,15 @@ function emitPointer(
   lines.push(`${level} ${tag} @${xref}@`);
 }
 
-/** `0 @I1@ INDI` — the line that opens a record. */
+/**
+ * `0 @I1@ INDI` — the line that opens a record.
+ *
+ * The other place this file writes an `@` unescaped, and the one a grep for
+ * `emitPointer` misses: the pointer sits in the xref position here rather than the value
+ * position, so it is written directly rather than through that helper. Safe
+ * unescaped for the same reason `emitPointer` is, and one better — the xref
+ * is minted here (`I1`, `F1`, `U1`) and cannot contain an `@` to escape.
+ */
 function record(lines: string[], xref: string, tag: string): void {
   lines.push(`0 @${xref}@ ${tag}`);
 }
@@ -993,8 +1004,9 @@ function record(lines: string[], xref: string, tag: string): void {
  * Every value written through here is escaped, and a value that is a pointer
  * must therefore go through `emitPointer` instead. That is the direction of
  * the rule on purpose: the values this module writes are somebody's names and
- * places, of which any number may contain an `@`, and the pointers are five
- * call sites this file mints itself.
+ * places, of which any number may contain an `@`, while the xrefs are strings
+ * this file mints itself — written by `emitPointer` and by `record`, and by
+ * nothing else.
  */
 function emit(
   lines: string[],
@@ -1032,8 +1044,10 @@ function emit(
 /**
  * Double every `@`, which is how 5.5.1 puts a literal one inside a value.
  *
- * Before `chunk` rather than after, so the doubling is counted against the
- * line length and cannot push a line past 255 characters. The consequence is
+ * Before `chunk` rather than after, so the doubling is counted against
+ * `MAX_VALUE_LENGTH` instead of slipping past it: the other order would chunk
+ * a 200-code-point run of `@`s to a single piece and then escape it to 400,
+ * for a 407-character line where 5.5.1 allows 255. The consequence is
  * that a `@@` can land across a `CONC` boundary, which is legal and which
  * `lib/gedcom-lines.ts` reads correctly because it unescapes the assembled
  * value rather than each physical line — see its docblock, where the same
