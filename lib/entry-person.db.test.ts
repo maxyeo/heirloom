@@ -28,6 +28,15 @@ const ROSE_PAGE = "00000000-0000-4000-8000-0000e253000a";
 const LOOSE_PAGE = "00000000-0000-4000-8000-0000e253000b";
 const CONTESTED_PAGE = "00000000-0000-4000-8000-0000e253000c";
 
+/**
+ * A portrait key on the fixture's Rose (`YEO-97`). The shape is
+ * `newImageKey`'s — namespace, shard, uuid, extension — because the column is
+ * only ever written with one of those.
+ */
+const IMAGE_PREFIX = "images/";
+const PREFIX_UUID = "00000000-0000-4000-8000-0000e2530";
+const ROSE_PORTRAIT = `${IMAGE_PREFIX}ab/${PREFIX_UUID}0001.jpg`;
+
 const PEOPLE = [ROSE, THOMAS, ALICE];
 const PAGES = [ROSE_PAGE, LOOSE_PAGE, CONTESTED_PAGE];
 
@@ -62,6 +71,10 @@ beforeEach(async () => {
       birthDateQualifier: "about",
       birthDatePrecision: "year",
       birthPlace: "Kentish Town, London",
+      portraitKey: ROSE_PORTRAIT,
+      // Set so the assertion below can prove it is *not* selected: the
+      // article shows one image and has no use for the canvas's copy.
+      portraitThumbKey: `${IMAGE_PREFIX}ef/${PREFIX_UUID}0002.webp`,
     },
     // Two people on one entry is not reachable through the application —
     // `setPersonEntry` locks the entry and refuses the second — so these rows
@@ -103,6 +116,17 @@ describe("getEntryPerson", () => {
     expect(person?.birthDate).toBe("1890-01-01");
     expect(person?.birthDateQualifier).toBe("about");
     expect(person?.birthDatePrecision).toBe("year");
+  });
+
+  it("carries the portrait key, and only the full-size one", async () => {
+    // `YEO-97`: the infobox's portrait is read off this row, so the key has
+    // to survive the select. The thumbnail is the deliberate omission — it
+    // exists because the canvas paints hundreds of faces at once, which an
+    // article showing one face is not.
+    const person = await getEntryPerson(ROSE_PAGE);
+
+    expect(person?.portraitKey).toBe(ROSE_PORTRAIT);
+    expect(person).not.toHaveProperty("portraitThumbKey");
   });
 
   it("finds nobody for an entry no one is linked to", async () => {
