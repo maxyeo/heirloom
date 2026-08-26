@@ -84,7 +84,8 @@ import { zipChunks } from "@/lib/zip-stream";
  * comment because `RESTORE.md` prints it: `revisions` point at `pages`,
  * `gedcom_imports` points at nothing, `individuals` point at both `pages` and
  * `gedcom_imports`, `unions` point at `individuals` and `gedcom_imports`, and
- * `union_children` point at `unions`, `individuals` and `gedcom_imports`.
+ * `union_children` point at `unions`, `individuals` and `gedcom_imports`, and
+ * `page_categories` (`YEO-78`) points at `pages` and `categories`.
  * Loading them in this order means a restore never has to defer a constraint.
  *
  * `gedcom_imports` (`YEO-89`) sits **ahead of** `individuals` for exactly that
@@ -109,6 +110,14 @@ const EXPORT_TABLES = [
   schema.individuals,
   schema.unions,
   schema.unionChildren,
+  // E11-T8 (`YEO-78`). `categories` references nothing, so it could sit
+  // anywhere; `page_categories` references both `pages` and `categories`, so
+  // it has to come after them. Appended rather than slotted in beside `pages`
+  // where they read most naturally, because `lib/export-full.db.test.ts`
+  // indexes this list positionally — inserting in the middle would renumber
+  // every table after it.
+  schema.categories,
+  schema.pageCategories,
 ] as const;
 
 /** Anything that can run a `select` — the pool, or a transaction. */
@@ -165,7 +174,17 @@ function orderFor(table: PgTable) {
   if (table === schema.gedcomImports) return [asc(schema.gedcomImports.id)];
   if (table === schema.individuals) return [asc(schema.individuals.id)];
   if (table === schema.unions) return [asc(schema.unions.id)];
-  return [asc(schema.unionChildren.unionId), asc(schema.unionChildren.childId)];
+  if (table === schema.unionChildren) {
+    return [
+      asc(schema.unionChildren.unionId),
+      asc(schema.unionChildren.childId),
+    ];
+  }
+  if (table === schema.categories) return [asc(schema.categories.id)];
+  return [
+    asc(schema.pageCategories.pageId),
+    asc(schema.pageCategories.categoryId),
+  ];
 }
 
 /** Every row of every exported table, in restore order. */

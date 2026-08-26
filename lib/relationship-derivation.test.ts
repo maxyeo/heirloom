@@ -697,8 +697,20 @@ describe("the schema stores no relationship", () => {
     // Guards the enumeration itself: a `schema` that stopped exporting tables
     // the way this reads them would make every assertion below vacuously true.
     expect(tables.map((t) => t.name).sort()).toEqual([
+      /**
+       * `categories` and `page_categories` (E11-T8, `YEO-78`) are here because
+       * this list is an enumeration of the schema rather than of the tree, and
+       * a new table has to be looked at before it is admitted. They pass the
+       * two assertions below untouched: a filing joins an *entry* to a
+       * heading, so neither table references `individuals` at all, and neither
+       * says anything about how two people are related. A category named
+       * "Whitfield family" is a label somebody chose, not a kinship the
+       * derivations could read.
+       */
+      "categories",
       "gedcom_imports",
       "individuals",
+      "page_categories",
       "pages",
       "revisions",
       "union_children",

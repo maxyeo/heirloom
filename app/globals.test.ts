@@ -1,8 +1,10 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+
+import { filesUnder, SOURCE_DIRS } from "@/test/route-inventory";
 
 /**
  * The visual foundation (E11-T1) is a set of values rather than a function, so
@@ -331,7 +333,21 @@ describe("the family tree's focus ring", () => {
 });
 
 describe("call sites", () => {
-  const sourceDirs = ["app", "components", "lib"];
+  /**
+   * `.css` on top of the shared footprint (`YEO-102`).
+   *
+   * The directories come from `test/route-inventory.ts` like every other
+   * scanner's: this list was character-for-character `SOURCE_DIRS` and
+   * nothing obliged it to stay that way, so a directory added there for the
+   * auth boundary's sake would have left the token layer unguarded in it
+   * while this file stayed green.
+   *
+   * The extensions do not, and cannot: `sourceFiles` refuses a directory it
+   * cannot parse, and a stylesheet is exactly that. `globals.css` is also the
+   * one file this test is *about*, so leaving it out of the scan would be a
+   * guard that cannot see its own subject. See `SOURCE_DIRS` for why the two
+   * dimensions are shared separately.
+   */
   const sourceExtensions = [".ts", ".tsx", ".css"];
 
   /**
@@ -356,11 +372,7 @@ describe("call sites", () => {
   ]);
 
   function sourceFiles(): string[] {
-    return sourceDirs.flatMap((dir) =>
-      readdirSync(join(repoRoot, dir), { recursive: true, encoding: "utf8" })
-        .filter((entry) => sourceExtensions.some((ext) => entry.endsWith(ext)))
-        .map((entry) => join(dir, entry)),
-    );
+    return filesUnder(SOURCE_DIRS, sourceExtensions);
   }
 
   it("declares every colour in globals.css and nowhere else", () => {
