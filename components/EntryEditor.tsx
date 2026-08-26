@@ -898,7 +898,25 @@ function EntryEditorToolbar({
     };
   }, [editor, linkPanelOpen]);
 
-  function isPressed(id: ToolbarItemId): boolean {
+  /**
+   * Whether a toolbar control is currently on, or `undefined` when it is not
+   * the kind of control that can be (E10-T5).
+   *
+   * The distinction is the whole point, and it used to be a `default: false`.
+   * `aria-pressed` is what turns a `<button>` into a *toggle* button as far as
+   * assistive technology is concerned, so putting it on every control
+   * announced the image button as "Image, toggle button, not pressed" — a
+   * promise that pressing it would turn something on and pressing it again
+   * would turn it off, when what it does is open a file picker. A screen
+   * reader user has no other way to tell the two kinds of button apart, which
+   * makes a wrong `aria-pressed` worse than none: it is not a missing label,
+   * it is a label that is not true.
+   *
+   * Exhaustive over `ToolbarItemId` rather than a `default`, so a control
+   * added later has to say which kind it is instead of silently inheriting
+   * the wrong answer — which is exactly how the image button acquired it.
+   */
+  function pressedState(id: ToolbarItemId): boolean | undefined {
     switch (id) {
       case "bold":
         return state.bold;
@@ -908,8 +926,12 @@ function EntryEditorToolbar({
         return state.bulletList;
       case "link":
         return state.link || linkPanelOpen;
-      default:
-        return false;
+      // Neither of these toggles anything. `image` opens the file picker, and
+      // `heading` is rendered as a `<select>` below and never reaches a
+      // button at all.
+      case "image":
+      case "heading":
+        return undefined;
     }
   }
 
@@ -985,9 +1007,14 @@ function EntryEditorToolbar({
               // second file picker opened over a running upload would queue
               // work the strip beside it is already describing.
               disabled={item.id === "image" && busy}
-              aria-pressed={isPressed(item.id)}
+              // Absent, not `false`, on the controls that are not toggles.
+              // See `pressedState`.
+              aria-pressed={pressedState(item.id)}
               onClick={() => activate(item.id)}
-              className={toolbarButtonClass(item.id, isPressed(item.id))}
+              className={toolbarButtonClass(
+                item.id,
+                pressedState(item.id) === true,
+              )}
             >
               {item.label}
             </button>

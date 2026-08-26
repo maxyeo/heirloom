@@ -83,11 +83,45 @@
   --color-diff-removed: #fef6e7;
   --color-diff-removed-rule: #ffe49c;
 
+  /* ---- Links, and the contrast floor they are picked against (E10-T5) ----
+   *
+   * These three are Wikimedia's current *accessible* link palette rather than
+   * Vector 2022's older one, and the swap is the whole of E10-T5's contrast
+   * criterion. The rule they are chosen against is stated once here and
+   * enforced in `app/globals.test.ts`, which computes the WCAG ratios out of
+   * this file rather than trusting a comment:
+   *
+   *   **Every colour this stylesheet paints text in clears 4.5:1 — WCAG 2.2
+   *   AA for text below 18pt — against every surface it can be painted on.**
+   *
+   * The surfaces are `--color-paper`, `--color-panel`, `--color-wash` and the
+   * two diff fills, and `--color-wash` is the binding one: it is the darkest
+   * of them, and links genuinely land on it — a `th` in a wikitable, the
+   * highlighted row in `components/SearchSuggestions.tsx`, the header block on
+   * the compare view.
+   *
+   * Two of the three failed that floor and one did not:
+   *
+   *   - `--color-link` was already `#3366cc` and clears it at 4.54:1. Kept, so
+   *     the most-seen colour in the skin does not move.
+   *   - visited was `#795cb2`, which is 4.45:1 on `--color-wash`. It fails by
+   *     about one percent, which is exactly the kind of miss that is never
+   *     found by looking: `#6a60b0` is Wikimedia's own replacement and lands
+   *     at 4.54:1, the same margin as the blue beside it.
+   *   - a red link was `#d33`, which is 4.33:1 on `--color-panel` and 3.86:1
+   *     on `--color-wash` — a real failure on a surface red links are
+   *     routinely on, since the person infobox (E11-T5) is `bg-panel` and is
+   *     mostly links to relatives who have no entry yet. `#bf3c2c` is
+   *     Wikimedia's accessible red and clears the floor everywhere.
+   *
+   * The audience skews older, which is what makes this load-bearing rather
+   * than a compliance box — see the ticket's "Why".
+   */
   --color-link: #3366cc;
-  --color-link-visited: #795cb2;
+  --color-link-visited: #6a60b0;
   /* A red link points at an entry nobody has written yet — an invitation
    * rather than an error. Wired up properly in E11-T6. */
-  --color-link-new: #d33;
+  --color-link-new: #bf3c2c;
 
   /* ---- Layout -----------------------------------------------------------
    * Vector 2022's measure: 46em of prose. Deliberately in `em`, so it scales
@@ -607,4 +641,46 @@
       display: none;
     }
   }
+}
+
+/*
+ * The family tree canvas, and the one thing React Flow's own stylesheet takes
+ * away (E10-T5).
+ *
+ * ## Why this block is not in a layer
+ *
+ * Everything else in this file sits in `@layer base` or `@layer components`,
+ * and it should. This cannot. `@xyflow/react/dist/style.css` is imported by
+ * `components/FamilyTree.tsx` as a plain stylesheet, so its rules are
+ * **unlayered** — and in the cascade an unlayered declaration beats a layered
+ * one whatever its specificity. That is not a detail: it is exactly why the
+ * `:focus-visible` rule in `@layer base` above, which gives every other
+ * focusable thing in this application its outline, does nothing at all on a
+ * tree node. React Flow ships
+ *
+ *     .react-flow__node.selectable:focus,
+ *     .react-flow__node.selectable:focus-visible { outline: none; }
+ *
+ * and wins the layer comparison before specificity is even consulted. So the
+ * rule that puts the outline back has to be unlayered too, and then has to
+ * out-specify that selector — hence the leading `.react-flow`, which is on the
+ * wrapper React Flow renders and is there purely to add a class to the count.
+ *
+ * ## Why it matters more here than anywhere else
+ *
+ * A tree node is the only focusable thing in this application that is not a
+ * link, a button or a field, so it is the only one with no shape of its own to
+ * say "you are here". Tabbing through a family with no outline moves an
+ * invisible cursor across a canvas — the criterion this ticket is written
+ * against ("reachable and selectable by keyboard") is technically met by the
+ * tab stops React Flow already provides and is useless without this.
+ *
+ * `outline` rather than the `ring-*` utility the node uses for *selection*, so
+ * that focused-and-unselected and selected-and-unfocused stay distinguishable:
+ * the ring is drawn at the card's border, the outline sits outside it.
+ */
+.react-flow .react-flow__node:focus-visible,
+.react-flow .react-flow__node.selectable:focus-visible {
+  outline: 2px solid var(--color-link);
+  outline-offset: 2px;
 }

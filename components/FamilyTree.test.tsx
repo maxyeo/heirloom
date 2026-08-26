@@ -255,6 +255,181 @@ function buttonLabelled(host: HTMLElement, text: string): HTMLButtonElement {
   return found;
 }
 
+/**
+ * "Tree nodes reachable and selectable by keyboard" (E10-T5).
+ *
+ * The tab stops themselves are React Flow's — it puts `tabIndex={0}` on every
+ * focusable node — so what is worth mounting a canvas for is the two things
+ * this application decides about them: which elements end up in that order,
+ * and in what sequence.
+ *
+ * Two things this file deliberately cannot show, and where they are shown
+ * instead:
+ *
+ *   - **The focus ring.** React Flow's own stylesheet sets `outline: none` on
+ *     a focused node, and the rule that puts it back is unlayered CSS in
+ *     `app/globals.css`. jsdom applies no stylesheet, so `app/globals.test.ts`
+ *     asserts the declaration and this file cannot.
+ *   - **`edgesFocusable={false}`.** jsdom renders no edges at all — React Flow
+ *     needs measurements it has no layout engine for — so the elements this
+ *     takes out of the tab order are not here to count. `lib/tree-layout.ts`
+ *     carries the other half of that decision and it is asserted there.
+ */
+describe("reaching the canvas with a keyboard", () => {
+  /**
+   * The same family as `graph()`, with the rows in the order the database
+   * hands them over — surname then given name, so the daughter first.
+   *
+   * That mismatch is the whole point. Before E10-T5 the tab order *was* this
+   * array, so Tab opened on Dora, went back up a generation to her mother,
+   * and then sideways to her father.
+   */
+  function unsortedGraph(): FamilyGraph {
+    const family = graph();
+    return {
+      ...family,
+      people: [
+        family.people.find((p) => p.id === "dora")!,
+        family.people.find((p) => p.id === "rose")!,
+        family.people.find((p) => p.id === "walter")!,
+      ],
+    };
+  }
+
+  /** Everything a Tab would stop on, in document order. */
+  function tabStops(host: HTMLElement): HTMLElement[] {
+    return [...host.querySelectorAll<HTMLElement>("[tabindex='0']")];
+  }
+
+  it("puts every person in the tab order and nothing else", () => {
+    const host = render(unsortedGraph());
+
+    expect(
+      tabStops(host)
+        .map((stop) => stop.dataset.id)
+        .sort(),
+    ).toEqual(["dora", "rose", "walter"]);
+    // The union marker is a connector, not a record. Tabbing through one would
+    // double the stops it takes to cross a generation for no gain.
+    expect(nodeWrapper(host, "u1").getAttribute("tabindex")).toBeNull();
+  });
+
+  it("crosses the tree generation by generation, not row by row", () => {
+    const host = render(unsortedGraph());
+
+    /**
+     * Dora is first in the graph and last on the canvas. A tab order taken
+     * from the array would open on her; taken from the layout it ends there.
+     *
+     * Which of her parents comes first is dagre's business and is not
+     * asserted — `lib/tree-layout.test.ts` covers the ordering rule itself,
+     * and pinning "Walter then Rose" here would be pinning a horizontal
+     * placement that a dagre release could reasonably swap without breaking
+     * anything this criterion is about.
+     */
+    const order = tabStops(host).map((stop) => stop.dataset.id);
+    expect(order.indexOf("dora")).toBe(order.length - 1);
+    expect(order.indexOf("rose")).toBeLessThan(order.indexOf("dora"));
+    expect(order.indexOf("walter")).toBeLessThan(order.indexOf("dora"));
+  });
+
+  it("names each node for a reader who cannot see it", () => {
+    const host = render(graph());
+
+    // The wrapper is what is in the tab order and it has no text of its own,
+    // so without this a screen reader announces "group" once per person.
+    expect(nodeWrapper(host, "rose").getAttribute("aria-label")).toBe(
+      "Rose Hale, b. 1910",
+    );
+    expect(nodeWrapper(host, "walter").getAttribute("aria-label")).toBe(
+      "Walter Hale",
+    );
+  });
+
+  it("opens the record on Enter, exactly as a click does", () => {
+    const host = render(graph());
+    const node = nodeWrapper(host, "rose");
+
+    act(() => node.focus());
+    act(() => {
+      node.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+
+    // The "selectable" half of the criterion. It is not free: React Flow
+    // applies a selection to its own store only for an *uncontrolled* flow,
+    // so a canvas that passes `nodes` without `onNodesChange` swallows this
+    // keystroke and looks perfectly normal doing it.
+    expect(panelLabel(host)).toBe("Details for Rose Hale");
+    expect(node.classList.contains("selected")).toBe(true);
+  });
+
+  it("opens the record on Space as well", () => {
+    const host = render(graph());
+    const node = nodeWrapper(host, "walter");
+
+    act(() => node.focus());
+    act(() => {
+      node.dispatchEvent(
+        new KeyboardEvent("keydown", { key: " ", bubbles: true }),
+      );
+    });
+
+    expect(panelLabel(host)).toBe("Details for Walter Hale");
+  });
+});
+
+/**
+ * The key to the canvas's lines (E10-T5). Which rows a family earns is
+ * `lib/tree-legend.test.ts`'s subject; what is here is only that the box
+ * appears on a canvas that needs one, stays away from one that does not, and
+ * does not sit on top of the surfaces that share its corner.
+ */
+describe("the line key", () => {
+  function legend(host: HTMLElement): HTMLElement | null {
+    return host.querySelector<HTMLElement>(
+      'aside[aria-label="What the lines mean"]',
+    );
+  }
+
+  /** Rose and Walter divorced; everything else as `graph()` has it. */
+  function endedGraph(): FamilyGraph {
+    const family = graph();
+    return {
+      ...family,
+      unions: family.unions.map((union) => ({
+        ...union,
+        endReason: "divorce" as const,
+      })),
+    };
+  }
+
+  it("stays away from a family with no dashed line on it", () => {
+    expect(legend(render(graph()))).toBeNull();
+  });
+
+  it("explains the dash on a family that has one", () => {
+    const host = render(endedGraph());
+
+    const box = legend(host);
+    expect(box).not.toBeNull();
+    expect(box?.textContent).toContain("ended");
+    // Words *and* a sample of the line they describe — a key that drew a dash
+    // and said nothing would be the state this ticket found the canvas in.
+    expect(box?.querySelectorAll("svg line").length).toBe(1);
+  });
+
+  it("gets out of the way while a record is open", () => {
+    // It shares the top-left corner with the panel on a narrow viewport, and
+    // an open record is the more specific answer to the same question.
+    const host = render(endedGraph());
+    open(host, "rose");
+
+    expect(legend(host)).toBeNull();
+  });
+});
+
 describe("opening the panel", () => {
   it("opens on a node click", () => {
     const host = render(graph());
