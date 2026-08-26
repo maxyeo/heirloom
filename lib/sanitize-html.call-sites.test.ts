@@ -1,14 +1,12 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import {
   INNER_HTML_ATTRIBUTE,
   innerHtmlCallSites,
-  sourceFiles,
 } from "@/test/inner-html-inventory";
+import { read, SOURCE_DIRS, sourceFiles } from "@/test/route-inventory";
 
 /**
  * `lib/sanitize-html.test.ts` proves the sanitiser is correct. This proves it
@@ -35,6 +33,21 @@ import {
  * sanitised value into an unsanitised one, but by somebody rendering
  * `page.bodyHtml` straight from a query because it was already a string.
  *
+ * ## Where it looks (`YEO-100`)
+ *
+ * `SOURCE_DIRS` and the enumerator both come from `test/route-inventory.ts`,
+ * which is the module `app/auth-boundary.test.ts` scans from. That was always
+ * the intent — the two tripwires are meant to cover the same ground — but
+ * until `YEO-100` it was two copies of one array and a comment in each file
+ * asking the reader to believe they matched. Now widening one widens both, and
+ * the enumerator throws rather than skipping when it meets a file it cannot
+ * parse, so neither footprint can shrink by accident.
+ *
+ * A sink outside those three directories is still invisible, exactly as it has
+ * always been. That is a claim about where this application's code lives
+ * rather than a property of the scanner, and `scans the source tree` below is
+ * what keeps a renamed directory from turning this file silently vacuous.
+ *
  * ## Exemptions are per call site, not per file
  *
  * `YEO-96`. A file legitimately needs raw HTML now and again — a JSON-LD
@@ -59,10 +72,6 @@ import {
  * An id rather than a line number is what keeps it from rotting: it moves with
  * the call site through every edit above it.
  */
-
-const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-
-const SOURCE_DIRS = ["app", "components", "lib"];
 
 /**
  * file -> the exemption ids granted in it, and why.
@@ -162,9 +171,7 @@ describe("dangerouslySetInnerHTML call sites", () => {
 
     for (const file of named) {
       expect(files).toContain(file);
-      expect(readFileSync(join(repoRoot, file), "utf8")).toContain(
-        INNER_HTML_ATTRIBUTE,
-      );
+      expect(read(file)).toContain(INNER_HTML_ATTRIBUTE);
     }
 
     expect(callSites.filter(({ file }) => named.includes(file))).toEqual([]);
@@ -189,7 +196,7 @@ describe("dangerouslySetInnerHTML call sites", () => {
       .filter(({ file, marker }) => {
         if (marker !== null && EXEMPT[file]?.includes(marker)) return false;
 
-        const source = readFileSync(join(repoRoot, file), "utf8");
+        const source = read(file);
         return !entryPoints.some(
           ([module, call]) =>
             source.includes(`from "${module}"`) && call.test(source),

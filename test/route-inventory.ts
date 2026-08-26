@@ -31,7 +31,8 @@ export const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const APP_DIR = "app";
 
 /**
- * Where a `"use server"` module may live.
+ * The source tree, as far as every tripwire in this repository is concerned
+ * (`YEO-100`).
  *
  * Routes only ever come from `app/`, but an action module does not have to:
  * the directive is legal in any module, and `components/AddPersonPanel.tsx`
@@ -39,10 +40,17 @@ const APP_DIR = "app";
  * would make a future `lib/…-actions.ts` invisible to the checks below — the
  * "list nobody remembers to extend" failure this file exists to remove.
  *
- * The three directories are `lib/sanitize-html.call-sites.test.ts`'s, so the
- * two tripwires cover the same ground.
+ * `lib/sanitize-html.call-sites.test.ts` needs the same three directories, for
+ * the same reason and to no lesser extent: a `dangerouslySetInnerHTML` is a
+ * stored-XSS sink wherever it is written. Until `YEO-100` it kept its own copy
+ * of this list and a comment in each file asked the reader to believe the two
+ * agreed. They did, but nothing said so — widening one and forgetting the
+ * other would have left a directory guarded against unauthenticated routes and
+ * not against unsanitised markup, or the reverse, with both suites green. It
+ * is exported and imported rather than repeated so that the drift is not
+ * possible rather than merely unlikely.
  */
-const SOURCE_DIRS = ["app", "components", "lib"];
+export const SOURCE_DIRS = ["app", "components", "lib"];
 
 /**
  * Filenames that make a directory answerable at a URL.
@@ -54,6 +62,16 @@ const SOURCE_DIRS = ["app", "components", "lib"];
  * like one. `not-found.tsx`, `error.tsx` and friends are absent for a
  * simpler reason: nothing routes to them directly; they render only after a
  * page has already run.
+ *
+ * The `.js` and `.jsx` spellings match nothing, and never did — they are
+ * filtered out by `SOURCE_EXTENSIONS` long before this set is consulted. What
+ * `YEO-100` changed is that the fact is now enforced rather than true by
+ * omission: `sourceFiles` refuses to enumerate a directory holding one at all,
+ * so it cannot quietly stop being true. They stay because this set answers
+ * "what filename makes a directory routable", which is Next's question and has
+ * Next's answer; the extension footprint is a separate question with a
+ * separate answer, and collapsing the two would leave a reader who widened
+ * `SOURCE_EXTENSIONS` having to rediscover this list.
  */
 const ROUTE_FILENAMES = new Set([
   "page.tsx",
@@ -65,7 +83,58 @@ const ROUTE_FILENAMES = new Set([
   "route.js",
 ]);
 
+/**
+ * What the scanners below can parse.
+ *
+ * Matched as suffixes, which also admits `.mts` and `.cts`. That is left
+ * alone rather than tightened: both are TypeScript, `ts.createSourceFile`
+ * reads them, and every check in this file and in
+ * `test/inner-html-inventory.ts` is as true of one as of a `.ts`. None exists
+ * here today; if one arrives it is scanned, which is the answer that needed no
+ * decision.
+ */
 const SOURCE_EXTENSIONS = [".ts", ".tsx"];
+
+/**
+ * What they cannot parse but a bundler would still build.
+ *
+ * The other half of `SOURCE_DIRS` — the footprint has two dimensions, and
+ * `YEO-100` was filed because only one of them was written down. A `.js` file
+ * under `app/` is a route Next serves and `routeFiles` never sees; a `.jsx`
+ * under `components/` can render `dangerouslySetInnerHTML` and
+ * `lib/sanitize-html.call-sites.test.ts` will not find it. Both suites stay
+ * green, because a file that is not enumerated cannot fail an assertion.
+ *
+ * There are none today, and `sourceFiles` throws rather than skipping so that
+ * this stays a fact rather than a habit. That is deliberately not an
+ * assertion in one test file: an assertion guards the suite that runs it, and
+ * the blind spot belongs to every caller of `sourceFiles`. Refusing the whole
+ * directory turns all of them red at once, which is the bargain the rest of
+ * this module strikes everywhere else — throw on what is not understood
+ * rather than pass over it.
+ *
+ * The JavaScript family and nothing else, because that is the whole of the
+ * gap: `.mts` and `.cts` are already caught by `SOURCE_EXTENSIONS`' suffix
+ * match and parse correctly, so refusing them would trade real coverage for a
+ * decision nobody needs to make.
+ */
+const UNSCANNED_EXTENSIONS = [".js", ".jsx", ".mjs", ".cjs"];
+
+/**
+ * The entries in `entries` that a bundler would treat as source and the
+ * scanners here cannot read.
+ *
+ * Split out from `sourceFiles` so `test/route-inventory.footprint.test.ts` can
+ * drive it with literals. The branch it guards is unreachable from the real
+ * tree — that being the property it exists to hold — so without a fixture it
+ * would be code no run had ever executed, which is exactly the state the
+ * `YEO-96` review found the marker branches in.
+ */
+export function unscannedSources(entries: readonly string[]): string[] {
+  return entries.filter((entry) =>
+    UNSCANNED_EXTENSIONS.some((ext) => entry.endsWith(ext)),
+  );
+}
 
 /**
  * What a dynamic segment is filled in with when a route is turned into a
@@ -88,24 +157,48 @@ export type RouteFile = {
   route: string;
 };
 
-/** Every source file under `dir`, repo-relative. */
-function sourceFilesUnder(dir: string): string[] {
-  return readdirSync(join(repoRoot, dir), {
-    recursive: true,
-    encoding: "utf8",
-  })
-    .filter((entry) => SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext)))
-    .map((entry) => join(dir, entry));
+/**
+ * Every source file under `dirs`, repo-relative.
+ *
+ * The one enumerator, shared by both tripwires (`YEO-100`). Throws on a file
+ * it would have to skip — see `UNSCANNED_EXTENSIONS` for why that is a throw
+ * and not a filter.
+ */
+export function sourceFiles(dirs: readonly string[] = SOURCE_DIRS): string[] {
+  return dirs.flatMap((dir) => {
+    const entries = readdirSync(join(repoRoot, dir), {
+      recursive: true,
+      encoding: "utf8",
+    });
+
+    const unreadable = unscannedSources(entries);
+    if (unreadable.length > 0) {
+      throw new Error(
+        `${dir} contains ${unreadable.length} file(s) no tripwire in this ` +
+          `repository can read: ${unreadable.sort().join(", ")}. Everything ` +
+          `here is parsed as ${SOURCE_EXTENSIONS.join(" or ")}, so a route ` +
+          `in one of these is invisible to app/auth-boundary.test.ts and a ` +
+          `dangerouslySetInnerHTML in one is invisible to ` +
+          `lib/sanitize-html.call-sites.test.ts. Rename it to TypeScript, or ` +
+          `widen SOURCE_EXTENSIONS having checked that every scanner still ` +
+          `understands it — do not delete this check.`,
+      );
+    }
+
+    return entries
+      .filter((entry) => SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext)))
+      .map((entry) => join(dir, entry));
+  });
 }
 
 /** Every file under `app/` with one of `SOURCE_EXTENSIONS`, repo-relative. */
 export function appSourceFiles(): string[] {
-  return sourceFilesUnder(APP_DIR);
+  return sourceFiles([APP_DIR]);
 }
 
 /** Every file a `"use server"` module could be, repo-relative. */
 export function actionSourceFiles(): string[] {
-  return SOURCE_DIRS.flatMap(sourceFilesUnder);
+  return sourceFiles(SOURCE_DIRS);
 }
 
 /** Read a repo-relative path. */
