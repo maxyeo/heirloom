@@ -8,6 +8,7 @@ import { derivePersonDetail } from "@/lib/person-detail";
 import { addChild } from "@/lib/save-child";
 import { createIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
+import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
 /**
  * Database tests for the add-child write path (E3-T5, `YEO-33`). Run with
@@ -49,7 +50,10 @@ async function removeFixture() {
 
 /** Create a fixture person, failing loudly rather than returning a union. */
 async function makePerson(suffix: string): Promise<string> {
-  const result = await createIndividual({ givenName: name(suffix) });
+  const result = await createIndividual(
+    { givenName: name(suffix) },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "created") {
     throw new Error(`Expected created, got ${result.status}.`);
   }
@@ -61,13 +65,16 @@ async function makeUnion(
   personId: string,
   partnerId: string | null,
 ): Promise<string> {
-  const result = await addSpouse({
-    personId,
-    partnerMode: partnerId === null ? "unknown" : "existing",
-    partnerId: partnerId ?? "",
-    partner: {},
-    union: {},
-  });
+  const result = await addSpouse(
+    {
+      personId,
+      partnerMode: partnerId === null ? "unknown" : "existing",
+      partnerId: partnerId ?? "",
+      partner: {},
+      union: {},
+    },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -86,7 +93,7 @@ function submission(overrides: Partial<AddChildInput>): AddChildInput {
 
 /** Add a child, failing loudly rather than returning a union of statuses. */
 async function add(input: AddChildInput) {
-  const result = await addChild(input);
+  const result = await addChild(input, FIXTURE_MEMBER);
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }
@@ -174,6 +181,7 @@ describe("addChild", () => {
         child: { givenName: name("Dora") },
         link: { unionId },
       }),
+      FIXTURE_MEMBER,
     );
 
     expect(result.status).toBe("union-not-found");
@@ -188,6 +196,7 @@ describe("addChild", () => {
 
     const result = await addChild(
       submission({ childId: clara, link: { unionId } }),
+      FIXTURE_MEMBER,
     );
 
     // A status the form can render, rather than a foreign-key violation
@@ -201,11 +210,20 @@ describe("addChild", () => {
     const unionId = await makeUnion(rose, thomas);
 
     expect(
-      (await addChild(submission({ childId: rose, link: { unionId } }))).status,
+      (
+        await addChild(
+          submission({ childId: rose, link: { unionId } }),
+          FIXTURE_MEMBER,
+        )
+      ).status,
     ).toBe("child-is-partner");
     expect(
-      (await addChild(submission({ childId: thomas, link: { unionId } })))
-        .status,
+      (
+        await addChild(
+          submission({ childId: thomas, link: { unionId } }),
+          FIXTURE_MEMBER,
+        )
+      ).status,
     ).toBe("child-is-partner");
   });
 
@@ -217,6 +235,7 @@ describe("addChild", () => {
     await add(submission({ childId: clara, link: { unionId } }));
     const again = await addChild(
       submission({ childId: clara, link: { unionId, relation: "adopted" } }),
+      FIXTURE_MEMBER,
     );
 
     expect(again.status).toBe("already-recorded");
@@ -258,6 +277,7 @@ describe("addChild", () => {
         child: { givenName: "" },
         link: { unionId: "not-a-uuid" },
       }),
+      FIXTURE_MEMBER,
     );
 
     expect(result.status).toBe("invalid");
@@ -355,6 +375,7 @@ describe("nobody becomes their own ancestor", () => {
     expect(
       await addChild(
         submission({ childId: gran, link: { unionId: roseUnion } }),
+        FIXTURE_MEMBER,
       ),
     ).toEqual({ status: "child-is-ancestor" });
 

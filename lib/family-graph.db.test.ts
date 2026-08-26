@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { getFamilyGraph } from "@/lib/family-graph";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * The reference database test — the `.db.test.ts` suffix is what keeps it out
@@ -50,52 +51,54 @@ beforeAll(async () => {
   // runs this next.
   await removeFixture();
 
-  await db.insert(schema.individuals).values([
-    {
-      id: ROSE,
-      givenName: "Rose",
-      surname: "Fixture",
-    },
-    // Inserted with no qualifier at all, which is what an existing row looks
-    // like the moment after the migration runs.
-    {
-      id: WALTER,
-      givenName: "Walter",
-      surname: "Fixture",
-      birthDate: "1905-09-08",
-      deathDate: "1978-04-25",
-    },
-    /**
-     * The row that disagrees with itself on every defaulted column, and the
-     * reason it exists is `getFamilyGraph`'s mapping rather than anything
-     * about Maud.
-     *
-     * That mapping copies fourteen person fields across by hand, and four of
-     * them — the two qualifiers and the two precisions — have the same type as
-     * each other. Writing `birthDatePrecision: p.deathDatePrecision` compiles
-     * cleanly, and against a fixture where all four columns say `exact`/`day`
-     * it also *passes*: every wrong answer is spelled the same as the right
-     * one. So each of the four here carries a different value, which is what
-     * makes a swapped pair a failed assertion rather than a coincidence.
-     *
-     * The dates are the ordinary genealogical case that produces them, not
-     * values chosen to be different: a headstone gave the year she was born,
-     * and a will proves she was already dead by the spring of 1971.
-     */
-    {
-      id: MAUD,
-      givenName: "Maud",
-      surname: "Fixture",
-      sex: "other",
-      birthDate: "1890-01-01",
-      birthDateQualifier: "about",
-      birthDatePrecision: "year",
-      deathDate: "1971-04-01",
-      deathDateQualifier: "before",
-      deathDatePrecision: "month",
-    },
-    { id: NELL, givenName: "Nell", surname: "Fixture" },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      {
+        id: ROSE,
+        givenName: "Rose",
+        surname: "Fixture",
+      },
+      // Inserted with no qualifier at all, which is what an existing row looks
+      // like the moment after the migration runs.
+      {
+        id: WALTER,
+        givenName: "Walter",
+        surname: "Fixture",
+        birthDate: "1905-09-08",
+        deathDate: "1978-04-25",
+      },
+      /**
+       * The row that disagrees with itself on every defaulted column, and the
+       * reason it exists is `getFamilyGraph`'s mapping rather than anything
+       * about Maud.
+       *
+       * That mapping copies fourteen person fields across by hand, and four of
+       * them — the two qualifiers and the two precisions — have the same type as
+       * each other. Writing `birthDatePrecision: p.deathDatePrecision` compiles
+       * cleanly, and against a fixture where all four columns say `exact`/`day`
+       * it also *passes*: every wrong answer is spelled the same as the right
+       * one. So each of the four here carries a different value, which is what
+       * makes a swapped pair a failed assertion rather than a coincidence.
+       *
+       * The dates are the ordinary genealogical case that produces them, not
+       * values chosen to be different: a headstone gave the year she was born,
+       * and a will proves she was already dead by the spring of 1971.
+       */
+      {
+        id: MAUD,
+        givenName: "Maud",
+        surname: "Fixture",
+        sex: "other",
+        birthDate: "1890-01-01",
+        birthDateQualifier: "about",
+        birthDatePrecision: "year",
+        deathDate: "1971-04-01",
+        deathDateQualifier: "before",
+        deathDatePrecision: "month",
+      },
+      { id: NELL, givenName: "Nell", surname: "Fixture" },
+    ]),
+  );
 
   // Inserted deliberately out of order, so a query that lost its ORDER BY
   // would come back in a different order than the assertion expects rather

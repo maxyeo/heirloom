@@ -145,12 +145,29 @@ function RecentChangeRow({ change }: { change: RecentChange }) {
               person has one, and the tree is where a person always exists. */}
           <Link href={treeHref(change.personId)}>{change.name}</Link>
           {/*
-            No author, because `individuals` records none — see the
-            `person-added` arm of `RecentChange`. The byline says what the
-            change *was* instead, which is the honest half of "who changed
-            what and when" that this source can answer.
+            The author is named when the row records one and left unsaid when
+            it does not (`YEO-104`) — and "unsaid" is the literal behaviour:
+            `addedBy` is optional, so passing it through unchanged hands
+            `ChangeByline` either an address or `undefined`, and `undefined`
+            is what makes the byline read "added to the family tree" with
+            nothing appended. That is the same sentence this row has always
+            shown, still shown for the same reason, for the rows that predate
+            the column — see the `person-added` arm of `RecentChange`.
+
+            What must never appear here is `formatChangeAuthor`. It turns a
+            null into "Unknown", which is true of an entry whose `updated_by`
+            was never written and would be a lie here: it would read as a name
+            we lost rather than as a person added before anybody was recorded.
           */}
-          <ChangeByline what="added to the family tree" when={change.when} />
+          <ChangeByline
+            what={
+              change.addedBy === undefined
+                ? "added to the family tree"
+                : "added to the family tree by"
+            }
+            who={change.addedBy}
+            when={change.when}
+          />
         </>
       );
 
@@ -184,10 +201,18 @@ function RecentChangeRow({ change }: { change: RecentChange }) {
  * together in one place.
  *
  * `who` is optional rather than nullable-and-rendered-as-"Unknown": a caller
- * that has no author column to read must not be able to accidentally claim
- * the author is unknown, which is the distinction `RecentChange` is a
- * discriminated union to preserve. `formatChangeAuthor` is what turns a null
- * column into "Unknown", and only the two arms that *have* that column call it.
+ * with nobody to name must not be able to accidentally claim the author is
+ * unknown, which is the distinction `RecentChange` is a discriminated union to
+ * preserve. `formatChangeAuthor` is what turns a null column into "Unknown",
+ * and only the two arms whose column is *nullable* call it — `person-added`
+ * passes its optional `addedBy` straight through, so an absent author reaches
+ * here as the `undefined` this parameter already knew how to render.
+ *
+ * That is why `what` is a whole phrase rather than a verb with " by" appended
+ * here: the person arm's sentence differs in more than its author, reading
+ * "added to the family tree" when there is nobody to name and "added to the
+ * family tree by …" when there is, and the caller is where that choice
+ * belongs.
  */
 function ChangeByline({
   what,

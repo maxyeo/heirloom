@@ -249,6 +249,52 @@ describe("importGedcom", () => {
     expect(linkRow.importId).toBe(outcome.importId);
   });
 
+  /**
+   * `YEO-104`'s explicit question about this module, answered here rather
+   * than argued: an imported person's author is **derived**, not stored.
+   *
+   * Every row says `import` and carries no email, and the email is one join
+   * away on the ledger row `import_id` already points at. Copying
+   * `imported_by` onto each person would be a second copy of a fact this
+   * schema holds once — free to disagree with the first the moment anything
+   * corrects the ledger — so a change that started doing it should fail here,
+   * because it would otherwise look like an improvement. See `authorColumns`
+   * in `lib/individual-author.ts`.
+   */
+  it("attributes imported people to the import, storing no email of its own", async () => {
+    const digest = `${PREFIX}-authorship`;
+
+    const outcome = await importGedcom(fixtureMapping(), provenanceFor(digest));
+    if (outcome.status !== "imported") {
+      throw new Error(`expected "imported", got ${outcome.status}`);
+    }
+
+    const people = await db
+      .select({
+        createdBySource: schema.individuals.createdBySource,
+        createdBy: schema.individuals.createdBy,
+        importedBy: schema.gedcomImports.importedBy,
+      })
+      .from(schema.individuals)
+      .innerJoin(
+        schema.gedcomImports,
+        eq(schema.individuals.importId, schema.gedcomImports.id),
+      )
+      .where(like(schema.individuals.givenName, `${PREFIX}%`));
+
+    expect(people).toHaveLength(MAX_ROWS_PER_STATEMENT + 1);
+    expect(
+      people.every(
+        (person) =>
+          person.createdBySource === "import" &&
+          person.createdBy === null &&
+          // The author, one join away, and written from the session by the
+          // endpoint exactly as `pages.updated_by` is.
+          person.importedBy === "rose@example.com",
+      ),
+    ).toBe(true);
+  });
+
   it("refuses a second import of the same digest, and writes nothing the second time", async () => {
     const digest = `${PREFIX}-duplicate`;
     const first = await importGedcom(fixtureMapping(), provenanceFor(digest));

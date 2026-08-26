@@ -14,6 +14,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
+import { INDIVIDUAL_AUTHOR_SOURCES } from "../lib/individual-author";
+
 /**
  * The data model follows GEDCOM's core insight: a *union* is a first-class
  * entity, not an edge between two people. Modelling parenthood as
@@ -139,6 +141,29 @@ export const childRelation = pgEnum("child_relation", [
   "step",
   "foster",
 ]);
+
+/**
+ * How to read `individuals.created_by` sitting next to it (`YEO-104`).
+ *
+ * The same arrangement as `date` and {@link dateQualifier} one table down: a
+ * nullable value, and a not-null companion that says what its absence means.
+ * A lone nullable `created_by` would have to answer three different questions
+ * with one null — a row a file wrote, a row that predates the column, and a
+ * row somebody typed in while signed out — and a reader cannot tell those
+ * apart, which is exactly the collapse the feed's own `RecentChange` union
+ * exists to refuse.
+ *
+ * **The labels are imported rather than written here**, from
+ * `lib/individual-author.ts`, which is also where each one is defined and
+ * argued. Repeating them would be two lists nothing obliges to stay equal —
+ * the drift `test/route-inventory.ts` names — and the one that matters is the
+ * `legacy` label, which no TypeScript value can produce and which therefore
+ * has to mean the same thing here as it does there.
+ */
+export const createdBySource = pgEnum(
+  "created_by_source",
+  INDIVIDUAL_AUTHOR_SOURCES,
+);
 
 /**
  * Postgres's `tsvector`, which Drizzle has no column type for.
@@ -750,6 +775,62 @@ export const individuals = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /**
+     * How to read {@link individuals.createdBy} beside it (`YEO-104`).
+     *
+     * ## Why this column is `not null` *and* has no default
+     *
+     * Both halves are load-bearing, and the second is the unusual one.
+     *
+     * `not null` is what makes the column able to answer "why is there no
+     * author" rather than merely failing to have one. Every row has a source
+     * even when it has no email, and the three sources are three different
+     * facts — see `INDIVIDUAL_AUTHOR_SOURCES` in `lib/individual-author.ts`,
+     * which defines the labels this enum is built from.
+     *
+     * **No default** is how the ticket's "a new path that forgets should fail
+     * a test, not silently write a null" is enforced, and it is enforced by
+     * the compiler rather than by a test: with no default, Drizzle's insert
+     * type makes this column *required*, so a write path that does not say
+     * who created the row does not build. `db/individual-author.db.test.ts`
+     * guards the guard — it asserts the column is still `not null` with no
+     * default, so the compile error cannot be quieted by adding one.
+     *
+     * A default is also the specific wrong answer this ticket names. Any
+     * value it could take would be stamped onto every row that already
+     * existed, which is authorship invented for people nobody can attribute.
+     * The backfill in `drizzle/0011_individual_author.sql` writes `legacy` to
+     * those rows precisely *because* `legacy` claims nothing about a person —
+     * it says the column did not exist yet, which is the one thing that is
+     * true of all of them.
+     *
+     * The migration therefore adds the column with a temporary default and
+     * drops it in the same statement block: the default exists only long
+     * enough for Postgres to fill the existing rows, and never long enough
+     * for an application insert to reach it.
+     */
+    createdBySource: createdBySource("created_by_source").notNull(),
+    /**
+     * The signed-in email that added this person by hand (`YEO-104`), the way
+     * `pages.updated_by` and `revisions.created_by` record who wrote an edit.
+     *
+     * Null whenever {@link individuals.createdBySource} is anything but
+     * `member`, and that null is fully explained by the column beside it — it
+     * is never "a name we lost". `lib/individual-author.ts` holds the pairing
+     * rules, and `individualAuthorEmail` is the only sanctioned way to ask
+     * this row for an author, so no renderer has to remember that
+     * `member` is the one source that comes with an address.
+     *
+     * No foreign key, and no `users` table for one to point at: membership is
+     * `ALLOWED_EMAILS` (`lib/session.ts`), so an email is all there is to
+     * record and it stays recorded after somebody is removed from that list —
+     * which is what a history is for.
+     *
+     * No index. Nothing filters or groups by it: the feed reads it off rows
+     * it has already selected by `created_at`, which is the same judgement
+     * `importId` below makes about its own reads.
+     */
+    createdBy: text("created_by"),
     /**
      * Which GEDCOM import wrote this row, if one did (`YEO-89`).
      *

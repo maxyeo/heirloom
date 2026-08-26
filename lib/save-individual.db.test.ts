@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
+import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
 /**
  * Database tests for the person write path (E3-T1, `YEO-29`). Run with
@@ -57,7 +58,7 @@ async function countFixtureRows(): Promise<number> {
 async function create(
   input: Parameters<typeof createIndividual>[0],
 ): Promise<string> {
-  const result = await createIndividual(input);
+  const result = await createIndividual(input, FIXTURE_MEMBER);
   if (result.status !== "created") {
     throw new Error(`Expected created, got ${result.status}.`);
   }
@@ -164,10 +165,13 @@ describe("createIndividual", () => {
   });
 
   it("writes nothing at all when the input is refused", async () => {
-    const result = await createIndividual({
-      givenName: "",
-      notes: name("refused"),
-    });
+    const result = await createIndividual(
+      {
+        givenName: "",
+        notes: name("refused"),
+      },
+      FIXTURE_MEMBER,
+    );
 
     expect(result.status).toBe("invalid");
     expect(await countFixtureRows()).toBe(0);

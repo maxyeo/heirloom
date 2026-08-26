@@ -8,6 +8,7 @@ import { reorderUnions } from "@/lib/reorder-unions";
 import { createIndividual } from "@/lib/save-individual";
 import { addSpouse } from "@/lib/save-union";
 import { formatMove } from "@/lib/union-order";
+import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
 /**
  * Database tests for the union sequence editor (E3-T7, `YEO-35`). Run with
@@ -47,7 +48,10 @@ async function removeFixture() {
 }
 
 async function makePerson(suffix: string): Promise<string> {
-  const result = await createIndividual({ givenName: name(suffix) });
+  const result = await createIndividual(
+    { givenName: name(suffix) },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "created") {
     throw new Error(`Expected created, got ${result.status}.`);
   }
@@ -67,13 +71,16 @@ async function marry(
   partnerId: string,
   sequence?: number,
 ): Promise<string> {
-  const result = await addSpouse({
-    personId,
-    partnerMode: "existing",
-    partnerId,
-    partner: {},
-    union: sequence === undefined ? {} : { sequence },
-  });
+  const result = await addSpouse(
+    {
+      personId,
+      partnerMode: "existing",
+      partnerId,
+      partner: {},
+      union: sequence === undefined ? {} : { sequence },
+    },
+    FIXTURE_MEMBER,
+  );
   if (result.status !== "added") {
     throw new Error(`Expected added, got ${result.status}.`);
   }

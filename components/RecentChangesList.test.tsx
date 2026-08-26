@@ -32,11 +32,24 @@ const entry: RecentChange = {
   editor: "rose@example.com",
 };
 
+/**
+ * A person with nobody to name — a row from before `individuals.created_by`
+ * existed (`YEO-104`), which is what every person in every real database was
+ * until that migration ran.
+ */
 const person: RecentChange = {
   kind: "person-added",
   personId: "00000000-0000-4000-8000-000000000001",
   name: "Agnes",
   when: WHEN,
+};
+
+/** The same row for somebody a signed-in member typed in. */
+const attributedPerson: RecentChange = {
+  ...person,
+  personId: "00000000-0000-4000-8000-000000000003",
+  name: "Thomas Whitfield",
+  addedBy: "rose@example.com",
 };
 
 const imported: RecentChange = {
@@ -97,16 +110,28 @@ describe("RecentChangesList", () => {
     );
   });
 
+  it("names the member who added a person, when the row records one", () => {
+    const host = render(<RecentChangesList changes={[attributedPerson]} />);
+
+    // `YEO-104`: the criterion "shows who changed what and when", now met for
+    // the source that could not meet it before.
+    expect(host.textContent).toContain(
+      "added to the family tree by rose@example.com",
+    );
+  });
+
   it("claims no author for a person, rather than an unknown one", () => {
     const host = render(<RecentChangesList changes={[person]} />);
 
     /*
-      The point of `RecentChange` being a discriminated union. `individuals`
-      records no author at all, so this row must not say "Unknown" — that
-      reads as a name that went missing, where the truth is a column that was
-      never written. The arm has no author field for exactly this reason, and
-      this is the assertion that would fail if somebody flattened it.
+      The point of `RecentChange`'s author being *optional* rather than
+      nullable. This row records nobody — it predates `individuals.created_by`
+      — so it must not say "Unknown", which reads as a name that went missing
+      where the truth is a column that was never written. It must not trail a
+      dangling "by" either. This is the assertion that would fail if somebody
+      flattened the arm or reached for `formatChangeAuthor`.
     */
+    expect(host.textContent).toContain("added to the family tree");
     expect(host.textContent).not.toContain("Unknown");
     expect(host.textContent).not.toContain(" by ");
   });

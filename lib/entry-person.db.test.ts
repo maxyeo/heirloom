@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { getEntryPerson } from "@/lib/entry-person";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * Database tests for the entry→person lookup (E2-T3, `YEO-26`). Run with
@@ -61,39 +62,41 @@ beforeEach(async () => {
     },
   ]);
 
-  await db.insert(schema.individuals).values([
-    {
-      id: ROSE,
-      pageId: ROSE_PAGE,
-      givenName: `${PREFIX} Rose`,
-      surname: "Hale",
-      birthDate: "1890-01-01",
-      birthDateQualifier: "about",
-      birthDatePrecision: "year",
-      birthPlace: "Kentish Town, London",
-      portraitKey: ROSE_PORTRAIT,
-      // Set so the assertion below can prove it is *not* selected: the
-      // article shows one image and has no use for the canvas's copy.
-      portraitThumbKey: `${IMAGE_PREFIX}ef/${PREFIX_UUID}0002.webp`,
-    },
-    // Two people on one entry is not reachable through the application —
-    // `setPersonEntry` locks the entry and refuses the second — so these rows
-    // stand in for the manual `UPDATE` that can still produce it.
-    {
-      id: THOMAS,
-      pageId: CONTESTED_PAGE,
-      givenName: `${PREFIX} Thomas`,
-      surname: "Hale",
-      createdAt: new Date("2020-01-01T00:00:00Z"),
-    },
-    {
-      id: ALICE,
-      pageId: CONTESTED_PAGE,
-      givenName: `${PREFIX} Alice`,
-      surname: "Hale",
-      createdAt: new Date("2021-01-01T00:00:00Z"),
-    },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      {
+        id: ROSE,
+        pageId: ROSE_PAGE,
+        givenName: `${PREFIX} Rose`,
+        surname: "Hale",
+        birthDate: "1890-01-01",
+        birthDateQualifier: "about",
+        birthDatePrecision: "year",
+        birthPlace: "Kentish Town, London",
+        portraitKey: ROSE_PORTRAIT,
+        // Set so the assertion below can prove it is *not* selected: the
+        // article shows one image and has no use for the canvas's copy.
+        portraitThumbKey: `${IMAGE_PREFIX}ef/${PREFIX_UUID}0002.webp`,
+      },
+      // Two people on one entry is not reachable through the application —
+      // `setPersonEntry` locks the entry and refuses the second — so these rows
+      // stand in for the manual `UPDATE` that can still produce it.
+      {
+        id: THOMAS,
+        pageId: CONTESTED_PAGE,
+        givenName: `${PREFIX} Thomas`,
+        surname: "Hale",
+        createdAt: new Date("2020-01-01T00:00:00Z"),
+      },
+      {
+        id: ALICE,
+        pageId: CONTESTED_PAGE,
+        givenName: `${PREFIX} Alice`,
+        surname: "Hale",
+        createdAt: new Date("2021-01-01T00:00:00Z"),
+      },
+    ]),
+  );
 });
 
 afterAll(removeFixture);

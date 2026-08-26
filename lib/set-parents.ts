@@ -1,6 +1,7 @@
 import { and, asc, eq, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import type { IndividualAuthor } from "@/lib/individual-author";
 import {
   type ParentsValidationIssue,
   type SetParentsInput,
@@ -130,10 +131,18 @@ export type SetParentsResult =
  * model (see `lib/session.ts`) and there is no per-row ownership to check.
  *
  * @param input the submission as it arrived, untrusted and untyped
+ * @param author who is making the change, passed straight through to
+ *   `attachChild` (`YEO-104`). Nothing here can create a person — this flow
+ *   always attaches somebody already on the tree, which is its whole premise
+ *   — so the value is never written today. It is taken all the same, because
+ *   the function it hands it to *can* create one, and a caller that stopped
+ *   supplying it would be a caller that has to be re-audited the day
+ *   `childMode` widens.
  * @returns the family they are now recorded in, or what to fix
  */
 export async function setParents(
   input: SetParentsInput,
+  author: IndividualAuthor,
 ): Promise<SetParentsResult> {
   const checked = validateSetParents(input);
   if (!checked.ok) return { status: "invalid", issues: checked.issues };
@@ -277,12 +286,16 @@ export async function setParents(
        * the tree, which is the entire premise of "I added them standalone and
        * now want to connect them".
        */
-      const attached = await attachChild(tx, {
-        childMode: "existing",
-        childId: value.childId,
-        child: {},
-        link: { unionId, relation: value.relation },
-      });
+      const attached = await attachChild(
+        tx,
+        {
+          childMode: "existing",
+          childId: value.childId,
+          child: {},
+          link: { unionId, relation: value.relation },
+        },
+        author,
+      );
 
       switch (attached.status) {
         case "invalid":

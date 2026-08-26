@@ -31,17 +31,18 @@ import {
  *
  * Because the three things are genuinely different, and the flat version can
  * only be reached by throwing away what makes them so. A single
- * `{ what: string; who: string | null; when: Date }` would need a `who` for a
- * person added to the tree — and there is no such column (see
- * `person-added` below) — so every person row would carry a `null` that means
- * "this source records no author", sitting in the same field where an entry's
- * `null` means "this row predates the column being written". Two different
- * facts, one representation, and nothing downstream able to tell them apart.
+ * `{ what: string; who: string | null; when: Date }` would need one `who` to
+ * carry an entry's `null` — "this row predates the column being written" —
+ * and a person's, which since `YEO-104` is a different thing again: not a
+ * missing value but a row whose author, where there is one, is *conditional*
+ * on the source recorded beside it. Two different facts, one representation,
+ * and nothing downstream able to tell them apart.
  *
- * The union keeps them apart *structurally*: `person-added` has no author
- * field to be null, so a renderer cannot accidentally print "Unknown" for a
- * person and imply that somebody's name went missing. It also lets each arm
- * carry the identity its own link needs — a slug, a person id, an import id —
+ * The union keeps them apart *structurally*: `person-added` carries an
+ * **optional** author rather than a nullable one, so the absence is a field
+ * that is not there rather than a value a renderer could turn into "Unknown"
+ * and imply that somebody's name went missing. It also lets each arm carry
+ * the identity its own link needs — a slug, a person id, an import id —
  * instead of three nullable columns of which exactly one is ever set.
  *
  * That is the same "widen rather than collapse" answer `db/schema.ts` reaches
@@ -94,24 +95,24 @@ export type RecentChange =
   /**
    * A person was added to the tree by hand.
    *
-   * **This arm has no author, and that is the data rather than an omission.**
-   * `individuals` carries `created_at` and no `created_by`: nothing in
-   * `lib/save-individual.ts`, the add-spouse and add-child flows, or
-   * `db/seed-family.ts` records who typed a person in, so there is no column
-   * to read and no honest value to render. Adding one is an additive
-   * migration plus a session email threaded through four write paths — the
-   * shape `lib/save-individual.ts` already predicts for itself ("if it is
-   * wanted later, it is an additive migration, not a change to this shape") —
-   * and it would still attribute nobody who is already in the tree. That is a
-   * ticket, not a line in this one; what this ticket must not do is invent an
-   * author to fill a column.
+   * **This arm has an author only when one genuinely exists** (`YEO-104`).
+   * Until that ticket it had no author field at all, because `individuals`
+   * had no `created_by` column and never had — the arm's shape was the
+   * honest report of a gap in the schema. The column exists now, and the arm
+   * gains the author *and keeps the shape*: `addedBy` is optional rather than
+   * nullable, so a row with nobody to name has no field to render instead of
+   * a null to misrender.
    *
-   * So the criterion "shows who changed what and when" is met where the
-   * database can meet it, and the union is what makes the gap visible instead
-   * of papering over it with a null.
+   * Absent covers exactly the rows `individualAuthorEmail` declines to
+   * attribute (`lib/individual-author.ts`): a person added before the column
+   * existed, and — unreachable through this application — a `member` row with
+   * no email. Neither is a name that went missing, and neither may read as
+   * one, which is why nothing here is ever handed to `formatChangeAuthor`.
    *
    * People that arrived in a GEDCOM file are deliberately **not** here — see
-   * `people-imported`.
+   * `people-imported`, which is also where their author is reported. That is
+   * why no arm ever carries `created_by_source`: the one source whose author
+   * lives elsewhere is the one source this arm never holds.
    */
   | {
       kind: "person-added";
@@ -120,6 +121,13 @@ export type RecentChange =
       /** Already joined by `formatPersonName`, so no renderer repeats that rule. */
       name: string;
       when: Date;
+      /**
+       * The member who added them, when the row records one.
+       *
+       * Optional — never `string | null` — and the distinction is the whole
+       * of what this arm has always been for. See the docblock above.
+       */
+      addedBy?: string;
     }
   /**
    * A GEDCOM file was imported, reported as one line rather than as the
@@ -302,11 +310,13 @@ export function changeWhenIso(when: Date): string {
  * `pages.updated_by` and `gedcom_imports.imported_by` are nullable on
  * identical terms — their own docblocks say so.
  *
- * Deliberately not offered for `person-added`, which has no author field at
- * all. The distinction that arm exists to preserve would be gone the moment a
- * renderer could ask this function for a person's editor and be told
- * "Unknown", which reads as a lost name rather than as a column that was
- * never written.
+ * Deliberately still not offered for `person-added`, whose author is optional
+ * rather than nullable (`YEO-104`). The distinction that arm exists to
+ * preserve would be gone the moment a renderer could ask this function for a
+ * person's author and be told "Unknown", which reads as a lost name rather
+ * than as a row from before the column existed. There is no null to pass it:
+ * `individualAuthorEmail` returns `undefined` or an address, and a row with
+ * no author is rendered by saying nothing about one.
  */
 export function formatChangeAuthor(email: string | null): string {
   return formatRevisionAuthor(email);

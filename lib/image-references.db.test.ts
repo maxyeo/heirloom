@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db, schema } from "@/db";
 import { readReferencedImageKeys } from "@/lib/image-references";
 import { IMAGE_ROUTE } from "@/lib/storage-key";
+import { addedByHand } from "@/test/people-fixtures";
 
 /**
  * What only Postgres can prove about the orphan sweep's reference scan.
@@ -107,16 +108,18 @@ beforeAll(async () => {
     },
   ]);
 
-  await db.insert(schema.individuals).values([
-    { id: PERSON, pageId: PAGE, givenName: "Rose", surname: "Hall" },
-    {
-      id: PORTRAIT_PERSON,
-      givenName: "Walter",
-      surname: "Hale",
-      portraitKey: PORTRAIT_IMAGE,
-      portraitThumbKey: PORTRAIT_THUMB,
-    },
-  ]);
+  await db.insert(schema.individuals).values(
+    addedByHand([
+      { id: PERSON, pageId: PAGE, givenName: "Rose", surname: "Hall" },
+      {
+        id: PORTRAIT_PERSON,
+        givenName: "Walter",
+        surname: "Hale",
+        portraitKey: PORTRAIT_IMAGE,
+        portraitThumbKey: PORTRAIT_THUMB,
+      },
+    ]),
+  );
 });
 
 afterAll(removeFixture);

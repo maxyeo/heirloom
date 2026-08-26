@@ -428,6 +428,22 @@ other exception this function raises is still a genuine fault left to
 propagate, exactly as before; only the one new case is caught, unwrapped, and
 returned as an ordinary result.
 
+## Who an imported person was added by
+
+Derived, not stored (`YEO-104`). `individuals.created_by_source` says `import`
+and `individuals.created_by` is null for every row a file writes — the author
+is `gedcom_imports.imported_by`, one join away along the `import_id` this
+module is already writing.
+
+Copying the importer's email onto each of a file's few hundred people would be
+a second copy of a fact the schema holds once, free to disagree with the first
+the moment anything corrects the ledger, and it would answer a question nothing
+asks of an imported individual: the "Recently changed" feed reports the file as
+one line rather than as hundreds of arrivals, and that line already names who
+ran it. See [Who added a person](architecture.md#who-added-a-person-and-the-three-ways-there-is-no-answer)
+for the whole model, and `authorColumns` in `lib/individual-author.ts` for the
+code the decision lives in.
+
 ## Importing the same file twice
 
 Refused, not merged and not used to replace what is there (`YEO-89`). The
