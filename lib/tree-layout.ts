@@ -1,7 +1,7 @@
 import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
 
-import { connectedFamilies } from "./family-components";
+import { compareIds, connectedFamilies } from "./family-components";
 import type { FamilyGraph } from "./family-graph";
 import { formatLifespan } from "./format-date";
 import { formatPersonName } from "./person-format";
@@ -318,12 +318,35 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
    */
   const family = (node: Node) => familyOf.get(node.id) ?? families.length;
 
+  /**
+   * The last term is {@link compareIds}, not `localeCompare` (`YEO-111`).
+   *
+   * It is a backstop rather than a term that decides much: dagre gives two
+   * people in the same family distinct coordinates — siblings on one rank
+   * come out a node-width apart — so `y` and `x` have settled the order
+   * before this is reached. It is here because "distinct coordinates" is
+   * dagre's behaviour rather than dagre's promise, and a sort whose last word
+   * is a coin toss is not the deterministic one `YEO-103` asked for.
+   *
+   * Which makes *what* it compares with a question worth answering rather
+   * than inheriting. `localeCompare` reads whatever collation data the
+   * process was built with, so it can order two ids one way on a laptop and
+   * the other way on CI; code units are fixed by the language. The argument
+   * in full — including why the display sorts elsewhere in the repository
+   * keep `localeCompare` on purpose — is on {@link compareIds}.
+   *
+   * Sharing that comparator with `lib/family-components.ts` is the point
+   * rather than an economy. The family term above comes from
+   * {@link connectedFamilies}, which ranks families by their smallest member
+   * id; if the two files disagreed about which of two ids is smaller, the
+   * canvas would order families by one rule and their members by another.
+   */
   nodes.sort(
     (a, b) =>
       family(a) - family(b) ||
       a.position.y - b.position.y ||
       a.position.x - b.position.x ||
-      a.id.localeCompare(b.id),
+      compareIds(a.id, b.id),
   );
 
   /**

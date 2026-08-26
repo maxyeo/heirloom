@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { connectedFamilies } from "@/lib/family-components";
+import { compareIds, connectedFamilies } from "@/lib/family-components";
 // `import type` matters: lib/family-graph.ts imports @/db, and taking only the
 // type erases the import entirely, which is what keeps this file runnable with
 // no database and therefore runnable in CI. See docs/testing.md.
@@ -181,10 +181,15 @@ describe("connectedFamilies", () => {
     graph.unions = [];
     graph.childLinks = [];
 
+    // The expectation is built with the same code-unit rule the module sorts
+    // by (`YEO-111`). It used to be built with `localeCompare`, which agreed
+    // only because every id in this fixture is lowercase ASCII — a test whose
+    // expectation is computed by a locale-sensitive comparator is not a pin
+    // on a locale-independent one.
     expect(connectedFamilies(graph)).toEqual(
       [...graph.people]
         .map((p) => [p.id])
-        .sort((a, b) => a[0].localeCompare(b[0])),
+        .sort((a, b) => compareIds(a[0], b[0])),
     );
   });
 
@@ -229,5 +234,160 @@ describe("connectedFamilies", () => {
     expect(
       connectedFamilies({ people: [], unions: [], childLinks: [] }),
     ).toEqual([]);
+  });
+});
+
+/**
+ * The locale question (`YEO-111`).
+ *
+ * `YEO-103` asked for an order that is deterministic — "the same graph always
+ * tabs the same way" — and the id comparison is the only thing holding that
+ * up. It used to be `localeCompare`, whose answer is drawn from the collation
+ * data the process happens to have rather than from the two strings, so the
+ * guarantee that actually shipped was "the same way on this machine, under
+ * this `LANG`, against this ICU build".
+ *
+ * Every fixture above is lowercase ASCII kebab-case, which is precisely the
+ * input on which the two rules agree — so none of those tests could have
+ * caught the difference. These use ids that collate the other way round.
+ */
+describe("component order does not depend on the runtime's collation", () => {
+  /**
+   * Two families and two loose ends, with ids chosen so that code units and
+   * collation disagree about all four.
+   *
+   * `Z` is code unit 0x5A and `a` is 0x61, so by code unit every capital
+   * sorts ahead of every lowercase letter: `Zeta-root` before `apple-root`,
+   * `Yolk` before `aardvark`. Collation compares letters before it compares
+   * case, so ICU puts `apple` and `aardvark` first instead. The assertions
+   * below the fixture check that this is still true of the ICU this test is
+   * running against, rather than trusting the paragraph.
+   */
+  function mixedCaseArchive(): FamilyGraph {
+    return {
+      people: [
+        person({ id: "apple-spouse", givenName: "Anne", sex: "male" }),
+        person({ id: "Zeta-root", givenName: "Zoe" }),
+        person({ id: "aardvark-alone", givenName: "Ada" }),
+        person({ id: "Zeta-spouse", givenName: "Zack", sex: "male" }),
+        person({ id: "Yolk-alone", givenName: "Yuri", sex: "male" }),
+        person({ id: "apple-root", givenName: "Amy" }),
+      ],
+      unions: [
+        union({
+          id: "u-zeta",
+          partnerAId: "Zeta-root",
+          partnerBId: "Zeta-spouse",
+        }),
+        union({
+          id: "u-apple",
+          partnerAId: "apple-root",
+          partnerBId: "apple-spouse",
+        }),
+      ],
+      childLinks: [],
+    };
+  }
+
+  /**
+   * Locales picked to span the ways collation is tailored, not at random:
+   * `en` is the default most developers run under, `sv` reorders letters at
+   * the end of its alphabet, `tr` has its own rules for dotted and dotless
+   * `i`, and `de-DE-u-co-phonebk` is a non-default collation of a locale that
+   * also has a default one. If the order were collation's to decide, this is
+   * the axis along which it could move.
+   */
+  const locales = ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"];
+
+  it("uses ids that collation really does order the other way", () => {
+    // Guarding the fixture rather than the module: a test that pins an order
+    // against ids every locale sorts identically pins nothing, and would go
+    // on passing if `localeCompare` came back tomorrow. If ICU ever stopped
+    // disagreeing here, the tests below would become vacuous silently — this
+    // is what makes that loud instead.
+    for (const locale of locales) {
+      const collator = new Intl.Collator(locale);
+      expect(collator.compare("Zeta-root", "apple-root")).toBeGreaterThan(0);
+      expect(compareIds("Zeta-root", "apple-root")).toBeLessThan(0);
+
+      expect(collator.compare("Yolk-alone", "aardvark-alone")).toBeGreaterThan(
+        0,
+      );
+      expect(compareIds("Yolk-alone", "aardvark-alone")).toBeLessThan(0);
+    }
+  });
+
+  it("orders families by code unit rather than by the ambient locale", () => {
+    // `Zeta` first is the code-unit answer. Under any collation in `locales`
+    // above, `apple` would come first — so this asserts which of the two
+    // rules is in force, not merely that some order came out.
+    // `grouped`, like every ordering test above, because membership within a
+    // family is explicitly not ordered by this module — the order *of* the
+    // families is what is under test.
+    expect(grouped(mixedCaseArchive())).toEqual([
+      ["Zeta-root", "Zeta-spouse"],
+      ["apple-root", "apple-spouse"],
+      ["Yolk-alone"],
+      ["aardvark-alone"],
+    ]);
+  });
+
+  it("gives the same order whichever order the rows arrive in", () => {
+    // The pairing of the two properties is the point: `YEO-103`'s criterion
+    // is that the order is a fact about the archive, and an order that is
+    // stable against row order but not against `LANG` only moves the
+    // non-determinism somewhere a test does not look.
+    const forwards = mixedCaseArchive();
+    const backwards: FamilyGraph = {
+      people: [...forwards.people].reverse(),
+      unions: [...forwards.unions].reverse(),
+      childLinks: [...forwards.childLinks].reverse(),
+    };
+
+    expect(grouped(backwards)).toEqual(grouped(forwards));
+  });
+});
+
+describe("compareIds", () => {
+  it("orders by code unit, not by collation", () => {
+    expect(compareIds("Zeta", "apple")).toBeLessThan(0);
+    expect(compareIds("apple", "Zeta")).toBeGreaterThan(0);
+
+    // Accents sit above `z` in code-unit order and below it in every
+    // collation. Stated so that the file records what the comparator is,
+    // rather than only that it is not `localeCompare`.
+    expect(compareIds("\u00e9lodie", "zoe")).toBeGreaterThan(0);
+    expect(
+      new Intl.Collator("en-US").compare("\u00e9lodie", "zoe"),
+    ).toBeLessThan(0);
+  });
+
+  it("returns 0 only for ids that are identical", () => {
+    /**
+     * `Array.prototype.sort` is stable, so a comparator returning 0 keeps
+     * input order — and input order is `graph.people`, the unordered `SELECT`
+     * `YEO-103` was written to escape. A 0 between two *different* ids would
+     * put that bug back in miniature.
+     *
+     * Collation could return one, which is the second reason this is not
+     * `localeCompare`: a tailoring that ignores case or accents calls two
+     * distinct ids equal. The pairs below are exactly those, and the
+     * collators are shown doing it.
+     */
+    expect(compareIds("person-1", "person-1")).toBe(0);
+
+    for (const [a, b] of [
+      ["Ada", "ada"],
+      ["resume", "r\u00e9sum\u00e9"],
+      ["co-op", "coop"],
+    ] as const) {
+      expect(compareIds(a, b)).not.toBe(0);
+      expect(compareIds(b, a)).not.toBe(0);
+      expect(Math.sign(compareIds(a, b))).toBe(-Math.sign(compareIds(b, a)));
+    }
+
+    const blunt = new Intl.Collator("en-US", { sensitivity: "base" });
+    expect(blunt.compare("Ada", "ada")).toBe(0);
+    expect(blunt.compare("resume", "r\u00e9sum\u00e9")).toBe(0);
   });
 });

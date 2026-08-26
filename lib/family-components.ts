@@ -33,6 +33,69 @@ import type { FamilyGraph } from "@/lib/family-graph";
  */
 
 /**
+ * Two person ids, compared by code unit (`YEO-111`).
+ *
+ * ## Why not `localeCompare`
+ *
+ * The order below is load-bearing: `YEO-103` asked for a tab order that is
+ * *deterministic*, so that the same archive tabs the same way, and the id
+ * comparison is the only thing standing behind that. `localeCompare` cannot
+ * carry it. Its answer comes from the collation data the process happens to
+ * have, so it varies with `LANG`, with a `full-icu` versus `small-icu` build,
+ * and with the ICU version a Node upgrade brings in — and none of that is a
+ * property of the two strings. Two ids that differ only in case are enough to
+ * show it: `"Zeta" < "apple"` by code unit, while every ICU locale this
+ * repository could run under puts `apple` first.
+ *
+ * Pinning a locale (`localeCompare("en", { sensitivity: "variant" })`) would
+ * fix the `LANG` half and not the rest — the tailoring behind `en` is still
+ * ICU data that a build can lack and a version can change. `<` compares UTF-16
+ * code units and is defined by the language rather than by the runtime's
+ * tables, so it gives the same answer everywhere, forever. Passing `undefined`
+ * as the locale is the trap in the middle: it reads the ambient locale, so it
+ * looks pinned and is not.
+ *
+ * `lib/gedcom-export.ts` already made this call for the same reason, and says
+ * so in its header and in `docs/gedcom.md`: "String comparison is by code
+ * unit, not by locale." This is that rule reaching the tab order.
+ *
+ * ## Why it is right *here* specifically, and not everywhere
+ *
+ * Code-unit order is not human alphabetical order — it sorts every capital
+ * ahead of every lowercase letter and puts `é` after `z` — so it is the wrong
+ * comparator for anything a reader looks at *as sorted text*. `lib/
+ * parent-options.ts` and `lib/person-detail.ts` sort display labels and names,
+ * and they keep `localeCompare` deliberately: an accented name belongs where a
+ * reader expects it, and those orders are read rather than depended on.
+ *
+ * These ids are neither read nor meaningful. Nothing renders them, and the
+ * docblock below is explicit that the smallest id "says nothing about a
+ * family". All that is asked of the order is that it be *the same one twice*,
+ * which is exactly what code units guarantee and collation does not.
+ *
+ * ## Never 0 for two different ids
+ *
+ * `Array.prototype.sort` has been stable since ES2019, so a comparator that
+ * returns 0 falls back to input order — and input order here is
+ * `graph.people`, which is the unordered-`SELECT` order `YEO-103` was written
+ * to escape. A tie that resolves to 0 would quietly reintroduce that bug in
+ * miniature. It cannot happen: `<`/`>` only tie on strings that are equal code
+ * unit for code unit, and person ids are unique. `localeCompare` had no such
+ * guarantee — collation ignores differences at strengths below its sensitivity
+ * setting, so `"a"` and `"A"` compare equal under a case-insensitive
+ * tailoring, and two genuinely distinct ids would have fallen through to the
+ * database.
+ *
+ * @param a a person id
+ * @param b another person id
+ * @returns negative if `a` sorts first, positive if `b` does, 0 only when the
+ *   two strings are identical
+ */
+export function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
  * Everybody in the archive, grouped into the families they actually belong to
  * and put in a canonical order.
  *
@@ -179,16 +242,24 @@ export function connectedFamilies(graph: FamilyGraph): string[][] {
       // `members` always holds at least the person the walk started from, so
       // there is no empty-array case for `reduce` to fall off.
       key: members.reduce((lowest, id) =>
-        id.localeCompare(lowest) < 0 ? id : lowest,
+        compareIds(id, lowest) < 0 ? id : lowest,
       ),
-      // `localeCompare` rather than `<` to match the tiebreak
-      // `lib/tree-layout.ts` already sorts ids with; one file should not order
-      // two ids one way while the other orders them the opposite way.
+      // {@link compareIds} rather than `localeCompare`, and shared with
+      // `lib/tree-layout.ts` as a function rather than as a convention: one
+      // file must not order two ids one way while the other orders them the
+      // opposite way, and a comment asking the next editor to keep two
+      // comparators in step is weaker than having only one to edit.
     });
   }
 
+  /**
+   * `key` is the smallest id in the family, families are disjoint, and person
+   * ids are unique — so no two families share a key and this comparator never
+   * returns 0 for two of them. That matters rather than being a curiosity:
+   * see {@link compareIds} on what a 0 here would fall back to.
+   */
   families.sort(
-    (a, b) => Number(a.alone) - Number(b.alone) || a.key.localeCompare(b.key),
+    (a, b) => Number(a.alone) - Number(b.alone) || compareIds(a.key, b.key),
   );
 
   return families.map((family) => family.members);
