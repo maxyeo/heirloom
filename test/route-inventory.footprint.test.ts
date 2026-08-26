@@ -70,11 +70,16 @@ describe("unscannedSources", () => {
 
 describe("sourceFiles", () => {
   it("is the one footprint both tripwires scan", () => {
-    // The point of exporting `SOURCE_DIRS`. `app/auth-boundary.test.ts` reaches
-    // the tree through `actionSourceFiles`, `lib/sanitize-html.call-sites
-    // .test.ts` through `sourceFiles(SOURCE_DIRS)`, and if those two ever
-    // stopped being the same set one guard would be quietly narrower than the
-    // other with nothing to say so.
+    // Close to tautological today, and worth being honest about:
+    // `actionSourceFiles` is one line and that line is
+    // `sourceFiles(SOURCE_DIRS)`, so what this pins is that the line stays
+    // that. That is a smaller claim than "both tripwires agree" but not an
+    // empty one. `app/auth-boundary.test.ts` reaches the tree through
+    // `actionSourceFiles` and `lib/sanitize-html.call-sites.test.ts` through
+    // `sourceFiles(SOURCE_DIRS)`, so giving the route half a footprint of its
+    // own is a one-line edit that looks local and makes one guard quietly
+    // narrower than the other. The tests above check the list is right; this
+    // checks there is one.
     expect(actionSourceFiles()).toEqual(sourceFiles(SOURCE_DIRS));
   });
 

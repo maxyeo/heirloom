@@ -63,13 +63,15 @@ export const SOURCE_DIRS = ["app", "components", "lib"];
  * simpler reason: nothing routes to them directly; they render only after a
  * page has already run.
  *
- * The `.js` and `.jsx` spellings can no longer match anything, since
- * `sourceFiles` refuses to enumerate a directory containing one at all
- * (`YEO-100`). They stay because this set answers "what filename makes a
- * directory routable", which is Next's question and has Next's answer; the
- * extension footprint is a separate question with a separate answer, and
- * collapsing the two would leave a reader who widened `SOURCE_EXTENSIONS`
- * having to rediscover this list.
+ * The `.js` and `.jsx` spellings match nothing, and never did — they are
+ * filtered out by `SOURCE_EXTENSIONS` long before this set is consulted. What
+ * `YEO-100` changed is that the fact is now enforced rather than true by
+ * omission: `sourceFiles` refuses to enumerate a directory holding one at all,
+ * so it cannot quietly stop being true. They stay because this set answers
+ * "what filename makes a directory routable", which is Next's question and has
+ * Next's answer; the extension footprint is a separate question with a
+ * separate answer, and collapsing the two would leave a reader who widened
+ * `SOURCE_EXTENSIONS` having to rediscover this list.
  */
 const ROUTE_FILENAMES = new Set([
   "page.tsx",
