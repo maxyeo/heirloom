@@ -80,17 +80,77 @@ round:
   a value _is_ a pointer is decided from the value exactly as the file wrote it
   and kept on the node as `GedcomNode.pointer`, rather than recomputed later
   from a value that no longer tells the two apart. The export side is the same
-  rule from the other end: `emit` escapes every value it writes, and
-  `emitPointer` writes the five pointer lines that must not be escaped.
+  rule from the other end: `emit` escapes every value it writes, and the lines
+  whose `@`s are structure rather than text are written around it — every one
+  of them enumerated below, because a doc that undercounts them is worse than
+  no doc at all.
 - **The escape belongs to an _assembled_ value, and is undone after `CONT` and
   `CONC` have been folded in.** `@@` is two characters, and a writer breaking
   at a fixed column may break between them — legal, and something this export
-  still does rather than avoids. A replacement applied per physical line would
-  see two lone `@`s and undo neither.
+  still does rather than avoids, because it escapes before it splits. A
+  replacement applied per physical line would see two lone `@`s and undo
+  neither.
 
 A lone `@` on the way in is left exactly as it is rather than reported. No
 conforming writer emits one and real files are full of them, unescaped email
 addresses most of all.
+
+### Escaping before splitting, and the cap it counts against
+
+`escapeValue` runs before `chunk`, so the doubling is already inside the
+length `chunk` measures. The cap it measures against is `MAX_VALUE_LENGTH` in
+`lib/gedcom-export.ts` — read the number there rather than from one restated
+here, because a literal copied into prose is a literal that drifts.
+
+The arithmetic that order buys: the longest prefix this module writes is
+`2 CONC ` at seven characters, so a physical line is at most
+`MAX_VALUE_LENGTH` plus seven — at its present value of 200, a 207-character
+line, inside the 255 characters 5.5.1 allows a whole line, and the margin
+holds whatever the value contains. A name that is nothing but `@`s doubles to
+twice its length and still splits into pieces of `MAX_VALUE_LENGTH`, because
+the doubling was counted.
+
+Reversed, it does not hold. A 200-code-point run of `@`s would chunk to a
+single piece and _then_ escape to 400, for a line of 407 characters — past
+the format's cap, and only ever on the kind of value that arrives once from
+somebody else's file, which is to say on nothing a test over ordinary names
+would reach.
+
+### Every place an `@` is written unescaped
+
+Following `emitPointer` to its call sites looks like the way to enumerate
+them, and is not: there are five — `SUBM`, `FAMC`, `FAMS`, `CHIL`, and
+`HUSB`/`WIFE` through `writePartner` — and a line written somewhere else is
+missed in silence. Grep for the write instead:
+
+```bash
+grep -n 'lines\.push(' lib/gedcom-export.ts
+```
+
+Every line of the file leaves through that one call, so its four matches are
+the complete set of writers — two of them inside `emit`, one for the bare
+tagged line and one for the value — and each is either escaped or a stated
+exception:
+
+| Writer         | Writes            | Escaped                                     |
+| -------------- | ----------------- | ------------------------------------------- |
+| `emit` (twice) | `2 SURN O@@Brien` | yes — every value it is handed              |
+| `emitPointer`  | `1 HUSB @I1@`     | no — those `@`s are the format's delimiters |
+| `record`       | `0 @I1@ INDI`     | no — and it does not need to be             |
+
+`record` is the one the `emitPointer` grep misses, and it is right as it
+stands: the xref it interpolates is a string this module mints itself — `I1`,
+`F1`, `U1` — which can never contain an `@`, so there is nothing there to
+escape. It is not routed through `emitPointer` because the two lines are
+different shapes: there the pointer is the line's _value_, here it is the
+line's xref, ahead of the tag. A helper built for one would have to be bent to
+write the other, which is a worse structure than a sentence saying why.
+
+Escaping by default is what makes enumerating the exceptions worth the
+trouble: a new value call site is escaped without anybody remembering to, and
+a pointer written through `emit` breaks loudly rather than quietly. A count
+that is short by one works against exactly that, which is why this one is
+taken from the grep rather than from memory.
 
 ## The one thing that must stay true
 
