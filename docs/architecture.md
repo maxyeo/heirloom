@@ -851,10 +851,106 @@ bytes the tree already has. Refusing needs no identity model and destroys
 nothing it did not write itself, and `app/api/import/route.ts` answers `409`
 naming the date and what the earlier import added, so a reader who did it on
 purpose — a second tab, a slow connection retried — learns their first attempt
-already landed rather than being left to guess. The policy is also stated
-before that: `components/GedcomImport.tsx` reads the same ledger on the
-preview request and says, at the point of confirm, either that importing this
-file is recorded and a repeat will be refused, or that it already has been.
+already landed rather than being left to guess. That `409` also names what a
+reader who meant it can do instead, which is the next section. The policy is
+stated before either: `components/GedcomImport.tsx` reads the same ledger on
+the preview request and says, at the point of confirm, either that importing
+this file is recorded and a repeat will be refused, or that it already has
+been.
+
+### Releasing a digest, and why it is a retirement rather than a delete
+
+The refusal above is the correct default precisely because it fires on the
+_accidental_ second import. But the same condition fires on the deliberate one,
+and until `YEO-95` the product could not tell them apart, because it never
+asked. That made the guard a one-way door: import a file, decide the result is
+wrong — a bad parse, a test run, the wrong file — delete the imported rows, and
+the file can never be imported again. The tree is empty, the file is the one
+you want, and the only exit is `DELETE FROM gedcom_imports` by hand against
+production.
+
+That obvious manual fix is also the destructive one, and the two halves of
+`YEO-89` are in direct tension over it. `import_id` on `individuals`, `unions`
+and `union_children` is `ON DELETE set null`, which protects those _rows_ when
+a ledger entry is deleted — it does not free the digest when the rows are
+deleted. So anyone reaching for the ledger row with a `DELETE` silently strips
+the provenance from every surviving row of that import: the exact column the
+ledger was added for.
+
+**So the escape hatch deletes nothing.** A ledger row is _retired_ — its
+`released_at` is set — and the guard is a partial unique index over the rows
+that still hold their claim:
+
+```sql
+create unique index gedcom_imports_live_digest_idx
+  on gedcom_imports (digest) where released_at is null;
+```
+
+Everything the plain unique constraint bought survives that change, because it
+is still an index and Postgres still enforces it inside the writing
+transaction. What it adds is that giving a claim up is an ordinary row update:
+the retired row keeps its id, its counts, its date and every `import_id`
+pointing at it, and the re-import is recorded as a **new** entry beside it. A
+file that was imported, released and imported again is legible afterwards as
+the two imports it actually was.
+
+Three decisions about the shape of the override are worth stating, because each
+had a more obvious alternative.
+
+**It names the ledger row it is releasing** (`IMPORT_RELEASE_FIELD` in
+`lib/import-endpoint.ts`), rather than being a `force` flag or naming only the
+digest. A flag says _let this file through whatever is in the way_, and a
+request that says that stays true however many times it is sent — replayed by a
+retry, re-posted by a back button, or sent again from a second tab, it would
+release whatever was live and write another complete copy of the tree. That is
+the duplication this whole section exists to prevent, reached through the door
+built to escape it. Naming the row makes the override single-use with no
+bookkeeping at all: the second attempt names a row that is no longer live,
+releases nothing, and meets the ordinary index with the ordinary refusal —
+naming the import that has just happened. The id is checked against the digest
+of the bytes in the same request, so it can never retire an unrelated file's
+claim.
+
+**It happens inside the writing transaction**, not as a step of its own. A
+release with its own endpoint would create a state nobody wants: a digest freed
+with nothing written, which is a guard turned off and left off. Here the
+release and the import commit together or neither does, so the guard is never
+down except for the write it was let down for. It also means the route checks
+nothing about the id — whether the row exists, still holds its claim, and
+belongs to these bytes are three questions with one answer, and that answer is
+only stable inside the transaction that acts on it. A check in the handler
+would be the `select`-then-write race this section removed, reintroduced by the
+change meant to make the guard usable.
+
+**It is two presses on the screen, and neither of them is a checkbox.**
+`components/GedcomImport.tsx` shows a file the ledger already holds with no
+Import button, as before; what it now also shows is a way to _reach_ one. The
+first press sends nothing and only says the refusal is not what the reader
+wants; it reveals what a release does, and the second press does it. A `force`
+checkbox was the alternative and is worse in the specific way that matters — it
+is visible on the ordinary path, tickable before the reader has read why, and
+still ticked on the next file. The accidental double-import is untouched by any
+of this: it sends no release field, because nothing on that path opens the
+disclosure, and it stays refused with no extra clicks.
+
+**Releasing removes nothing the earlier import wrote**, and the screen says so
+before the second press. That is the honest behaviour rather than a missing
+half: this application knows which rows an import created, but not which of
+them somebody has since edited by hand, and deleting a person's corrected dates
+to make room for the bytes they were corrected from is the exact failure
+"replace" was rejected for above. So if the earlier import's people are still
+in the tree, importing the file again really does add a second copy of them —
+which is stated in as many words, because a reader who has already deleted
+those rows needs to know it does not apply to them, and a reader who has not
+needs to know it does.
+
+**Deleting rows from the tree does not release their digest**, and that is a
+decision rather than an omission. Coupling the two would put the guard back
+under implicit control — a digest quietly freed by an unrelated deletion, at a
+moment nobody chose, which is precisely the kind of behaviour `YEO-89` existed
+to remove. Releasing is an act with a date and a name against it
+(`released_at`, `released_by`) because it is an override of a guard, and the
+question asked afterwards about an override is who used it.
 
 What this does not solve, and is not trying to: **a different file describing
 the same people still duplicates them.** There is still no identity to match a

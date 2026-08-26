@@ -1,4 +1,4 @@
-import { eq, getTableColumns } from "drizzle-orm";
+import { and, eq, getTableColumns, isNull, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import type { GedcomMapping } from "@/lib/gedcom-map";
@@ -87,6 +87,53 @@ import { rowsFromMapping } from "@/lib/import-rows";
  * tables, and the loser's entire write — ledger row included — rolls back
  * with it. See `db/schema.ts`'s `gedcomImports` docblock for why refusing
  * beat merging or replacing the prior import.
+ *
+ * ## Releasing a prior claim, and why it rides on the import (`YEO-95`)
+ *
+ * The refusal above had no override, which made it a one-way door: a reader
+ * who imported a file, decided the result was wrong and deleted the rows was
+ * left with a digest nothing in the product could release. {@link
+ * ImportOptions.release} is the way back out, and three things about its
+ * shape are decisions rather than convenience.
+ *
+ * **It releases rather than deletes.** The prior ledger row is marked
+ * `released_at` and keeps everything else — its id, its counts, its date, and
+ * every `individuals.import_id` still pointing at it. Deleting it is the
+ * obvious manual fix and it is the destructive one: the foreign key is `ON
+ * DELETE set null`, so dropping the row silently strips the provenance from
+ * every row of that import that survived. See `gedcomImports` in
+ * `db/schema.ts` for the partial index this rests on.
+ *
+ * **It happens inside the writing transaction, not before it.** A release is
+ * only ever asked for in order to import, so making it a step of its own —
+ * its own endpoint, its own button — would create a state nobody wants: a
+ * digest freed with nothing written, which is a guard turned off and left
+ * off. Here the release and the import commit together or neither does, so
+ * the guard is never down except for the write it was let down for.
+ *
+ * **It removes nothing the earlier import wrote.** That is the honest
+ * behaviour and not a missing half. This module knows which rows an import
+ * created; it does not know which of them somebody has since edited by hand,
+ * and deleting a person's corrected dates to make room for the bytes they
+ * were corrected from is the exact failure "replace" was rejected for above.
+ * So releasing frees the claim and nothing else, and if the earlier import's
+ * people are still in the tree, importing again does produce a second copy —
+ * which `components/GedcomImport.tsx` says in as many words before the
+ * override can be reached.
+ *
+ * **The override is single-use, and nothing has to remember that it was
+ * used.** {@link ImportOptions.release} names one ledger row rather than
+ * asserting a mood, so releasing it a second time releases nothing, and the
+ * unique index meets the replay with the ordinary refusal — naming the import
+ * that has just happened. A retried request, a second tab and a back button
+ * are therefore no more dangerous on this path than on the ordinary one,
+ * which is the property that lets the door exist at all.
+ *
+ * A release that matches no live row updates nothing and is not an error in
+ * its own right: the caller wanted this file imported, and whether it lands
+ * is then the same question it always was, asked of the same index. Two
+ * callers racing to release the same row are settled there too — see
+ * `lib/gedcom-import.db.test.ts`.
  *
  * ## Faults propagate; a refusal is not one
  *
@@ -181,6 +228,51 @@ export type ImportProvenance = {
 };
 
 /**
+ * What to do about a prior import of these same bytes (`YEO-95`).
+ *
+ * An options object with one field rather than a bare third parameter, so
+ * that the call site reads `{ release: priorImportId }` instead of a uuid
+ * floating after the provenance with nothing on it to say which of the
+ * several ids in scope it is. The shape also leaves room for a second
+ * decision about a prior import without changing the arity of {@link
+ * importGedcom} again.
+ */
+export type ImportOptions = {
+  /**
+   * The `gedcom_imports.id` whose claim on this digest to give up before
+   * writing, or `null` to be refused by it as usual.
+   *
+   * **An id rather than a boolean, and that is the safety property.** A
+   * boolean would mean *let this file through whatever is in the way*, which
+   * stays true however many times the request is sent: a retry or a second
+   * tab would release the import that had just succeeded and write a second
+   * complete copy of the tree — the exact duplication `YEO-89` exists to
+   * prevent, reached through the door built to escape it. Naming the row
+   * makes the override single-use with no bookkeeping at all, because the
+   * second attempt names a row that is no longer live and releases nothing.
+   *
+   * Not trusted on its own. The `where` below requires it to be a row for
+   * *this* digest as well, so a release can never retire some unrelated
+   * file's claim, whatever the caller sends.
+   *
+   * `app/api/import/route.ts` reads it from a request field of its own, which
+   * the screen fills in from the prior import it has just shown the reader
+   * and sends only after a second, separate press.
+   */
+  release: string | null;
+};
+
+/**
+ * The default: import, and be refused if this file is already in the ledger.
+ *
+ * Named and exported rather than written inline as a parameter default,
+ * because it is the thing every caller that has not thought about `YEO-95`
+ * gets — the guard intact — and a reader of a two-argument call deserves to
+ * be able to find out what the third one was.
+ */
+export const REFUSE_IF_IMPORTED: ImportOptions = { release: null };
+
+/**
  * How an import ends: written, or refused because this exact file already
  * was (`YEO-89`).
  *
@@ -231,6 +323,9 @@ export type ImportOutcome =
  *
  * @param mapping rows to write, with every id minted and every key resolved
  * @param provenance what to record about this file if it is written
+ * @param options which prior ledger row, if any, to release its claim on this
+ *   digest before writing (`YEO-95`); defaults to {@link REFUSE_IF_IMPORTED},
+ *   which is the guard as `YEO-89` left it
  * @returns the ledger id and per-table counts, or the prior import this file
  *   already has
  * @throws whatever the driver raises, having rolled the whole import back
@@ -238,6 +333,7 @@ export type ImportOutcome =
 export async function importGedcom(
   mapping: GedcomMapping,
   provenance: ImportProvenance,
+  options: ImportOptions = REFUSE_IF_IMPORTED,
 ): Promise<ImportOutcome> {
   /**
    * The rows themselves come from `lib/import-rows.ts`, and deliberately not
@@ -259,9 +355,59 @@ export async function importGedcom(
   return db
     .transaction(async (tx): Promise<ImportOutcome> => {
       /**
+       * The override, spent before the insert that would otherwise be refused
+       * (`YEO-95`). An `update` rather than a `delete`, which is the whole
+       * point — see the module docblock.
+       *
+       * Three conditions, and none of them is decoration:
+       *
+       * - **`id`**, so this retires the row the caller was actually shown and
+       *   not whichever row happens to hold the digest when the request
+       *   lands. That is what makes a replayed release harmless rather than a
+       *   second copy of the tree; {@link ImportOptions.release} argues it in
+       *   full.
+       * - **`digest`**, so an id from somewhere else cannot retire an
+       *   unrelated file's claim. The id crosses the wire, so it is a value
+       *   the caller controls and nothing here treats it as more than a
+       *   claim to check.
+       * - **`released_at is null`**, so two callers racing to release the
+       *   same row settle it here: the second wakes to find the predicate no
+       *   longer true, skips, and meets the ordinary index below.
+       *
+       * Nothing is read back and nothing is asserted about how many rows it
+       * touched, because every reason for touching none of them has the same
+       * correct ending. A stale id, a foreign id, an id already released, a
+       * caller who asked for the override and did not need it — in all four
+       * the guard is simply left standing, and the insert below decides the
+       * request under exactly the index it always has. There is no state in
+       * which a release has happened and the import has not: they commit
+       * together or neither does.
+       */
+      if (options.release !== null) {
+        await tx
+          .update(schema.gedcomImports)
+          .set({ releasedAt: new Date(), releasedBy: provenance.importedBy })
+          .where(
+            and(
+              eq(schema.gedcomImports.id, options.release),
+              eq(schema.gedcomImports.digest, provenance.digest),
+              isNull(schema.gedcomImports.releasedAt),
+            ),
+          );
+      }
+
+      /**
        * The ledger row, written first and the only insert in this function
        * that may legitimately conflict. See the module docblock for why
        * `onConflictDoNothing` belongs here and nowhere else in this write.
+       *
+       * The `where` repeats the partial index's predicate (`YEO-95`), and it
+       * is not optional decoration: Postgres infers which unique index an `on
+       * conflict (digest)` refers to, and it will only ever infer a *partial*
+       * one from a statement that carries a predicate implying the index's
+       * own. Without it this statement raises "there is no unique or
+       * exclusion constraint matching the ON CONFLICT specification" — loudly
+       * and on every import, rather than quietly and on the interesting ones.
        */
       const [ledger] = await tx
         .insert(schema.gedcomImports)
@@ -274,7 +420,10 @@ export async function importGedcom(
           unionCount: unions.length,
           unionChildCount: unionChildren.length,
         })
-        .onConflictDoNothing({ target: schema.gedcomImports.digest })
+        .onConflictDoNothing({
+          target: schema.gedcomImports.digest,
+          where: sql`${schema.gedcomImports.releasedAt} is null`,
+        })
         .returning({ id: schema.gedcomImports.id });
 
       if (ledger === undefined) {
@@ -287,6 +436,7 @@ export async function importGedcom(
          */
         const [existing] = await tx
           .select({
+            id: schema.gedcomImports.id,
             fileName: schema.gedcomImports.fileName,
             importedAt: schema.gedcomImports.importedAt,
             individualCount: schema.gedcomImports.individualCount,
@@ -294,7 +444,16 @@ export async function importGedcom(
             unionChildCount: schema.gedcomImports.unionChildCount,
           })
           .from(schema.gedcomImports)
-          .where(eq(schema.gedcomImports.digest, provenance.digest));
+          .where(
+            and(
+              eq(schema.gedcomImports.digest, provenance.digest),
+              // The row that refused this insert is by construction a live
+              // one — the index the conflict came from covers no others —
+              // so the same predicate that identifies it to Postgres is the
+              // one that identifies it here (`YEO-95`).
+              isNull(schema.gedcomImports.releasedAt),
+            ),
+          );
 
         if (existing === undefined) {
           /**

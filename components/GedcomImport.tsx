@@ -6,6 +6,7 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  IMPORT_RELEASE_FIELD,
   formatImportedAt,
   type ImportRefusal,
   type ImportResponse,
@@ -111,6 +112,40 @@ import {
  * reader sees before pressing Import is either "this will be refused if you
  * have done it before" or "you already have, on this date, with these
  * counts", and never merely a disabled button with no reason attached.
+ *
+ * ## And the way out of that refusal (`YEO-95`)
+ *
+ * Until `YEO-95` the second of those two sentences ended the story: an
+ * already-imported file had no Import button and no way to get one, so a
+ * reader who had imported a file, deleted the result and wanted to try again
+ * was told no by a screen with nothing else on it. The refusal is still the
+ * right default — it is what fires on the *accidental* second import — but
+ * the same condition fires on the deliberate one, and the product could not
+ * tell them apart because it never asked.
+ *
+ * So it asks, and the asking is the design. The Import button does not come
+ * back. What appears instead is a plainly-worded way to *reach* it — one
+ * press to say the refusal is not what you want, which sends nothing, and a
+ * second, differently-labelled press to actually import. Two presses rather
+ * than a `force` checkbox, because a checkbox is a thing that can be left on:
+ * it would be visible on the ordinary path, tickable before the reader has
+ * read why, and still ticked on the next file.
+ *
+ * The `releasing` state below is what separates them, and it is local and
+ * short-lived by design — a new file, a cancel, or a finished import all
+ * clear it, so the disclosure never outlives the preview it was opened
+ * against.
+ *
+ * The accidental double-import is untouched by any of this. It sends no
+ * release field, because nothing on that path opens the disclosure, and the
+ * server's guard does not consult this screen anyway.
+ *
+ * What the second press does, this screen states before it can be pressed:
+ * the earlier import's record is kept and only its claim on the file is given
+ * up, and none of the rows it wrote are removed — so if those people are
+ * still in the tree, importing again really does mean two copies of them.
+ * That is the honest sentence rather than the reassuring one, and it is the
+ * only sentence that makes the reader's decision the reader's.
  */
 export function GedcomImport() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -120,6 +155,14 @@ export function GedcomImport() {
   const [imported, setImported] = useState<Imported | null>(null);
   const [refusal, setRefusal] = useState<ImportRefusal | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  /**
+   * Whether the reader has said, in one press that sends nothing, that they
+   * want the option to import a file the ledger has already seen (`YEO-95`).
+   *
+   * Only ever consulted alongside `previewed.alreadyImported`, so there is no
+   * state in which this is open over a file nothing is refusing.
+   */
+  const [releasing, setReleasing] = useState(false);
 
   /**
    * A new file makes every answer on the screen stale at once — the preview
@@ -133,6 +176,7 @@ export function GedcomImport() {
     setImported(null);
     setRefusal(null);
     setCancelled(false);
+    setReleasing(false);
     // Whatever is in flight is about the old file and will be discarded when
     // it lands (see `stale`), so the screen should stop saying it is working.
     setBusy(null);
@@ -181,6 +225,7 @@ export function GedcomImport() {
     setImported(null);
     setRefusal(null);
     setCancelled(false);
+    setReleasing(false);
 
     const body = new FormData();
     body.set(IMPORT_FILE_FIELD, chosen);
@@ -208,7 +253,15 @@ export function GedcomImport() {
     setRefusal(answer);
   }
 
-  async function confirm() {
+  /**
+   * Import the previewed file.
+   *
+   * @param release the prior import to give up its claim on this file
+   *   (`YEO-95`), or null — the ordinary case — to let the ledger refuse a
+   *   repeat. Only ever non-null from the second of the two presses the
+   *   already-imported branch below asks for.
+   */
+  async function confirm(release: string | null = null) {
     const chosen = inputRef.current?.files?.[0];
     if (!chosen || !previewed || busy) return;
 
@@ -222,6 +275,9 @@ export function GedcomImport() {
     // recomputes it from the file in this very request and refuses if the two
     // disagree, so a confirmation can only ever confirm what was read.
     body.set(IMPORT_CONFIRM_FIELD, previewed.digest);
+    // Absent unless the reader asked for it twice. The endpoint reads its
+    // presence as the whole decision, so it is set here and nowhere else.
+    if (release !== null) body.set(IMPORT_RELEASE_FIELD, release);
     const answer = await post(body);
     if (stale(chosen)) return;
 
@@ -245,6 +301,7 @@ export function GedcomImport() {
       // lives on the preview, taking it down is also what stops a second
       // press importing the same file twice (see the docblock above).
       setPreviewed(null);
+      setReleasing(false);
       return setImported({ name: chosen.name, report: answer.report });
     }
 
@@ -264,6 +321,7 @@ export function GedcomImport() {
     setImported(null);
     setRefusal(null);
     setCancelled(true);
+    setReleasing(false);
   }
 
   return (
@@ -343,22 +401,19 @@ export function GedcomImport() {
           */}
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-rule pt-3">
             {previewed.alreadyImported ? (
-              <p className="text-caption">
-                This exact file was already imported, on{" "}
-                {formatImportedAt(previewed.alreadyImported.importedAt)} — it
-                added{" "}
-                {countable(
-                  previewed.alreadyImported.counts.people,
-                  "person",
-                  "people",
-                )}
-                . Importing it again would be refused, so there is nothing to
-                press.
-              </p>
+              <AlreadyImported
+                previous={previewed.alreadyImported}
+                people={previewed.preview.counts.people}
+                busy={busy}
+                releasing={releasing}
+                onAsk={() => setReleasing(true)}
+                onKeepRefused={() => setReleasing(false)}
+                onRelease={(id) => void confirm(id)}
+              />
             ) : (
               <button
                 type="button"
-                onClick={confirm}
+                onClick={() => void confirm()}
                 disabled={busy !== null}
                 className="rounded-panel border border-rule bg-wash px-3 py-1 text-note font-medium hover:bg-paper disabled:opacity-60"
               >
@@ -424,6 +479,116 @@ const SIGNED_OUT =
 /** Any other answer with no JSON in it, which nothing is expected to produce. */
 const UNREADABLE =
   "The answer could not be read. Try again — nothing was written.";
+
+/**
+ * The confirm row for a file the ledger has already seen (`YEO-89`), and the
+ * two presses that get past it (`YEO-95`).
+ *
+ * Closed, this is the sentence `YEO-89` put here — the date and what the
+ * earlier import added — with one button beside it that sends nothing at all
+ * and only admits that a reader might have meant it.
+ *
+ * Open, it is the whole of what a release does, in the order somebody
+ * deciding needs it: what is kept, what is not removed, and the consequence
+ * that follows from those two together. The last of those is the one worth
+ * being blunt about, and it is the reason this is prose rather than a
+ * confirm dialog's single line: **releasing removes nothing**, so if the
+ * earlier import's people are still in the tree, importing again is how you
+ * end up with two of each of them. A reader who has already deleted those
+ * rows — the case the escape hatch exists for — reads that and knows it does
+ * not apply to them. A reader who has not just learned what they were about
+ * to do.
+ *
+ * The second button is labelled with the act rather than with agreement.
+ * "Release and import 12 people" says what will happen; an "OK" or a
+ * "Continue" says only that the reader is done reading.
+ *
+ * A separate component rather than a branch inline, because it is the one
+ * part of this screen with a state of its own, and because keeping it out of
+ * `GedcomImport` keeps that function's shape — preview, confirm, cancel —
+ * readable at a glance.
+ */
+function AlreadyImported({
+  previous,
+  people,
+  busy,
+  releasing,
+  onAsk,
+  onKeepRefused,
+  onRelease,
+}: {
+  previous: PriorImport;
+  /** How many people *this* file would add, for the release button's label. */
+  people: number;
+  busy: Busy;
+  releasing: boolean;
+  onAsk: () => void;
+  onKeepRefused: () => void;
+  /** Called with {@link PriorImport.id} — the claim being given up. */
+  onRelease: (id: string) => void;
+}) {
+  const added = countable(previous.counts.people, "person", "people");
+  const when = formatImportedAt(previous.importedAt);
+
+  if (!releasing) {
+    return (
+      <>
+        <p className="text-caption">
+          This exact file was already imported, on {when} — it added {added}.
+          Importing it again would be refused, so there is nothing to press.
+        </p>
+        <button
+          type="button"
+          onClick={onAsk}
+          disabled={busy !== null}
+          className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash disabled:opacity-60"
+        >
+          Import it again anyway
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <div className="basis-full">
+      <p className="text-caption">
+        This exact file was already imported, on {when} — it added {added}.
+      </p>
+      <p className="mt-2 text-caption">
+        Importing it again releases that earlier import&rsquo;s claim on this
+        file. The record of it is kept, not deleted: its date, its counts, and
+        the link from every row it wrote back to it all survive, and this import
+        is recorded as an entry of its own beside it.
+      </p>
+      <p className="mt-2 text-caption">
+        <strong>Nothing the earlier import wrote is removed.</strong> If those{" "}
+        {added} are still in the tree, importing this file again adds a second
+        copy of every one of them. Do this when the earlier import&rsquo;s rows
+        are already gone, or when a second copy is what you want.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onRelease(previous.id)}
+          disabled={busy !== null}
+          className="rounded-panel border border-rule bg-wash px-3 py-1 text-note font-medium hover:bg-paper disabled:opacity-60"
+        >
+          {busy === "importing"
+            ? "Importing…"
+            : `Release and import ${countable(people, "person", "people")}`}
+        </button>
+        <button
+          type="button"
+          onClick={onKeepRefused}
+          disabled={busy !== null}
+          className="rounded-panel border border-rule px-3 py-1 text-note hover:bg-wash disabled:opacity-60"
+        >
+          Keep it refused
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * A refusal, including the one that is not the reader's fault.

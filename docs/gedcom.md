@@ -436,9 +436,9 @@ provenance](architecture.md#import-provenance-and-why-a-second-import-of-the-sam
 in the architecture document for why refuse beat both alternatives — but two
 things are worth saying from this side of the pipeline specifically:
 
-- **The guard is `gedcom_imports.digest`'s unique index, checked by Postgres
-  inside the same transaction `importGedcom` already opens — not a `select`
-  this module runs first.** A check-then-insert has a race in the middle that
+- **The guard is `gedcom_imports.digest`'s _partial_ unique index, checked by
+  Postgres inside the same transaction `importGedcom` already opens — not a
+  `select` this module runs first.** A check-then-insert has a race in the middle that
   a second tab, a retried request, or a stale preview all find; the unique
   index has none, because whichever transaction's insert loses is refused by
   the database itself and rolled back whole, ledger row included.
@@ -457,6 +457,25 @@ what the earlier import added, and `components/GedcomImport.tsx` reads the
 same ledger on the preview request so the reader is told before they press
 Import, not only after. See [Previewing an import](#previewing-an-import)
 below for where that read sits relative to "nothing on this path can write".
+
+## …and importing it twice on purpose
+
+The refusal above has an override (`YEO-95`), and the shape of it matters more
+than its existence: `importGedcom` takes the **id of the ledger row** whose
+claim is being given up, not a `force` flag. A flag would say _let this file
+through whatever is in the way_, which stays true on every retry and every
+second tab; naming the row makes the override single-use with no bookkeeping,
+because the second attempt names a row that is no longer live. The release is
+an `update` setting `released_at` — never a `delete`, which would strip
+`import_id` from every surviving row of that import — and it runs inside the
+same transaction as the write, so a digest is never freed with nothing written
+against it. The index above is partial for exactly this reason: released rows
+are exempt from it, so the row a release retires cannot go on refusing the
+import that release was for.
+
+Releasing removes none of the rows the earlier import wrote. That is stated on
+the screen before the override can be pressed, and argued in
+[Releasing a digest](architecture.md#releasing-a-digest-and-why-it-is-a-retirement-rather-than-a-delete).
 
 ## The seam between reading and writing
 

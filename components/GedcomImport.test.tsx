@@ -8,6 +8,7 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  IMPORT_RELEASE_FIELD,
   type ImportDoneResponse,
   type ImportPreviewResponse,
   type PriorImport,
@@ -129,6 +130,7 @@ function previewAnswer(
 /** A prior import, for the "already imported" state of the confirm step. */
 function priorImportOf(overrides: Partial<PriorImport> = {}): PriorImport {
   return {
+    id: "00000000-0000-4000-8000-0000000e0001",
     importedAt: "2026-03-03T12:00:00.000Z",
     fileName: "family.ged",
     counts: { people: 412, unions: 120, children: 300 },
@@ -314,8 +316,9 @@ describe("the policy stated at the point of confirm (YEO-89)", () => {
 
     await click(screen.button("Preview this file"));
 
-    // No Import button — there is nothing this screen can send that would not
-    // be refused, so it does not offer to send it.
+    // No Import button — pressing one would be refused, so the screen does
+    // not offer it. The way past the refusal (`YEO-95`) is a differently
+    // worded button that sends nothing; see the block below.
     expect(screen.button("Import 5 people")).toBeUndefined();
 
     const text = screen.host.textContent ?? "";
@@ -326,6 +329,111 @@ describe("the policy stated at the point of confirm (YEO-89)", () => {
     // Cancel still works: there is a file input to clear even though nothing
     // would be sent by pressing it.
     expect(screen.button("Cancel")).toBeDefined();
+  });
+});
+
+describe("the way out of that refusal (YEO-95)", () => {
+  async function refused() {
+    const screen = mount();
+    choose(screen.input);
+    answers.push({
+      status: 200,
+      body: previewAnswer(previewOf(), "deadbeef", priorImportOf()),
+    });
+    await click(screen.button("Preview this file"));
+    return screen;
+  }
+
+  it("asking for the option sends nothing at all", async () => {
+    // The first of the two presses. It is the whole reason this is two
+    // presses rather than one: an override reachable in a single click from
+    // the ordinary screen is not an override, it is a second Import button
+    // with a longer label.
+    const screen = await refused();
+
+    await click(screen.button("Import it again anyway"));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.get(IMPORT_CONFIRM_FIELD)).toBeNull();
+  });
+
+  it("states what a release keeps and what it does not remove", async () => {
+    // Acceptance criterion 3, said where the decision is actually made. The
+    // provenance survives — the reader is told so — and, the harder half,
+    // nothing the earlier import wrote is deleted, so a second copy is the
+    // real consequence of pressing on.
+    const screen = await refused();
+
+    await click(screen.button("Import it again anyway"));
+
+    const text = screen.host.textContent ?? "";
+    expect(text).toContain("The record of it is kept, not deleted");
+    expect(text).toContain("Nothing the earlier import wrote is removed");
+    expect(text).toContain("a second copy");
+  });
+
+  it("sends the prior import's id, beside the ordinary confirmation", async () => {
+    // The second press, and the shape that makes it safe to replay: the
+    // request names the claim being given up rather than merely asking for
+    // whatever is in the way to be moved. See `IMPORT_RELEASE_FIELD`.
+    const screen = await refused();
+    await click(screen.button("Import it again anyway"));
+    answers.push({ status: 200, body: importedAnswer() });
+
+    await click(screen.button("Release and import 5 people"));
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body.get(IMPORT_CONFIRM_FIELD)).toBe("deadbeef");
+    expect(calls[1].body.get(IMPORT_RELEASE_FIELD)).toBe(
+      "00000000-0000-4000-8000-0000000e0001",
+    );
+  });
+
+  it("puts the refusal back, having sent nothing, when the reader backs out", async () => {
+    const screen = await refused();
+    await click(screen.button("Import it again anyway"));
+
+    await click(screen.button("Keep it refused"));
+
+    expect(calls).toHaveLength(1);
+    expect(screen.button("Import it again anyway")).toBeDefined();
+    expect(screen.button("Release and import 5 people")).toBeUndefined();
+  });
+
+  it("does not carry an open disclosure over to the next file", async () => {
+    // An open disclosure is consent to release *this* file's prior import,
+    // and it must not outlive the preview it was opened against — the id it
+    // would send belongs to a file the reader has moved on from. So the
+    // second file arrives at the closed state, however far through the first
+    // one the reader had got.
+    const screen = await refused();
+    await click(screen.button("Import it again anyway"));
+
+    choose(screen.input, "other.ged");
+    answers.push({
+      status: 200,
+      body: previewAnswer(previewOf(), "cafe", priorImportOf({ id: "other" })),
+    });
+    await click(screen.button("Preview this file"));
+
+    expect(screen.button("Release and import 5 people")).toBeUndefined();
+    expect(screen.button("Import it again anyway")).toBeDefined();
+  });
+
+  it("sends no release on the ordinary path", async () => {
+    // The acceptance criterion the whole design is arranged around: a file
+    // the ledger has never seen is imported by one press, and that press
+    // carries no override — so the accidental second import stays refused
+    // with no extra clicks and nothing new to get wrong.
+    const screen = mount();
+    choose(screen.input);
+    answers.push({ status: 200, body: previewAnswer(previewOf(), "deadbeef") });
+    await click(screen.button("Preview this file"));
+    answers.push({ status: 200, body: importedAnswer() });
+
+    await click(screen.button("Import 5 people"));
+
+    expect(calls[1].body.get(IMPORT_RELEASE_FIELD)).toBeNull();
   });
 });
 
