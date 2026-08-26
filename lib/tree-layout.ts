@@ -80,6 +80,75 @@ export const PERSON_HEIGHT = 72;
 const UNION_SIZE = 14;
 
 /**
+ * The dash patterns, and what they mean (E10-T5).
+ *
+ * ## Why these are constants rather than two string literals in the loops
+ *
+ * They are the canvas's answer to "colour is never the only signal". Nothing
+ * on this canvas has ever encoded a relationship in colour — every edge is
+ * React Flow's own grey, and the qualification rides entirely on the dash —
+ * which means the criterion is already met and the risk is the other
+ * direction: somebody later "fixing" the readability of an ended marriage by
+ * tinting it red, and quietly making the one channel a colour-blind reader
+ * gets the one channel they do not. Naming the patterns here, reading them
+ * back in `lib/tree-legend.ts`, and asserting in `lib/tree-layout.test.ts`
+ * that no edge declares a `stroke` is what makes that a property of the code
+ * rather than a habit.
+ *
+ * ## Why the two patterns differ from each other
+ *
+ * They mark two unrelated qualifications on two different kinds of line, and
+ * a reader who has just learnt that a dashed line between partners means the
+ * union ended should not read the same dash under a child and conclude the
+ * child ended. The partner dash is long (`4 4`); the parentage dash is short
+ * and tight (`2 3`). `components/TreeLegend.tsx` draws both at the size they
+ * are actually rendered, from these same values, so the key cannot drift from
+ * the drawing it explains.
+ */
+export const ENDED_UNION_DASH = "4 4";
+export const NON_BIOLOGICAL_DASH = "2 3";
+
+/**
+ * What every edge says to a screen reader, which is nothing (E10-T5).
+ *
+ * ## Why silence is the right answer here and not a shortcut
+ *
+ * React Flow makes edges focusable by default and gives an unlabelled one the
+ * name "Edge from <source> to <target>". Both halves are wrong for this
+ * canvas. The ids are database UUIDs, so the default name is thirty-six
+ * characters of hexadecimal read aloud twice; and the edges are rendered
+ * *before* the nodes in the document, so leaving them focusable means a
+ * keyboard has to cross every line in the family before it reaches the first
+ * person. `components/FamilyTree.tsx` turns the focusability off at the
+ * canvas — one switch for all of them — and this turns off what is left,
+ * which is the element's own presence in the accessibility tree.
+ *
+ * Nothing is lost, because the edges are not where this application says what
+ * a relationship is. Selecting a person opens `components/PersonPanel.tsx`,
+ * which lists their partners, parents and children as words — "marriage,
+ * 1931–1960, ended by death", "adopted" — through `describeUnion` and its
+ * `Qualifier`. That is a better description than a line can carry, it is
+ * reachable by the same keystroke that reaches the node, and it does not
+ * repeat itself once per edge on a canvas with several hundred of them.
+ *
+ * So the edges are decoration in the strict sense the ARIA specification
+ * means: the information is genuinely available elsewhere in the document.
+ *
+ * `aria-hidden` rather than `ariaRole: "presentation"`, and the difference is
+ * not stylistic. React Flow writes an `aria-label` onto the edge whatever the
+ * role says, and a global ARIA attribute on an element *negates* a
+ * presentational role — the specification is explicit about it — so
+ * `role="presentation"` here would be silently ignored and the UUIDs would
+ * still be announced. `aria-hidden` takes the element and its subtree out of
+ * the accessibility tree regardless of what else is on it, which is the only
+ * one of the two that is true. It is safe for the same reason the switch in
+ * `components/FamilyTree.tsx` is: nothing inside an edge is focusable once
+ * `edgesFocusable` is off, and hiding focusable content is the one thing
+ * `aria-hidden` must never do.
+ */
+const EDGE_A11Y = { domAttributes: { "aria-hidden": true } } as const;
+
+/**
  * Family trees are layered DAGs, not trees: a person can be a partner in more
  * than one union, so they have more than one downward path. `d3-tree` assumes
  * a single parent slot per node and cannot represent that. Dagre lays out
@@ -119,7 +188,8 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
         style:
           union.endReason === "ongoing"
             ? undefined
-            : { strokeDasharray: "4 4" },
+            : { strokeDasharray: ENDED_UNION_DASH },
+        ...EDGE_A11Y,
       });
     }
   }
@@ -132,7 +202,10 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
       target: link.childId,
       type: "smoothstep",
       style:
-        link.relation === "biological" ? undefined : { strokeDasharray: "2 3" },
+        link.relation === "biological"
+          ? undefined
+          : { strokeDasharray: NON_BIOLOGICAL_DASH },
+      ...EDGE_A11Y,
     });
   }
 
@@ -182,6 +255,45 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
     });
   }
 
+  /**
+   * Reading order, which on this canvas *is* the tab order (E10-T5).
+   *
+   * React Flow renders nodes in the order of the array it is given and puts
+   * `tabIndex={0}` on each one, so the browser's own sequential navigation
+   * walks this array. Left alone it is `graph.people`, which is the order
+   * `getFamilyGraph` returned rows in — surname, then given name. Tabbing a
+   * family therefore jumped between generations alphabetically: in the
+   * three-person tree `components/FamilyTree.test.tsx` builds, the first stop
+   * is the daughter, then her mother, then her father.
+   *
+   * Sorting by rank and then by position across it makes the tab order the
+   * order the tree is drawn in — each generation left to right, oldest first
+   * — which is what a reader has already been told the picture means. That is
+   * deliberately *not* a tab order bolted on beside React Flow's: nothing
+   * here sets a `tabindex`, intercepts a key, or maintains a cursor. The
+   * library's own sequential order is used, and the only thing changed is the
+   * order of the array it reads.
+   *
+   * `y` before `x` because dagre ranks top to bottom and every person is the
+   * same height, so within a generation `y` is identical and `x` decides. The
+   * id is the last tiebreak so that two people laid out at exactly the same
+   * point — which dagre will not do, but which nothing here guarantees —
+   * still come out in a stable order rather than one that depends on the sort
+   * being stable.
+   */
+  nodes.sort(
+    (a, b) =>
+      a.position.y - b.position.y ||
+      a.position.x - b.position.x ||
+      a.id.localeCompare(b.id),
+  );
+
+  /**
+   * The union markers go on the end rather than into the order above, and it
+   * costs nothing: they are `focusable: false`, so they are not tab stops to
+   * be sequenced, and they are 14 pixels of connector that overlap nothing,
+   * so their paint order does not matter either.
+   */
   for (const union of graph.unions) {
     const laid = g.node(union.id);
     nodes.push({

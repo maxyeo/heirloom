@@ -1021,6 +1021,66 @@ Scale is small: a family tree is hundreds of people at most, so the entire
 graph is loaded in one query and laid out client-side. No pagination, no
 virtualisation.
 
+### Reaching the canvas without a mouse
+
+The tree is the part of this application most likely to be unusable from a
+keyboard, and E10-T5 (`YEO-69`) is where that was answered. The answer is
+almost entirely **React Flow's own model, corrected in three places** — there
+is no second tab order, no key handler of ours on the canvas, and no focus
+cursor to keep in step with anything.
+
+- **Node order is layout order, not row order.** React Flow renders nodes in
+  the order of the array it is given and puts `tabIndex={0}` on each, so that
+  array _is_ the tab order. `layoutFamilyGraph` therefore sorts the person
+  nodes by rank and then across it, and Tab walks the tree generation by
+  generation. Unsorted it was whatever order `getFamilyGraph` returned rows in
+  — surname, then given name — which sent Tab jumping between generations
+  alphabetically.
+- **Edges are out of the tab order and out of the accessibility tree.**
+  `edgesFocusable` defaults to true and edges render _before_ nodes, so the
+  default order on a canvas of two hundred people is a couple of hundred
+  unlabelled lines before the first person. What a line means is said in words
+  by the detail panel one keystroke away, so the lines are decoration:
+  `edgesFocusable={false}` on the canvas, `aria-hidden` on each edge.
+- **The focus ring is put back.** React Flow's stylesheet sets `outline: none`
+  on a focused node. It is unlayered, so it beats `@layer base`'s
+  `:focus-visible` rule before specificity is consulted — which is why the one
+  rule in `app/globals.css` that is outside every layer is the one that
+  restores it. A tree node is the only focusable thing here that is not a
+  link, a button or a field, so it is the only one with no shape of its own to
+  say "you are here".
+
+Selection itself needed nothing: Enter and Space already reach React Flow's
+handler, and the canvas is a _controlled_ flow with `onNodesChange`, which is
+what makes the resulting change actually apply. A canvas passing `nodes`
+without that handler swallows the keystroke and looks entirely normal doing
+it — see the note on `onNodesChange` in `components/FamilyTree.tsx`.
+
+**One thing this does not solve.** A canvas of two hundred people is two
+hundred tab stops, and there is no way to skip past them. That is WCAG's
+"bypass blocks" and it is not answered here, for a reason rather than by
+omission: the canvas is the last thing on `/tree`, so there is nothing after
+it to be trapped in front of, and a skip link is worth adding on the day
+something is put below it. Reaching a _particular_ person is already answered
+from the other direction — the header's search box, and the `?person=` deep
+link it navigates to.
+
+Dismissal and focus return are a separate mechanism and were built by
+`YEO-83`: `lib/surface-stack.ts` and `components/surface-stack.ts` own which
+surface Escape is for, where Tab is trapped, and where focus lands when a
+surface closes. Anything new that opens over the canvas should use
+`useDismissableSurface` rather than adding a listener of its own.
+
+**What the lines mean is on screen.** A dashed partner line is a union that
+ended and a dashed parent line is a child who was not born into the family,
+and neither has ever been encoded in colour — so the colour-independence
+criterion was already met and the risk runs the other way, towards somebody
+later "clarifying" an ended marriage by tinting it. `lib/tree-layout.ts` names
+the two dash patterns, `lib/tree-layout.test.ts` asserts that no edge declares
+a colour at all, and `lib/tree-legend.ts` derives a key from the family so
+that a dash is explained where it is drawn — and only on a canvas that has one
+to explain.
+
 ### The one client-side read
 
 Everything above is rendered on the server. There is exactly one place in this

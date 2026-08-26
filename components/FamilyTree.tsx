@@ -29,6 +29,7 @@ import { PersonPanel } from "@/components/PersonPanel";
 import { PersonPortrait } from "@/components/PersonPortrait";
 import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
+import { TreeLegend } from "@/components/TreeLegend";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
 import { UnionMerge } from "@/components/UnionMerge";
 import { UnionOrder } from "@/components/UnionOrder";
@@ -41,6 +42,7 @@ import { derivePersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
 import type { ReorderUnionsFormAction } from "@/lib/union-order-state";
 import { PERSON_WIDTH, layoutFamilyGraph } from "@/lib/tree-layout";
+import { treeLegend } from "@/lib/tree-legend";
 import { treeOnboarding } from "@/lib/tree-onboarding";
 import {
   linkedPersonId,
@@ -270,6 +272,13 @@ function FamilyTreeCanvas({
    * beyond the cards themselves.
    */
   const onboarding = useMemo(() => treeOnboarding(graph), [graph]);
+
+  /**
+   * The key to the canvas's lines (E10-T5), or an empty list when this family
+   * has no dash to explain — which is most of them. `lib/tree-legend.ts`
+   * decides; the corner it is drawn in is `components/TreeLegend.tsx`'s.
+   */
+  const legend = useMemo(() => treeLegend(graph), [graph]);
 
   /**
    * Who the URL is asking for (E2-T4), resolved against the graph rather than
@@ -603,6 +612,26 @@ function FamilyTreeCanvas({
         // so there is no way to drag the family into a mess.
         nodesDraggable={false}
         nodesConnectable={false}
+        /**
+         * Every line in the family is a tab stop otherwise (E10-T5).
+         *
+         * React Flow's `edgesFocusable` defaults to **true**, and the edges
+         * are rendered before the nodes in the document, so the default tab
+         * order on a canvas of two hundred people is a couple of hundred
+         * lines followed by the people. Each of those stops is a `<g>` with
+         * no visible focus style — React Flow's own stylesheet sets
+         * `outline: none` on it — announced as "Edge from <uuid> to <uuid>".
+         * A keyboard reader would give up long before reaching a person, and
+         * that is the criterion this ticket exists for.
+         *
+         * Turning it off costs nothing here, because there is nothing an edge
+         * *does*: it cannot be selected, reconnected or deleted on this
+         * canvas, and what it means is said in words by the detail panel the
+         * node opens. `lib/tree-layout.ts` finishes the job by hiding the
+         * edges from assistive technology outright — see `EDGE_A11Y`, which
+         * is only safe because of this line.
+         */
+        edgesFocusable={false}
         onNodesChange={onNodesChange}
         proOptions={{ hideAttribution: false }}
       >
@@ -619,6 +648,14 @@ function FamilyTreeCanvas({
       {onboarding.stage === "unconnected" && detail === null ? (
         <TreeStartHint person={onboarding.person} />
       ) : null}
+
+      {/*
+        What a dashed line means (E10-T5), in the same corner and hidden under
+        an open panel for the same two reasons. It cannot collide with the
+        hint above: the hint is the stage where no union joins anybody, and
+        every row of the key needs a union to exist. See `TreeLegend`.
+      */}
+      {detail === null ? <TreeLegend entries={legend} /> : null}
 
       {/*
         Losing the selection unmounts everything below, E3-T3's edit form

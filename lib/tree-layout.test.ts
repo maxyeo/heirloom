@@ -390,6 +390,134 @@ describe("layoutFamilyGraph", () => {
     expect(edgeById(edges, "c-u2-brian").style).toBeUndefined();
   });
 
+  it("orders the person nodes the way the tree is read", () => {
+    const { nodes } = layoutFamilyGraph(sampleGraph());
+
+    /**
+     * The tab order, expressed as an array (E10-T5).
+     *
+     * React Flow renders nodes in the order it is handed them and puts
+     * `tabIndex={0}` on each, so this array *is* what a keyboard walks. Left
+     * as `graph.people` it was whatever order `getFamilyGraph` returned rows
+     * in, which sent Tab bouncing between generations. Sorted, each stop is
+     * below or to the right of the one before it.
+     *
+     * Asserted as a monotone walk rather than as a fixed list of names,
+     * because the names would pin dagre's exact horizontal placement — a
+     * different dagre version could reasonably put two siblings the other way
+     * round without breaking anything this criterion is about.
+     */
+    const people = nodes.filter((node) => node.type === "person");
+    expect(people.length).toBeGreaterThan(1);
+
+    /**
+     * The walk below branches on whether two neighbours share a rank, and a
+     * fixture that never put two people on one rank would leave the "then by
+     * x" half of the rule unexercised while the test still passed. Nine
+     * people over four generations always does, but "always" is what this
+     * line is for.
+     */
+    expect(
+      people.some(
+        (node, index) =>
+          index > 0 && node.position.y === people[index - 1].position.y,
+      ),
+    ).toBe(true);
+
+    for (const [before, after] of people
+      .slice(0, -1)
+      .map((node, index) => [node, people[index + 1]] as const)) {
+      const sameRank = before.position.y === after.position.y;
+      expect(
+        sameRank
+          ? before.position.x < after.position.x
+          : before.position.y < after.position.y,
+      ).toBe(true);
+    }
+  });
+
+  it("puts the oldest generation first and the youngest last", () => {
+    const { nodes } = layoutFamilyGraph(sampleGraph());
+    const people = nodes
+      .filter((node) => node.type === "person")
+      .map((node) => node.id);
+
+    // The concrete version of the walk above, on the fixture's own ranks:
+    // Grandpa is on the top rank, his children below him, and Alice, Brian,
+    // Clara and Dora are the leaves. A keyboard reaches them in that order.
+    expect(people[0]).toBe("grandpa");
+    for (const leaf of ["alice", "brian", "clara", "dora"]) {
+      expect(people.indexOf(leaf)).toBeGreaterThan(people.indexOf("thomas"));
+      expect(people.indexOf(leaf)).toBeGreaterThan(people.indexOf("rose"));
+    }
+  });
+
+  it("keeps the union markers out of the way of that order", () => {
+    const family = sampleGraph();
+    const { nodes } = layoutFamilyGraph(family);
+
+    // They are `focusable: false`, so they are not tab stops and have no
+    // business being sequenced among the people. The sort is over the people.
+    //
+    // Counted off the fixture rather than written as a literal: the people
+    // come first and the unions after them, so the boundary is however many
+    // people there happen to be, and a tenth person added below should not
+    // send somebody hunting for the number that broke.
+    const firstUnion = nodes.findIndex((node) => node.type === "union");
+    expect(firstUnion).toBe(family.people.length);
+    expect(nodes.slice(firstUnion).every((node) => node.type === "union")).toBe(
+      true,
+    );
+    expect(
+      nodes.every((node) => node.type !== "union" || node.focusable === false),
+    ).toBe(true);
+  });
+
+  it("says what a line means with a dash and never with a colour", () => {
+    const { edges } = layoutFamilyGraph(sampleGraph());
+
+    /**
+     * E10-T5's "colour is never the only signal", asserted from the direction
+     * that can actually regress.
+     *
+     * Every edge on this canvas is React Flow's own grey, and what a line
+     * means rides entirely on `strokeDasharray` — so a reader who cannot
+     * separate two hues loses nothing today. The risk is somebody later
+     * making an ended marriage "clearer" by tinting it, which would move the
+     * signal onto the one channel that is not universally available while
+     * looking, in review, like an improvement. So: no edge declares a colour,
+     * of any kind, ever.
+     */
+    for (const edge of edges) {
+      const declared = Object.keys(edge.style ?? {});
+      expect(
+        declared.filter((property) => /color|stroke$/i.test(property)),
+      ).toEqual([]);
+      expect(declared.every((property) => property === "strokeDasharray")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("hides the edges from assistive technology", () => {
+    const { edges } = layoutFamilyGraph(sampleGraph());
+
+    /**
+     * React Flow names an unlabelled edge "Edge from <source> to <target>",
+     * and both ids here are database UUIDs. What a relationship *is* is said
+     * in words by `components/PersonPanel.tsx`, one keystroke from the node,
+     * so the lines themselves are decoration — see `EDGE_A11Y`.
+     *
+     * `aria-hidden` rather than a presentational role, because React Flow
+     * writes the label whatever the role says and a global ARIA attribute
+     * negates `role="presentation"`.
+     */
+    expect(edges.length).toBeGreaterThan(0);
+    for (const edge of edges) {
+      expect(edge.domAttributes).toEqual({ "aria-hidden": true });
+    }
+  });
+
   it("returns an empty layout for an empty family", () => {
     // The tree renders before anyone has been entered.
     expect(

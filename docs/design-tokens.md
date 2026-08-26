@@ -59,12 +59,32 @@ dense article read as an encyclopedia entry rather than a blog post.
 | `--color-rule`              | `#a2a9b1` | heading rules, panel borders                 |
 | `--color-rule-soft`         | `#c8ccd1` | borders _inside_ a panel                     |
 | `--color-link`              | `#3366cc` | unvisited                                    |
-| `--color-link-visited`      | `#795cb2` | visited                                      |
-| `--color-link-new`          | `#d33`    | a red link (E11-T6)                          |
+| `--color-link-visited`      | `#6a60b0` | visited                                      |
+| `--color-link-new`          | `#bf3c2c` | a red link (E11-T6)                          |
 | `--color-diff-added`        | `#eaf3ff` | a block a revision added                     |
 | `--color-diff-added-rule`   | `#a3d3ff` | its left border                              |
 | `--color-diff-removed`      | `#fef6e7` | a block a revision removed                   |
 | `--color-diff-removed-rule` | `#ffe49c` | its left border                              |
+
+**On the contrast floor.** Every colour in this table that text is set in
+clears **4.5:1** — WCAG 2.2 AA below 18pt — against every surface it can be
+painted on, and `app/globals.test.ts` computes the ratios out of `globals.css`
+rather than trusting this paragraph. `--color-wash` is the binding surface: it
+is the darkest of them, and links land on it more often than you would guess —
+a `th` in a wikitable, the highlighted row in the search suggestions, the
+header block on the compare view.
+
+Two of the three link colours moved for that in E10-T5 (`YEO-69`), and neither
+is a redesign. Visited was Vector 2022's `#795cb2`, which is 4.45:1 on
+`--color-wash` — a miss of about one percent, and exactly the kind that is
+never found by looking. A red link was `#d33`, which is 4.33:1 on
+`--color-panel`, where the person infobox puts a column of them. Both are now
+Wikimedia's own accessible values, and all three links land at ~4.55:1 on the
+darkest surface. `--color-link` did not move.
+
+Borders are not in that rule. `--color-rule` is 2.37:1 on paper and stays
+there: it is a hairline, WCAG's 3:1 floor for non-text contrast is a separate
+question, and darkening every rule would undo the one thing this skin is for.
 
 **On the diff pair.** Blue and yellow, not green and red. That is
 MediaWiki's choice and the reason for it is worth keeping: red and green

@@ -200,6 +200,63 @@ describe("the rendered component", () => {
     expect(buttons.filter((button) => button.disabled)).toEqual([]);
   });
 
+  /**
+   * How the toolbar reads to a screen reader (E10-T5).
+   *
+   * Every control already had a name — the buttons carry their own words and
+   * the heading control has an `aria-label` because a `<select>` has none of
+   * its own — so what was left is the part a sighted review cannot see:
+   * `aria-pressed` is what turns a `<button>` into a *toggle* button, and it
+   * was on all five of them.
+   */
+  describe("what the toolbar announces", () => {
+    function control(host: HTMLElement, label: string): HTMLButtonElement {
+      const found = [
+        ...host.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'),
+      ].find((button) => button.textContent === label);
+      if (!found) throw new Error(`no "${label}" button in the toolbar`);
+      return found;
+    }
+
+    it("names the bar and every control on it", () => {
+      const host = render(<EntryEditor />);
+
+      const toolbar = host.querySelector('[role="toolbar"]');
+      expect(toolbar?.getAttribute("aria-label")).toBe("Formatting");
+      for (const button of toolbar?.querySelectorAll("button") ?? []) {
+        expect(button.textContent?.trim()).not.toBe("");
+      }
+      // The one control with nothing to read: a `<select>` is named by its
+      // label, and there is no room in the bar for a visible one.
+      expect(toolbar?.querySelector("select")?.getAttribute("aria-label")).toBe(
+        "Paragraph style",
+      );
+    });
+
+    it("marks the four toggles as toggles", () => {
+      const host = render(<EntryEditor />);
+
+      for (const label of ["Bold", "Italic", "Bullet list", "Link"]) {
+        expect(control(host, label).getAttribute("aria-pressed")).toBe("false");
+      }
+    });
+
+    it("does not announce the image button as an unpressed toggle", () => {
+      const host = render(<EntryEditor />);
+
+      /**
+       * The bug this replaces, and why it is worse than a missing label. With
+       * `aria-pressed="false"` the button is announced as "Image, toggle
+       * button, not pressed" — a promise that pressing it turns something on
+       * and pressing it again turns it off. It opens a file picker. A screen
+       * reader user has no other way to tell the two kinds of button apart,
+       * so the attribute was not incomplete information, it was wrong
+       * information.
+       */
+      expect(control(host, "Image").hasAttribute("aria-pressed")).toBe(false);
+    });
+  });
+
   it("writes into the same stylesheet the read route uses", () => {
     const host = render(<EntryEditor />);
 
