@@ -410,6 +410,20 @@ describe("layoutFamilyGraph", () => {
     const people = nodes.filter((node) => node.type === "person");
     expect(people.length).toBeGreaterThan(1);
 
+    /**
+     * The walk below branches on whether two neighbours share a rank, and a
+     * fixture that never put two people on one rank would leave the "then by
+     * x" half of the rule unexercised while the test still passed. Nine
+     * people over four generations always does, but "always" is what this
+     * line is for.
+     */
+    expect(
+      people.some(
+        (node, index) =>
+          index > 0 && node.position.y === people[index - 1].position.y,
+      ),
+    ).toBe(true);
+
     for (const [before, after] of people
       .slice(0, -1)
       .map((node, index) => [node, people[index + 1]] as const)) {
@@ -439,12 +453,18 @@ describe("layoutFamilyGraph", () => {
   });
 
   it("keeps the union markers out of the way of that order", () => {
-    const { nodes } = layoutFamilyGraph(sampleGraph());
+    const family = sampleGraph();
+    const { nodes } = layoutFamilyGraph(family);
 
     // They are `focusable: false`, so they are not tab stops and have no
     // business being sequenced among the people. The sort is over the people.
+    //
+    // Counted off the fixture rather than written as a literal: the people
+    // come first and the unions after them, so the boundary is however many
+    // people there happen to be, and a tenth person added below should not
+    // send somebody hunting for the number that broke.
     const firstUnion = nodes.findIndex((node) => node.type === "union");
-    expect(firstUnion).toBe(9);
+    expect(firstUnion).toBe(family.people.length);
     expect(nodes.slice(firstUnion).every((node) => node.type === "union")).toBe(
       true,
     );
