@@ -6,7 +6,7 @@ import {
   AddPersonPanel,
   type IndividualFormAction,
 } from "@/components/AddPersonPanel";
-import { FamilyTree } from "@/components/FamilyTree";
+import { FamilyTree, TREE_SKIP_TARGET_ID } from "@/components/FamilyTree";
 import type { EntryLink } from "@/lib/entry-link";
 import {
   changedEntryLinkState,
@@ -377,6 +377,114 @@ describe("reaching the canvas with a keyboard", () => {
     });
 
     expect(panelLabel(host)).toBe("Details for Walter Hale");
+  });
+
+  /**
+   * "Bypass blocks" (`YEO-108`), which is the half of the keyboard
+   * criterion `YEO-69` left open and said so: every person being a tab stop is
+   * the point, and on a family of two hundred it is also two hundred
+   * keystrokes with no way over them.
+   *
+   * The mechanism itself is exhaustively covered in
+   * `components/SkipLink.test.tsx`. What is worth a real canvas is the join —
+   * that the link is genuinely ahead of React Flow's nodes and the target
+   * genuinely behind them, which is a fact about document order that only the
+   * mounted flow can settle.
+   */
+  describe("skipping past it", () => {
+    function skipLink(host: HTMLElement): HTMLAnchorElement {
+      const found = host.querySelector<HTMLAnchorElement>("a.skip-link");
+      if (!found) throw new Error("the canvas rendered no skip link");
+      return found;
+    }
+
+    function skipTarget(host: HTMLElement): HTMLElement {
+      const found = host.querySelector<HTMLElement>(`#${TREE_SKIP_TARGET_ID}`);
+      if (!found) throw new Error("the canvas rendered no skip target");
+      return found;
+    }
+
+    /** Does `earlier` come before `later` in the document? */
+    function precedes(earlier: Node, later: Node): boolean {
+      return (
+        (earlier.compareDocumentPosition(later) &
+          Node.DOCUMENT_POSITION_FOLLOWING) !==
+        0
+      );
+    }
+
+    it("offers the way over before the first person and lands after the last", () => {
+      const host = render(graph());
+      const link = skipLink(host);
+      const target = skipTarget(host);
+
+      for (const stop of tabStops(host)) {
+        expect(precedes(link, stop)).toBe(true);
+        expect(precedes(stop, target)).toBe(true);
+      }
+    });
+
+    it("actually moves focus past the people, not merely the scroll", () => {
+      const host = render(graph());
+      const link = skipLink(host);
+
+      act(() => link.focus());
+      // What Enter on a focused link does.
+      act(() => link.click());
+
+      expect(document.activeElement).toBe(skipTarget(host));
+    });
+
+    it("keeps every person on the way through for a reader who does not skip", () => {
+      const host = render(unsortedGraph());
+
+      // The link and the target are both outside `tabStops` — one is an
+      // anchor, the other is `tabindex="-1"` — so `YEO-69`'s order is
+      // untouched. This is the same assertion as the first test in this
+      // describe block, re-made after the canvas grew two elements.
+      expect(
+        tabStops(host)
+          .map((stop) => stop.dataset.id)
+          .sort(),
+      ).toEqual(["dora", "rose", "walter"]);
+      expect(skipTarget(host).getAttribute("tabindex")).toBe("-1");
+    });
+
+    it("says where the reader has arrived, for someone who cannot see it", () => {
+      const host = render(graph());
+
+      // An unlabelled div announces nothing on arrival, which makes a
+      // successful skip indistinguishable from a broken one.
+      expect(skipTarget(host).textContent).toBe("End of the family tree");
+    });
+
+    it("puts the target between the canvas and whatever comes next", () => {
+      // The canvas is the last thing on `/tree` today, which is the reason
+      // `YEO-69` could leave this open. This mounts something after it, which
+      // is the arrangement the fix has to survive: the skip has to arrive in
+      // front of the new element rather than past it.
+      const host = mount(
+        <>
+          <FamilyTree graph={graph()} />
+          <button type="button">Below the canvas</button>
+        </>,
+      );
+      const link = skipLink(host);
+
+      act(() => link.focus());
+      act(() => link.click());
+
+      const target = document.activeElement as HTMLElement;
+      const after = [
+        ...host.querySelectorAll<HTMLElement>("a[href], button, [tabindex]"),
+      ].filter(
+        (element) =>
+          element.getAttribute("tabindex") !== "-1" &&
+          precedes(target, element),
+      );
+
+      expect(after[0]?.textContent).toBe("Below the canvas");
+    });
   });
 });
 
