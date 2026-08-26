@@ -49,8 +49,9 @@ export const FALLBACK_SLUG = "entry";
  * present under `app/wiki`, so a static route added later cannot quietly
  * start shadowing entries.
  *
- * **It guards new entries only.** This set is consulted in exactly one place —
- * `lib/create-page.ts`, when choosing an address — so adding a name to it does
+ * **It guards new entries only.** Nothing consults this set when *choosing* an
+ * address except `lib/create-page.ts` (the other reader, `lib/article-tabs.ts`
+ * below, only decides whether to draw a tab row), so adding a name to it does
  * nothing about a row that already holds that slug. Such an entry becomes
  * unreachable the moment the matching route ships, silently, since Next
  * resolves the static segment and nothing compares the two. Adding a member

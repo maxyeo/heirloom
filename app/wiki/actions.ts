@@ -313,14 +313,17 @@ export async function restoreRevisionAction(
 
   /**
    * Everything this write moved, revalidated before the `redirect` below,
-   * because `redirect` throws. Bare paths rather than `"layout"`, matching
-   * `savePageAction`: each of these is one route by name, and the layout form
-   * would additionally discard every other entry's cached payload.
+   * because `redirect` throws. Named routes rather than `"layout"`, matching
+   * `savePageAction`: the layout form would additionally discard every other
+   * entry's cached payload. The first four are bare paths, one route each; the
+   * last is a *pattern*, for the reason its own note gives — this action
+   * cannot name which category listings an entry appears on.
    *
-   * All four are dynamic routes that call `requireSession()`, so nothing
-   * server-side is stale — what is being cleared is the *client* router cache,
-   * which otherwise serves the reader the payload it fetched on the way in and
-   * shows them the restore they just performed as not having happened.
+   * Every one of them is a dynamic route that calls `requireSession()`, so
+   * nothing server-side is stale — what is being cleared is the *client*
+   * router cache, which otherwise serves the reader the payload it fetched on
+   * the way in and shows them the restore they just performed as not having
+   * happened.
    */
   revalidatePath(`/wiki/${slug}`);
   revalidatePath(`/wiki/${slug}/history`);
@@ -446,6 +449,22 @@ export async function deleteCategoryAction(
   // And the index of every category, which has just lost a row — the page the
   // redirect below sends the reader to.
   revalidatePath("/wiki/category");
+  /**
+   * And every editor, which is the one route here where a stale payload is
+   * more than cosmetic.
+   *
+   * `app/wiki/[slug]/edit/page.tsx` renders `listCategories()` into the
+   * picker's suggestions and `readEntryCategories()` into its chips. An editor
+   * opened before this retirement still holds both, so saving from it sends
+   * the retired name back through `setEntryCategories` — which finds no row,
+   * creates one, and quietly resurrects the category somebody just retired.
+   * Every other stale route here shows an old answer; this one writes one.
+   *
+   * The pattern rather than the entries by name, matching the line above: the
+   * cascade did the detaching in the database and returned no list of which
+   * entries it touched.
+   */
+  revalidatePath("/wiki/[slug]/edit", "page");
 
   /**
    * To the list of categories, which is where "the category is gone" is
