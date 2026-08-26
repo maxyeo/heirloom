@@ -1,10 +1,62 @@
 name: CI
 
-# Both triggers are deliberate. `pull_request` is what gates a merge; `push`
-# also covers commits that never open a PR, so a direct push to main cannot
-# quietly break the build. A commit on a PR branch therefore runs twice — the
-# cost is a minute of a free runner, and the alternative (restricting `push`
-# to main) leaves branch pushes unchecked until a PR exists.
+# Both triggers are deliberate, and neither of them is *the* merge gate. That
+# distinction is worth spelling out, because the obvious reading of this file
+# is wrong in a way that stays invisible until the day it matters.
+#
+# The gate is the `protect main` repository ruleset. It requires two status
+# checks by *context name* — `typecheck, lint, test, build` and `test:db
+# against a real Postgres`, which are the two job `name:`s below — and GitHub
+# matches those names against whatever check-runs exist on the head commit. It
+# does not record which event produced a check-run. Both triggers run both
+# jobs, so both produce both names, and **either run satisfies the gate on its
+# own**: a green `push` run makes a commit mergeable even when the
+# `pull_request` run never starts. The ruleset is the source of truth here, not
+# this comment — docs/architecture.md#what-gates-a-merge sets out what it
+# requires today and the command that re-reads it.
+#
+# So each trigger is kept for a reason that does not lean on the other:
+#
+#   `push` covers commits that never open a PR — a direct push to main cannot
+#   quietly break the build — and covers a branch from its first commit rather
+#   than from whenever a PR happens to be opened for it.
+#
+#   `pull_request` is the only run that tests the *merge result*: its checkout
+#   resolves `refs/pull/N/merge`, the branch and the current main brought
+#   together, rather than the branch tip the `push` run builds. Those are two
+#   different trees reporting under one pair of names.
+#
+# That second reason is narrower than it first looks, and what narrows it is
+# the ruleset again: `protect main` also requires a linear history and an
+# up-to-date branch, so by the time a merge is permitted the branch is already
+# rebased onto main and the merge ref carries the same tree as the tip. That is
+# what makes a lone green `push` run an honest signal here rather than a lucky
+# one. It is a property of the ruleset rather than of this file, which is one
+# more reason to check the ruleset rather than trust this paragraph.
+#
+# The price of running both is duplication: a commit on a PR branch runs twice
+# and produces **four** check-runs for two required contexts. Four is therefore
+# the number to expect when reading check state on a PR head SHA, and fewer is
+# a symptom rather than a rounding error — a run that never starts contributes
+# no check-runs at all, so it goes missing rather than going red, and a summary
+# that lists only what it can see reports the remainder as complete.
+# docs/architecture.md#reading-ci-truthfully has the two commands that tell the
+# difference.
+#
+# Two narrowings that look attractive from here, and are not taken:
+#
+#   Restricting `push` to `branches: [main]` would halve the runs and end the
+#   two-runs-one-context-name ambiguity at its root. It is declined because it
+#   also deletes the second half of the `push` reason above — a branch would go
+#   unchecked until a PR existed for it — and duplicate runs on a free runner
+#   are the cheaper of the two mistakes.
+#
+#   Requiring a context that only `pull_request` can produce would make the gate
+#   mean what people assume it means. It is declined because it removes the
+#   fallback: when the `pull_request` run wedges, the `push` run on the same
+#   commit is what still reports. A PR-only required context turns one stuck run
+#   into a merge freeze with no way through — which is the failure mode of
+#   2026-08-26 restated, not a fix for it.
 on:
   push:
   pull_request:

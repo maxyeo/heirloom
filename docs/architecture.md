@@ -1246,10 +1246,121 @@ extracting modules specifically so their logic would land in the suite that
 _was_ run. A suite that gates nothing still reads as "checked". The full
 account is in docs/testing.md rather than repeated here.
 
-Enforcement past the workflow file is GitHub's, not this repository's: both
-jobs have to be listed as **required status checks** for `main` under Settings
--> Branches before a red run actually blocks the button. The workflow is what
-makes the signal exist; branch protection is what makes it a gate.
+### The ruleset is the gate, not the workflow
+
+Enforcement past the workflow file is GitHub's, not this repository's. The
+workflow is what makes the signal exist; a **repository ruleset** named
+`protect main` is what makes it a gate. As read on 2026-08-26 it targets the
+default branch, has no bypass actors, and requires:
+
+| Rule                       | What it means here                                                                                       |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Required status checks     | Two contexts, `typecheck, lint, test, build` and `test:db against a real Postgres`, from the Actions app |
+| Strict status checks       | The branch must be up to date with `main` before the button unlocks                                      |
+| Pull request               | A PR is required; **zero** approvals, but every review thread must be resolved                           |
+| Linear history             | No merge commits into `main` — squash or rebase                                                          |
+| Deletion, non-fast-forward | `main` cannot be deleted or force-pushed                                                                 |
+
+That table is a snapshot and the ruleset is the source of truth. Read it back
+rather than trusting this page:
+
+```bash
+gh api repos/maxyeo/heirloom/rulesets
+gh api repos/maxyeo/heirloom/rulesets/{id} | jq '.rules'
+```
+
+The load-bearing detail is that required checks are matched **by context
+name**. GitHub compares those two strings against the check-runs present on the
+head commit and does not record which event produced them. `ci.yml` runs the
+same two jobs on `push` and on `pull_request`, so both triggers emit both
+names, and **either run satisfies the gate by itself**. "The PR run is what
+lets this merge" is not true of this repository; a green `push` run is enough,
+even if the `pull_request` run never starts.
+
+### Two runs, four check-runs
+
+A commit on a PR branch is therefore checked twice, and the head SHA carries
+four check-runs for two required contexts. The two runs are not redundant, and
+not identical either:
+
+- the `push` run checks out the **branch tip**;
+- the `pull_request` run checks out `refs/pull/N/merge` — the branch and the
+  current `main` brought together, a commit the `push` run never sees.
+
+The strict-status-checks rule above is what keeps that gap from mattering: by
+the time a merge is permitted the branch is already up to date with `main`, so
+the merge ref has the same tree as the tip. That is why a lone green `push` run
+is an honest signal here rather than a lucky one — and why it is a fact about
+the ruleset, to be re-checked there if the ruleset changes.
+
+What the duplication costs is not runner minutes. It is that **anything reading
+check state has to know four is the expected number**, because a run that never
+starts produces no check-runs at all. It does not go red; it goes missing, and
+a tool that summarises the check-runs it can find will call the remainder
+complete.
+
+### Reading CI truthfully
+
+`gh pr checks <n>` is the obvious command and it can under-report. It renders
+the check-runs attached to the head commit, so a workflow run stuck before it
+creates any jobs is not a pending row in its output — it is not in its output
+at all, and the command exits `0`. On PR #96 it printed two passes and exited
+clean while the `pull_request` run for that SHA sat queued and never started.
+`mergeStateStatus` read `CLEAN` at the same time, and correctly so: the two
+required contexts genuinely were satisfied, by the `push` run alone. The
+signal that looked most authoritative was blind to the same thing.
+
+Ask the API for the commit instead, and check the count as well as the
+conclusions:
+
+```bash
+sha=$(gh pr view <n> --json headRefOid -q .headRefOid)
+
+# Expect four rows, every one completed/success.
+gh api "repos/maxyeo/heirloom/commits/$sha/check-runs" \
+  -q '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"'
+
+# Expect two rows — one push, one pull_request — both completed/success.
+gh api "repos/maxyeo/heirloom/actions/runs?head_sha=$sha" \
+  -q '.workflow_runs[] | "\(.event)\t\(.status)\t\(.conclusion)"'
+```
+
+The second query is the one that catches a run which produced nothing. Two
+check-runs where four belong is the tell; the run listing says which trigger
+went missing.
+
+### When a check-run gets stuck
+
+During the GitHub Actions outage of 2026-08-26
+([status page](https://stspg.io/pg14nv9m3095)) runs were created that never
+progressed: `status: queued`, `conclusion: null`, and `updated_at` frozen at
+`created_at`. Because they carry the required context names, GitHub counts them
+as pending, and a PR stays `BLOCKED` even after a fresh run goes green on the
+same commit — the orphan sits alongside the successes.
+
+There is no way to clear one. All three obvious escapes are refused, still, on
+run `32984852281`:
+
+```
+POST   .../actions/runs/{id}/cancel        409  Cannot cancel a workflow run that has not been queued yet.
+POST   .../actions/runs/{id}/force-cancel  409  Cannot cancel a workflow run that has not been queued yet.
+DELETE .../actions/runs/{id}               403  Could not delete the workflow run
+```
+
+Closing and reopening the PR triggers a genuine run but does not detach the
+orphan, because the orphan is attached to the commit rather than to the PR.
+
+**The only known remedy is a new SHA**, which no orphaned check-run is attached
+to:
+
+```bash
+git commit --allow-empty -m "Re-run CI"
+git push
+```
+
+That is what unblocked PR #98 (commit `1355a69`). Prefer a real amend or a
+rebase if one is due — an empty commit is the version that works when nothing
+else about the branch should change.
 
 ## Deployment and migrations
 
