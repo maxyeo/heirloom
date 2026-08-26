@@ -4,6 +4,7 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  IMPORT_RELEASE_FIELD,
   type ImportDoneResponse,
   type ImportPreviewResponse,
   type ImportRefusal,
@@ -87,11 +88,16 @@ const TREE = [
 /** A POST shaped exactly as the screen's `fetch` with a `FormData` body sends it. */
 function upload(
   text: string,
-  { field = IMPORT_FILE_FIELD, confirm = null as string | null } = {},
+  {
+    field = IMPORT_FILE_FIELD,
+    confirm = null as string | null,
+    release = null as string | null,
+  } = {},
 ): Request {
   const form = new FormData();
   form.set(field, new File([text], "tree.ged", { type: "text/plain" }));
   if (confirm !== null) form.set(IMPORT_CONFIRM_FIELD, confirm);
+  if (release !== null) form.set(IMPORT_RELEASE_FIELD, release);
   return new Request(`http://localhost${IMPORT_ENDPOINT}`, {
     method: "POST",
     body: form,
@@ -105,6 +111,7 @@ function digestOf(text: string): Promise<string> {
 
 /** A prior import, for the `already-imported` outcome and preview branch. */
 const PRIOR_IMPORT: PriorImport = {
+  id: "00000000-0000-4000-8000-0000000e0001",
   importedAt: "2026-03-03T00:00:00.000Z",
   fileName: "family.ged",
   counts: { people: 412, unions: 120, children: 300 },
@@ -365,6 +372,10 @@ describe("confirming", () => {
     expect(body.error).toContain("3 March 2026");
     expect(body.error).toContain("412 people");
     expect(body.error).toContain("nothing was written");
+    // …and what to do about it, if the repeat was deliberate (`YEO-95`).
+    // Acceptance criterion 4 of that ticket: a refusal that says only "no"
+    // is how somebody ends up writing SQL against production by hand.
+    expect(body.error).toContain("Import it again anyway");
   });
 
   it("writes nothing more when the write refuses as already-imported", async () => {
@@ -381,5 +392,81 @@ describe("confirming", () => {
     // beyond the ledger's own read happened on this request.
     const body = (await response.json()) as ImportRefusal | ImportDoneResponse;
     expect("stage" in body).toBe(false);
+  });
+});
+
+describe("releasing a prior import (YEO-95)", () => {
+  it("passes the id through to the write, unexamined", async () => {
+    // The route deliberately checks nothing about this value: whether the row
+    // exists, still holds its claim, and belongs to these bytes are three
+    // questions with one answer, and only the transaction that acts on it can
+    // ask them without reopening the `select`-then-write race `YEO-89`
+    // closed. So what is asserted here is precisely that it arrives.
+    const prior = "00000000-0000-4000-8000-0000000e00ff";
+
+    await POST(upload(TREE, { confirm: await digestOf(TREE), release: prior }));
+
+    expect(importGedcom).toHaveBeenCalledTimes(1);
+    expect(importGedcom.mock.calls[0][2]).toEqual({ release: prior });
+  });
+
+  it("leaves the guard standing for an ordinary confirmation", async () => {
+    // The acceptance criterion that matters most: the accidental second
+    // import — a second tab, a back button, a retried request — sends no
+    // release field, and must reach the write with the override *off* rather
+    // than with anything that could be read as consent.
+    await POST(upload(TREE, { confirm: await digestOf(TREE) }));
+
+    expect(importGedcom.mock.calls[0][2]).toEqual({ release: null });
+  });
+
+  it("refuses a release with no confirmation beside it", async () => {
+    // A preview is not something an override can be spent on. Answering 200
+    // and quietly previewing would leave a caller believing they had released
+    // something, which is the one wrong answer available here.
+    const response = await POST(upload(TREE, { release: "whatever" }));
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as ImportRefusal;
+    expect(body.error).toContain("part of importing it");
+    expect(importGedcom).not.toHaveBeenCalled();
+  });
+
+  it("does not release for a confirmation that names a different file", async () => {
+    // The digest check runs first and refuses whole. An override rides on a
+    // confirmation; it cannot outlive one being rejected.
+    const response = await POST(
+      upload(TREE, {
+        confirm: await digestOf("0 HEAD\n0 TRLR\n"),
+        release: "00000000-0000-4000-8000-0000000e00ff",
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(importGedcom).not.toHaveBeenCalled();
+  });
+
+  it("still answers 409 when the write refuses a release it could not spend", async () => {
+    // A stale release — one already spent, by this reader's own retry or by
+    // another tab. `lib/gedcom-import.ts` releases nothing and the ordinary
+    // index refuses the insert, so the answer is the ordinary refusal naming
+    // whatever now holds the digest. Nothing about this path is special, and
+    // that is the design: the override is single-use because the row it names
+    // stops being live, not because anything counts its uses.
+    importGedcom.mockResolvedValue({
+      status: "already-imported",
+      previous: PRIOR_IMPORT,
+    });
+
+    const response = await POST(
+      upload(TREE, {
+        confirm: await digestOf(TREE),
+        release: "00000000-0000-4000-8000-0000000e00ff",
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as ImportRefusal;
+    expect(body.error).toContain("already been imported");
   });
 });

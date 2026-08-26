@@ -3,6 +3,7 @@ import { importGedcom } from "@/lib/gedcom-import";
 import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_FILE_FIELD,
+  IMPORT_RELEASE_FIELD,
   formatImportedAt,
   type ImportDoneResponse,
   type ImportPreviewResponse,
@@ -89,6 +90,35 @@ import { requireSessionOr401 } from "@/lib/session";
  * short of asking. That is what `409` is for, and it is the same status this
  * route already used for the one other case where a confirmation is correct
  * in form and refused on the facts.
+ *
+ * ## …and the way back out of that refusal (`YEO-95`)
+ *
+ * `IMPORT_RELEASE_FIELD` beside the confirmation, naming the prior import the
+ * preview showed the reader, says *import this anyway* — that ledger row
+ * gives up its claim inside the same transaction that writes the new import,
+ * and the refusal above does not fire. Why it names a row rather than merely
+ * asserting an intention, and why that is what makes it safe to replay, is
+ * argued in the field's own docblock in `lib/import-endpoint.ts` and enforced
+ * in `lib/gedcom-import.ts`'s `where` clause.
+ *
+ * This route deliberately does **not** check the id against anything. It
+ * cannot: whether that row exists, still holds its claim, and belongs to
+ * these bytes are three questions with one answer, and that answer is only
+ * stable inside the transaction that acts on it. A check here would be a
+ * second opinion formed a few milliseconds earlier — the `select`-then-write
+ * race `YEO-89` removed, reintroduced by the ticket that was meant to make
+ * that guard usable. So the id is passed through untrusted, and the `where`
+ * clause is the whole of its validation.
+ *
+ * What is left here is the one refusal that is a fact about the *request*
+ * rather than about the database: a release with no confirmation beside it is
+ * a `400`. A preview is not something an override can be spent on, and
+ * answering `200` to one would be silently ignoring a field the caller meant.
+ *
+ * The `409` this route writes names the option too, rather than only the
+ * refusal — see `alreadyImportedRefusal`. A guard that says no without saying
+ * what a legitimate caller is supposed to do next is how a one-way door gets
+ * built twice.
  */
 
 /**
@@ -166,7 +196,29 @@ export async function POST(request: Request) {
   const read = readGedcom(bytes);
 
   const confirm = form.get(IMPORT_CONFIRM_FIELD);
+  const release = form.get(IMPORT_RELEASE_FIELD);
+
   if (confirm === null) {
+    /**
+     * An override with nothing to override. Refused rather than ignored: a
+     * preview writes nothing, so spending a release on one would either mean
+     * nothing at all or — worse, if this route ever grew a release that stood
+     * on its own — mean freeing a digest for a request that then wrote
+     * nothing with it. The caller has said two things that cannot both be
+     * true, and answering the safer one silently is how a reader comes to
+     * believe an override worked.
+     */
+    if (release !== null) {
+      return refuse(
+        {
+          error:
+            "An import can only be released as part of importing it. " +
+            "Preview the file, then choose to import it again.",
+        },
+        400,
+      );
+    }
+
     /**
      * A read, not a check — nothing here refuses anything, and the preview
      * answers `200` whatever it finds. `findImportByDigest` reaches `@/db`,
@@ -231,12 +283,21 @@ export async function POST(request: Request) {
    */
   let outcome: ImportOutcome;
   try {
-    outcome = await importGedcom(read.mapping, {
-      digest,
-      fileName: file instanceof File ? file.name : null,
-      byteCount: bytes.byteLength,
-      importedBy: session?.user?.email ?? null,
-    });
+    outcome = await importGedcom(
+      read.mapping,
+      {
+        digest,
+        fileName: file instanceof File ? file.name : null,
+        byteCount: bytes.byteLength,
+        importedBy: session?.user?.email ?? null,
+      },
+      // Passed through unchecked, on purpose: the id is only meaningful
+      // against rows, and `lib/gedcom-import.ts` checks it against them
+      // inside the transaction that acts on it (`YEO-95`). A `File` in this
+      // field is a caller with a broken form rather than a release, and
+      // becomes the same `null` as sending nothing.
+      { release: typeof release === "string" ? release : null },
+    );
   } catch (error) {
     console.error("GEDCOM import failed:", error);
     return refuse(
@@ -292,7 +353,10 @@ function alreadyImportedRefusal(previous: PriorImport): ImportRefusal {
       `This file has already been imported — on ${when}, adding ${people} ` +
       `${people === 1 ? "person" : "people"}. Importing it again would add ` +
       "a second copy of everybody in it, so it was refused and nothing was " +
-      "written.",
+      "written. If that is what you want — because those rows have since " +
+      "been deleted, or the first run was a mistake — preview the file " +
+      "again and choose “Import it again anyway”, which releases the " +
+      "earlier import's claim on this file while keeping its record.",
   };
 }
 

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import type { PriorImport } from "@/lib/import-endpoint";
@@ -24,6 +24,7 @@ import type { PriorImport } from "@/lib/import-endpoint";
 
 /** The row shape both callers below build a {@link PriorImport} from. */
 type LedgerRow = {
+  id: string;
   fileName: string | null;
   importedAt: Date;
   individualCount: number;
@@ -43,6 +44,10 @@ type LedgerRow = {
  */
 export function priorImportFrom(row: LedgerRow): PriorImport {
   return {
+    // On the wire since `YEO-95`, so a release can name the row it is
+    // releasing rather than "whatever is currently in the way" — see
+    // `IMPORT_RELEASE_FIELD` in `lib/import-endpoint.ts`.
+    id: row.id,
     // `importedAt` is a `timestamp with time zone`, which postgres.js already
     // hands back as a `Date` — `toISOString()` is what makes it travel over
     // JSON, the same discipline `lib/export-archive.ts` applies to its own
@@ -68,16 +73,33 @@ export function priorImportFrom(row: LedgerRow): PriorImport {
  * and the promise "cancelling leaves the database untouched" still holds
  * because a `select` that finds a row changes nothing about that row.
  *
+ * ## Live claims only (`YEO-95`)
+ *
+ * The `released_at is null` clause below is the same predicate the partial
+ * unique index carries, and that is deliberate rather than incidental: this
+ * function's answer is only useful if it is the answer the *guard* would
+ * give. A released row is a file that was imported and then deliberately let
+ * go of, and it refuses nothing — telling the reader "already imported" about
+ * one would put a sentence on the preview screen that the next request
+ * contradicts.
+ *
+ * What it costs is that a released import is invisible here. That is the
+ * right trade for this function, whose one question is whether pressing
+ * Import will be refused; the released row is still in `gedcom_imports`, and
+ * every row it wrote still names it, for anybody asking the other question.
+ *
  * @param digest lowercase-hex SHA-256 of the uploaded bytes, from
  *   {@link import("./import-preview").gedcomDigest}
- * @returns what that import wrote, or `null` if this digest has never been
- *   imported
+ * @returns what that import wrote, or `null` if no live ledger row holds this
+ *   digest — because it has never been imported, or because the import that
+ *   did has since released it
  */
 export async function findImportByDigest(
   digest: string,
 ): Promise<PriorImport | null> {
   const [row] = await db
     .select({
+      id: schema.gedcomImports.id,
       fileName: schema.gedcomImports.fileName,
       importedAt: schema.gedcomImports.importedAt,
       individualCount: schema.gedcomImports.individualCount,
@@ -85,7 +107,12 @@ export async function findImportByDigest(
       unionChildCount: schema.gedcomImports.unionChildCount,
     })
     .from(schema.gedcomImports)
-    .where(eq(schema.gedcomImports.digest, digest));
+    .where(
+      and(
+        eq(schema.gedcomImports.digest, digest),
+        isNull(schema.gedcomImports.releasedAt),
+      ),
+    );
 
   return row === undefined ? null : priorImportFrom(row);
 }

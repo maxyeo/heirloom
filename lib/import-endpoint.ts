@@ -62,6 +62,47 @@ export const IMPORT_FILE_FIELD = "file";
 export const IMPORT_CONFIRM_FIELD = "confirm";
 
 /**
+ * The field that overrides the ledger's refusal: {@link PriorImport.id}, the
+ * earlier import whose claim on this file the reader is deliberately giving
+ * up (`YEO-95`).
+ *
+ * Only ever meaningful beside {@link IMPORT_CONFIRM_FIELD}, and carrying a
+ * value rather than a flag. **That is the safety property, not a formality.**
+ * A `release=1`, or a release naming only the digest, says *let this file
+ * through whatever is in the way* — and a request that says that is
+ * dangerous precisely because it stays true. Replayed by a retry, sent again
+ * from a second tab, or re-posted by a back button, it would release
+ * whichever live row it found and write another complete copy of the tree,
+ * which is the duplication `YEO-89` exists to prevent, reached through the
+ * door built to escape it.
+ *
+ * Naming the row makes the override **single-use without any bookkeeping**.
+ * It authorises releasing one specific ledger entry, that entry is released
+ * exactly once, and a second request carrying the same id releases nothing —
+ * so the ordinary unique index meets the second attempt with the ordinary
+ * refusal, naming the import that has just happened. Nothing has to remember
+ * that the override was spent; it is spent because the row it named is no
+ * longer live.
+ *
+ * The id is not on its own a permission to do anything: it is checked against
+ * the digest of the bytes in the very same request, so a release can only
+ * ever retire a claim on the file being imported — see `lib/gedcom-import.ts`,
+ * where both halves are one `where` clause inside the writing transaction.
+ *
+ * Its **absence is the guard**, and that is what keeps `YEO-89` intact for
+ * the case it was written for. The accidental second import — a second tab, a
+ * back button on a stale preview, a retried request — sends no such field,
+ * because nothing on that path ever set one. It is still refused, with no
+ * extra click and no new way to get it wrong.
+ *
+ * What a release does and does not do is argued in `lib/gedcom-import.ts` and
+ * stated to the reader in `components/GedcomImport.tsx`: the earlier import's
+ * ledger row is retired rather than deleted, so its provenance survives, and
+ * none of the rows it wrote are removed.
+ */
+export const IMPORT_RELEASE_FIELD = "release";
+
+/**
  * What is known about an earlier import of this exact file (`YEO-89`).
  *
  * Free of `@/db` on purpose, the same way `ImportPreview` is: this travels
@@ -69,13 +110,30 @@ export const IMPORT_CONFIRM_FIELD = "confirm";
  * does reach the database to find one of these — shapes its row into this
  * type rather than the other way round.
  *
- * Deliberately **not** the ledger row. `id` stays server-side because
- * nothing on the client needs to name a specific import, and the three
- * counts are already screen's vocabulary — {@link ImportCounts} — rather
- * than the tables'; there is no reason to make a reader learn a second one
- * to be told what a prior import added.
+ * Still deliberately **not** the ledger row: the three counts are already the
+ * screen's vocabulary — {@link ImportCounts} — rather than the tables', and
+ * there is no reason to make a reader learn a second one to be told what a
+ * prior import added.
+ *
+ * `id`, though, is now here, and `YEO-89` said in this spot that it would not
+ * be — "nothing on the client needs to name a specific import". That was true
+ * for exactly as long as the refusal had no override. `YEO-95` gives it one,
+ * and an override that cannot name *which* import it is overriding is not a
+ * decision a reader made, it is a decision about whatever happens to be in
+ * the ledger when the request lands. That distinction is the whole of the
+ * safety argument in {@link IMPORT_RELEASE_FIELD}, so the id crosses the wire
+ * — as an opaque handle to a row the caller has already been shown, and never
+ * as something to look anything else up by.
  */
 export type PriorImport = {
+  /**
+   * The ledger row this describes, so a release can be pinned to it.
+   *
+   * Read-only from the client's side and useful for exactly one thing:
+   * going back in {@link IMPORT_RELEASE_FIELD} to say *this* import, the one
+   * I was shown, is the claim I am giving up.
+   */
+  id: string;
   /** When the earlier import ran, ISO 8601. */
   importedAt: string;
   /** The name of the file that import was given, or null if none was recorded. */

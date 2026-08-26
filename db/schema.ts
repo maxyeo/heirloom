@@ -10,6 +10,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -426,39 +427,121 @@ export const revisions = pgTable(
  * a *different* file describing the same people still duplicates them. There
  * is still no identity to match a record in one file against a record in
  * another, only a file against its own past self.
+ *
+ * ## The way back out: a row is *retired*, never deleted (`YEO-95`)
+ *
+ * The refusal above is the correct default precisely because it fires on the
+ * accidental second import — but the same condition fires on the deliberate
+ * one, and a guard with no override is only correct while nobody legitimately
+ * needs the thing it forbids. Somebody who imports a file, decides the result
+ * is wrong, and deletes the rows is left with a digest no part of the product
+ * can release: the tree is empty, the file is the one they want, and the only
+ * exit is `DELETE FROM gedcom_imports` by hand.
+ *
+ * The obvious manual fix is also the destructive one. `import_id` on
+ * `individuals`, `unions` and `union_children` is `ON DELETE set null`, so
+ * deleting a ledger row strips the provenance from every row of that import
+ * that *survived* — which is the column `YEO-89` added the ledger for. So the
+ * escape hatch deletes nothing. It sets {@link gedcomImports.releasedAt} on
+ * the row instead, and the guard is a **partial** unique index over the rows
+ * that have not been released:
+ *
+ * ```sql
+ * create unique index on gedcom_imports (digest) where released_at is null;
+ * ```
+ *
+ * Everything the unique constraint bought survives that change, because it is
+ * still an index and Postgres still enforces it inside the writing
+ * transaction: at most one *live* claim on a digest at a time, no
+ * check-then-insert race, and a loser whose whole write rolls back. What it
+ * adds is that giving up a claim is an ordinary row update rather than a
+ * deletion — the retired row keeps its id, its counts, its date and every
+ * `import_id` pointing at it, and the re-import becomes a **new** ledger entry
+ * beside it rather than a rewrite of the old one. The history of a file that
+ * has been imported, released and imported again is legible as two rows,
+ * which is what actually happened.
+ *
+ * Releasing is deliberately *only* about the claim. It removes nothing the
+ * earlier import wrote — see `lib/gedcom-import.ts` for why that is the honest
+ * behaviour rather than a missing feature, and `components/GedcomImport.tsx`
+ * for the sentence that tells a reader so before they ask for it.
  */
-export const gedcomImports = pgTable("gedcom_imports", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  /** Lowercase-hex SHA-256 of the file's bytes. See the table docblock. */
-  digest: text("digest").notNull().unique(),
-  /**
-   * The uploaded filename, when there was one to read.
-   *
-   * Nullable because `FormData.get()` only promises a `Blob`, and only a
-   * `File` — what a browser's `<input type="file">` actually sends — carries
-   * a `name`. Nothing this application writes produces a `Blob` that is not
-   * a `File`, but the type is the honest one to store against.
-   */
-  fileName: text("file_name"),
-  byteCount: integer("byte_count").notNull(),
-  /** How many `individuals` rows this import wrote. */
-  individualCount: integer("individual_count").notNull(),
-  /** How many `unions` rows this import wrote. */
-  unionCount: integer("union_count").notNull(),
-  /** How many `union_children` rows this import wrote. */
-  unionChildCount: integer("union_child_count").notNull(),
-  importedAt: timestamp("imported_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  /**
-   * The signed-in email that ran the import, the way `pages.updated_by` and
-   * `revisions.created_by` record who wrote an edit. Nullable for the same
-   * reason those are: a session without an email is unreachable through
-   * `requireSession` (`lib/session.ts`), but nothing here forces the column
-   * to agree with that as a matter of type.
-   */
-  importedBy: text("imported_by"),
-});
+export const gedcomImports = pgTable(
+  "gedcom_imports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * Lowercase-hex SHA-256 of the file's bytes. See the table docblock.
+     *
+     * Not `.unique()` since `YEO-95`: uniqueness is the partial index below,
+     * which holds only over rows that still hold their claim. A plain unique
+     * constraint here would make a released row go on blocking the very
+     * import releasing it was for.
+     */
+    digest: text("digest").notNull(),
+    /**
+     * The uploaded filename, when there was one to read.
+     *
+     * Nullable because `FormData.get()` only promises a `Blob`, and only a
+     * `File` — what a browser's `<input type="file">` actually sends — carries
+     * a `name`. Nothing this application writes produces a `Blob` that is not
+     * a `File`, but the type is the honest one to store against.
+     */
+    fileName: text("file_name"),
+    byteCount: integer("byte_count").notNull(),
+    /** How many `individuals` rows this import wrote. */
+    individualCount: integer("individual_count").notNull(),
+    /** How many `unions` rows this import wrote. */
+    unionCount: integer("union_count").notNull(),
+    /** How many `union_children` rows this import wrote. */
+    unionChildCount: integer("union_child_count").notNull(),
+    importedAt: timestamp("imported_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /**
+     * The signed-in email that ran the import, the way `pages.updated_by` and
+     * `revisions.created_by` record who wrote an edit. Nullable for the same
+     * reason those are: a session without an email is unreachable through
+     * `requireSession` (`lib/session.ts`), but nothing here forces the column
+     * to agree with that as a matter of type.
+     */
+    importedBy: text("imported_by"),
+    /**
+     * When this import gave up its claim on {@link gedcomImports.digest}
+     * (`YEO-95`), or null for as long as it still holds it.
+     *
+     * The one column the guard reads, and the reason it is a timestamp rather
+     * than a boolean: *whether* a claim was released is only half of what
+     * somebody looking at two rows for the same digest needs, and the other
+     * half — when — is the difference between "released this morning, before
+     * the re-import beside it" and a row released years ago for reasons
+     * nobody remembers. `null` is not a missing timestamp: it is the live
+     * state, and it is the value the partial index below is keyed on.
+     */
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    /**
+     * Who released it, alongside {@link gedcomImports.releasedAt} — the same
+     * shape and the same nullability as `importedBy`, and recorded for a
+     * sharper reason. An import is an ordinary act; releasing a digest is the
+     * deliberate override of a guard, and the one question asked afterwards
+     * about an override is who used it.
+     */
+    releasedBy: text("released_by"),
+  },
+  (t) => [
+    /**
+     * The guard, and since `YEO-95` a **partial** one: at most one live claim
+     * per digest, with released rows exempt so that the row a release retires
+     * cannot go on refusing the import that release was for. See the table
+     * docblock. `lib/gedcom-import.ts` names this predicate again in its
+     * `on conflict` clause, because Postgres will only infer a partial index
+     * from a statement that repeats the predicate.
+     */
+    uniqueIndex("gedcom_imports_live_digest_idx")
+      .on(t.digest)
+      .where(sql`${t.releasedAt} is null`),
+  ],
+);
 
 /** A person. Optionally linked to their wiki entry. */
 export const individuals = pgTable(

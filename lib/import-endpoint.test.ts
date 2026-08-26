@@ -6,6 +6,7 @@ import {
   IMPORT_CONFIRM_FIELD,
   IMPORT_ENDPOINT,
   IMPORT_FILE_FIELD,
+  IMPORT_RELEASE_FIELD,
   type ImportResponse,
   isImportDone,
   isImportPreview,
@@ -19,8 +20,8 @@ import type { ImportReport } from "@/lib/import-report";
  * `lib/search-endpoint.test.ts` is the model, and the reason for both is the
  * same: the two ends of a network boundary can typecheck perfectly and still
  * disagree in the middle. What is pinned here is the vocabulary itself — the
- * URL, the two field names, and the narrowing — plus a tripwire that the two
- * ends really do read them from this module rather than from their own
+ * URL, the three field names, and the narrowing — plus a tripwire that the
+ * two ends really do read them from this module rather than from their own
  * copies.
  */
 
@@ -32,20 +33,28 @@ function source(file: string): string {
 }
 
 describe("the vocabulary", () => {
-  it("names one endpoint and two fields", () => {
+  it("names one endpoint and three fields", () => {
     // Asserted as literals, which is the point of a contract: changing one of
     // these is a deliberate edit to a shape two files depend on, not a rename
     // that happens to compile.
     expect(IMPORT_ENDPOINT).toBe("/api/import");
     expect(IMPORT_FILE_FIELD).toBe("file");
     expect(IMPORT_CONFIRM_FIELD).toBe("confirm");
+    expect(IMPORT_RELEASE_FIELD).toBe("release");
   });
 
-  it("keeps the two fields distinct", () => {
+  it("keeps the three fields distinct", () => {
     // The one collision that would be catastrophic rather than annoying: if
     // consent travelled under the same name as the file, every preview would
-    // be an import.
-    expect(IMPORT_FILE_FIELD).not.toBe(IMPORT_CONFIRM_FIELD);
+    // be an import. The third field (`YEO-95`) raises the stakes rather than
+    // repeating them — colliding it with the confirmation would turn every
+    // ordinary confirm into an override of the guard.
+    const fields = [
+      IMPORT_FILE_FIELD,
+      IMPORT_CONFIRM_FIELD,
+      IMPORT_RELEASE_FIELD,
+    ];
+    expect(new Set(fields).size).toBe(fields.length);
   });
 });
 
@@ -108,7 +117,9 @@ describe("both ends read the contract rather than restating it", () => {
       // path — is not mistaken for a call site.
       expect(text).not.toMatch(/["'`]\/api\/import["'`]/);
       expect(text).not.toMatch(/\bget\(["']confirm["']\)/);
+      expect(text).not.toMatch(/\bget\(["']release["']\)/);
       expect(text).not.toMatch(/\bset\(["']file["']/);
+      expect(text).not.toMatch(/\bset\(["']release["']/);
     });
   }
 });
