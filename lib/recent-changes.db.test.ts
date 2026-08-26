@@ -383,6 +383,18 @@ describe("the entries query and pages_updated_at_idx", () => {
       What the criterion actually asks is that the index is what finds the
       rows, and the honest way to state that is that nothing here falls back
       to reading the whole table.
+
+      Note what is deliberately *not* asserted: which sort strategy appears.
+      The function's docblock says the sort is an `Incremental Sort` on real
+      data, and that was verified directly — at five thousand rows with ties,
+      Postgres 17 plans `Incremental Sort (Presorted Key: updated_at)` over
+      `Index Scan Backward using pages_updated_at_idx`, and picks the index
+      without `enable_seqscan` being touched at all. But the strategy is a
+      function of how big the table is, not of how this query is written: over
+      a handful of fixture rows the planner emits a plain `Sort`, because
+      sorting five rows is cheaper than incrementally sorting them. Asserting
+      `Incremental Sort` here would therefore pin the size of the fixture set,
+      which is the exact mistake `enable_seqscan = off` exists to avoid.
     */
     expect(plan).not.toContain("Seq Scan");
   });
