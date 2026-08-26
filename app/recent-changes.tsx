@@ -41,12 +41,15 @@ import { listRecentChanges } from "@/lib/recent-changes";
  * `Promise.all`, and forgetting is silent — nothing breaks, the page is just
  * slower.
  *
- * ## The pattern for the next section
+ * ## The pattern, now that a second section follows it
  *
- * E8-T5's "On this day" (`YEO-59`) is next, and it should be this shape
- * exactly: an `app/on-this-day.tsx` that awaits its own `lib/` read and hands
- * the rows to a plain synchronous component under `components/` that a test
- * can mount.
+ * E8-T5's "On this day" (`YEO-59`) is that section, and it is this shape
+ * exactly: `app/on-this-day.tsx` awaits its own `lib/` read and hands the
+ * rows to a plain synchronous component under `components/` that a test can
+ * mount. Two files arranged the same way for the same reasons is what makes
+ * this a pattern rather than one file's habit — and the second one shows the
+ * part this one had no occasion to: a section that renders nothing at all,
+ * heading included, when its read comes back empty.
  *
  * That is the whole of this file — `await`, and hand the rows on. It cannot
  * be unit-tested (React and Vitest cannot mount an `async` Server Component),

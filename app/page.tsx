@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { OnThisDay } from "@/app/on-this-day";
 import { RecentChanges } from "@/app/recent-changes";
 import { SiteChrome } from "@/app/site-chrome";
 import { ArticleHeading } from "@/components/ArticleHeading";
@@ -65,11 +66,19 @@ export default async function Home() {
           it must not move down the page as the page grows. New sections go
           *after* `<RecentChanges />`, in the order they should be read.
 
-          E8-T5's "On this day" (`YEO-59`) is the next one, and it should be
-          exactly this shape — an `app/on-this-day.tsx` awaiting its own `lib/`
-          read and handing the rows to a plain synchronous component under
-          `components/` that a test can mount. `app/recent-changes.tsx` says
-          why the awaiting half lives in `app/` rather than beside the markup.
+          E8-T5's "On this day" (`YEO-59`) is the second one, and it is that
+          shape exactly — `app/on-this-day.tsx` awaits its own `lib/` read and
+          hands the rows to a plain synchronous component under `components/`
+          that a test can mount. `app/recent-changes.tsx` says why the awaiting
+          half lives in `app/` rather than beside the markup, and both sections
+          now demonstrate it, which is what makes it a pattern rather than one
+          file's arrangement.
+
+          Note what a section is allowed to do on a quiet day: `<OnThisDay />`
+          renders *nothing at all* when the archive holds no anniversary for
+          today, heading included. A section owning its own read owns its own
+          empty state too, and this page does not know or need to know which
+          of its sections rendered.
         */}
         <div className="wiki-body">
           <h2>Browse</h2>
@@ -90,6 +99,7 @@ export default async function Home() {
         </div>
 
         <RecentChanges />
+        <OnThisDay />
       </main>
     </SiteChrome>
   );
