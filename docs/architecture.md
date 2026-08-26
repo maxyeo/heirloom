@@ -160,6 +160,23 @@ a card to its contents — would re-rank the tree the moment somebody uploaded a
 picture, sliding a great-grandmother's descendants sideways because her face
 arrived.
 
+**Three surfaces, and they do not answer the placeholder question the same
+way.** The tree node draws a fixed box whether or not it is filled, for the
+layout reason above. The detail panel and the article's person infobox
+(`YEO-97`) render nothing at all when there is no photograph: both are
+ordinary flow, nothing depends on their height, and a silhouette repeated down
+a page would be a picture of somebody nobody uploaded. Only the canvas reads
+`portrait_thumb_key` — the panel and the infobox each show one image at a size
+larger than a thumbnail's longest edge, so the reason the second column exists
+does not reach them.
+
+The infobox has one constraint the panel does not: it floats, so a figure that
+grew when its image arrived would re-wrap the article text around it. Nothing
+records a photograph's dimensions, so the ratio is _reserved_ rather than
+discovered — one square, `object-cover`, which is the crop the same face
+already gets on the canvas and in the panel, so the article invents no framing
+the author has not already seen.
+
 #### Reclaiming what nothing points at any more
 
 An image can outlive every reference to it: an author picks a photograph, the

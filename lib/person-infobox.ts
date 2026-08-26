@@ -7,6 +7,7 @@ import {
   type SpouseLink,
 } from "./person-detail";
 import { formatPersonName } from "./person-format";
+import { portraitSrc } from "./portrait";
 
 /**
  * The person infobox (E11-T5, `YEO-75`): the bordered summary box top right of
@@ -110,6 +111,23 @@ export type PersonInfobox = {
   /** The subject's `individuals.id`, for E2-T4's deep link back to the tree. */
   id: string;
   name: string;
+  /**
+   * The subject's portrait as an `<img src>`, or null when there is none
+   * (`YEO-97`).
+   *
+   * Null is the ordinary answer and it means **the row is absent**, not that
+   * something stands in for it — the same rule the rest of this type states
+   * for a missing spouse or an unrecorded birth, applied to the picture. See
+   * `components/PersonInfobox.tsx` for why a silhouette here would be worse
+   * than nothing, and why the tree node's answer is deliberately different.
+   *
+   * A resolved site-relative path rather than the storage key, for the reason
+   * `portraitSrc` in `lib/portrait.ts` gives: a component should never be the
+   * place that remembers how a key becomes an address, and a raw storage URL
+   * would be dropped by the sanitiser and expire within the afternoon
+   * anyway.
+   */
+  portraitSrc: string | null;
   birth: InfoboxEvent | null;
   death: InfoboxEvent | null;
   spouses: InfoboxSpouse[];
@@ -148,16 +166,37 @@ export const NAMED_RELATIVE_LIMIT = 5;
 /**
  * Build the box for one person.
  *
+ * ## Why the portrait key is passed in rather than read off the graph
+ *
+ * The graph carries both portrait columns for every person — the canvas needs
+ * them — so the subject's key is reachable here, and `derivePersonDetail`
+ * even resolves a `portraitSrc` from it on the way past. That one is the
+ * *detail panel's* answer: its docblock picks the full-resolution key because
+ * the panel shows one person at a time, and it is free to change its mind for
+ * the panel's own reasons. Reading it here would make an article's lead image
+ * change silently the day somebody speeds the panel up by pointing it at the
+ * thumbnail.
+ *
+ * So the entry's own subject row supplies it. `getEntryPerson` is the single
+ * answer to "who is this entry about" — tie-break included — and `YEO-97`
+ * widened it to carry the portrait for exactly this caller.
+ *
  * @param graph the whole family, as `getFamilyGraph` returns it
  * @param personId the subject — the individual this entry is about
  * @param slugByPageId `pages.id` to `pages.slug`, for the people who have an
  *   entry; anybody missing from it is linked as a red link
+ * @param portraitKey the subject's `individuals.portrait_key`, or null when
+ *   nobody has uploaded one. Required rather than defaulted, so that a caller
+ *   has to say which of the two portrait columns it means; a default of null
+ *   would let a new call site report a photographed person as unphotographed
+ *   by forgetting.
  * @returns the box, or null for an id the graph does not hold
  */
 export function derivePersonInfobox(
   graph: FamilyGraph,
   personId: string,
   slugByPageId: ReadonlyMap<string, string>,
+  portraitKey: string | null,
 ): PersonInfobox | null {
   const detail = derivePersonDetail(graph, personId);
   if (!detail) return null;
@@ -237,6 +276,10 @@ export function derivePersonInfobox(
   return {
     id: detail.id,
     name: detail.name,
+    // Total, so a row holding a key that never went through `newImageKey` —
+    // hand-edited, restored from elsewhere — costs this entry its portrait
+    // rather than throwing mid-render. See `portraitSrc`.
+    portraitSrc: portraitSrc(portraitKey),
     birth: detail.birth,
     death: detail.death,
     spouses,

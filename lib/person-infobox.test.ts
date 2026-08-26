@@ -197,8 +197,9 @@ function boxFor(
   personId: string,
   graph: FamilyGraph = seedGraph(),
   slugs: ReadonlyMap<string, string> = SLUGS,
+  portraitKey: string | null = null,
 ) {
-  const box = derivePersonInfobox(graph, personId, slugs);
+  const box = derivePersonInfobox(graph, personId, slugs, portraitKey);
   if (!box) throw new Error(`no infobox for ${personId}`);
   return box;
 }
@@ -207,7 +208,7 @@ const names = (people: InfoboxPerson[]) => people.map((one) => one.name);
 
 describe("derivePersonInfobox", () => {
   it("is null for somebody the graph does not hold", () => {
-    expect(derivePersonInfobox(seedGraph(), "nobody", SLUGS)).toBeNull();
+    expect(derivePersonInfobox(seedGraph(), "nobody", SLUGS, null)).toBeNull();
   });
 
   it("states the birth and the death with their places", () => {
@@ -665,5 +666,51 @@ describe("the links it wants resolved", () => {
   it("asks for nothing when the entry is not about a person", () => {
     expect(infoboxEntrySlugs(null)).toEqual(new Set());
     expect(infoboxEntrySlugs(undefined)).toEqual(new Set());
+  });
+});
+
+/**
+ * The portrait (`YEO-97`).
+ *
+ * The key arrives as an argument rather than being read off the graph, and
+ * that is the property most worth pinning here: the graph carries a copy for
+ * the canvas, and an article whose lead image came from it would change the
+ * day the detail panel changed its mind about which of the two columns it
+ * wants. `derivePersonInfobox`'s docblock argues it; these assert it.
+ */
+describe("the portrait", () => {
+  const KEY = "images/ab/abcdef01-2345-4678-89ab-cdef01234567.jpg";
+  const PATH = "/api/images/ab/abcdef01-2345-4678-89ab-cdef01234567.jpg";
+
+  it("resolves the key to this application's own image route", () => {
+    // Never a storage URL: the sanitiser drops one and it expires within the
+    // afternoon anyway. `lib/portrait.ts` owns the conversion.
+    expect(boxFor("rose", seedGraph(), SLUGS, KEY).portraitSrc).toBe(PATH);
+  });
+
+  it("is null when nobody has uploaded one", () => {
+    // The ordinary case, and what makes the component render no figure at all
+    // rather than a silhouette.
+    expect(boxFor("rose").portraitSrc).toBeNull();
+  });
+
+  it("is null rather than a throw for a key outside the image namespace", () => {
+    // A hand-edited cell or a restore from elsewhere costs this entry its
+    // portrait; it does not blank the article.
+    expect(
+      boxFor("rose", seedGraph(), SLUGS, "secrets/passwd").portraitSrc,
+    ).toBeNull();
+  });
+
+  it("reads the key it is given, not the graph's copy", () => {
+    const graph = seedGraph();
+    const rose = graph.people.find((one) => one.id === "rose");
+    if (!rose) throw new Error("the fixture lost Rose");
+    rose.portraitKey = "images/cd/deadbeef-0000-4000-8000-000000000000.jpg";
+    rose.portraitThumbKey =
+      "images/ef/deadbeef-0000-4000-8000-000000000001.webp";
+
+    expect(boxFor("rose", graph, SLUGS, null).portraitSrc).toBeNull();
+    expect(boxFor("rose", graph, SLUGS, KEY).portraitSrc).toBe(PATH);
   });
 });

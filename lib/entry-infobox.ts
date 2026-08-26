@@ -44,6 +44,12 @@ import { derivePersonInfobox, type PersonInfobox } from "@/lib/person-infobox";
  * family: hundreds of rows at most (docs/architecture.md), which is the same
  * judgement `/tree` makes on every visit.
  *
+ * ## The portrait
+ *
+ * `YEO-97`: the subject's `portrait_key` arrives on the `subject` argument
+ * rather than being fetched here, for the same reason the subject itself
+ * does. There is no second query — the row the route already read carries it.
+ *
  * ## The slugs
  *
  * A person's entry address is `pages.slug`, and `individuals` holds only
@@ -69,7 +75,15 @@ export async function readEntryInfobox(
   // save a round trip on the few that need it.
   const graph = await getFamilyGraph();
 
-  return derivePersonInfobox(graph, subject.id, await readPageSlugs(graph));
+  return derivePersonInfobox(
+    graph,
+    subject.id,
+    await readPageSlugs(graph),
+    // The subject row's own key, not the graph's copy of it: `YEO-97` widened
+    // `getEntryPerson` to carry it, and `derivePersonInfobox` says why the
+    // article's portrait is not taken from the detail panel's resolved one.
+    subject.portraitKey,
+  );
 }
 
 /**

@@ -362,7 +362,7 @@ describe("step-parents, derived and never stored", () => {
       ["mary", SECOND_HALE],
       ["walter", SECOND_HALE],
     ] as const) {
-      const box = derivePersonInfobox(graph, parentId, new Map());
+      const box = derivePersonInfobox(graph, parentId, new Map(), null);
       expect(box?.stepchildren.map((p) => p.id)).toEqual(expected);
 
       for (const stepchildId of expected) {
@@ -505,6 +505,7 @@ describe("adoption and fostering leave the structure alone", () => {
           graph,
           id,
           new Map(),
+          null,
         )?.stepchildren.map((p) => p.id),
       };
     });
@@ -592,7 +593,7 @@ describe("adoption and fostering leave the structure alone", () => {
     const stated = withRelation(seedGraph(), "edward", "step");
 
     expect(
-      derivePersonInfobox(stated, "thomas", new Map())?.stepchildren.map(
+      derivePersonInfobox(stated, "thomas", new Map(), null)?.stepchildren.map(
         (p) => p.id,
       ),
     ).toEqual(["edward", ...SHAWS]);
