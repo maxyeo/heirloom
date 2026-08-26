@@ -223,11 +223,11 @@ describe("sourceFiles", () => {
     // `lib/storage.ts`'s docblock about how `readdir` takes a prefix — and a
     // list of *files* is what every one of these scanners legitimately has.
     expect(
-      footprintUsageOfSource('// readdirSync is what we do not do here.').walks,
+      footprintUsageOfSource("// readdirSync is what we do not do here.").walks,
     ).toEqual([]);
-    expect(
-      footprintUsageOfSource('const note = "readdirSync";').walks,
-    ).toEqual([]);
+    expect(footprintUsageOfSource('const note = "readdirSync";').walks).toEqual(
+      [],
+    );
     expect(
       footprintUsageOfSource('const exempt = [join("app", "globals.css")];')
         .directoryLists,
