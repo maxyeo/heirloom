@@ -34,7 +34,7 @@ export function SiteSidebar({
     <nav
       id={id}
       aria-labelledby={`${id}-heading`}
-      className="site-sidebar border-r border-wash px-3 py-4 text-caption"
+      className="site-sidebar border-r border-rule px-3 py-4 text-caption"
     >
       {/* The rule and the serif that globals.css gives an h2 are for article
           sections. This is furniture: small, sans, muted, the way the mockup

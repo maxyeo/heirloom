@@ -61,8 +61,67 @@
   --color-wash: #eaecf0; /* subtler fill: table headers, hairlines */
   --color-ink: #202122; /* body text */
   --color-ink-muted: #54595d; /* captions, taglines, secondary text */
-  --color-rule: #a2a9b1; /* heading rules and panel borders */
-  --color-rule-soft: #c8ccd1; /* borders inside a panel */
+
+  /* ---- Borders, and the second contrast floor (`YEO-107`) ---------------
+   *
+   * E10-T5 answered SC 1.4.3 for *text* and said in as many words that
+   * non-text contrast was a different criterion, out of scope, and left at
+   * 2.37:1. This is that criterion.
+   *
+   * SC 1.4.11 asks 3:1 of the visual information needed to identify a user
+   * interface component and its state, and of a graphical object needed to
+   * understand the content. It asks nothing of decoration. So the honest
+   * shape is not one border colour pushed down until its worst case passes —
+   * that would darken every hairline in a skin whose whole argument is that
+   * it looks like Wikipedia. It is **two tokens with two different
+   * contracts**, decided once here so that no call site has to re-litigate
+   * it:
+   *
+   *   `--color-rule`       structural. It bounds a control or a region, or
+   *                        carries a section's structure. **Clears 3:1
+   *                        against every surface this file fills**, which
+   *                        `app/globals.test.ts` computes rather than takes
+   *                        on trust. Use it for a button, a field, a menu, a
+   *                        panel, a table cell, a card on the tree canvas,
+   *                        and the rule under an h1 or h2.
+   *
+   *   `--color-rule-soft`  decorative. It repeats a separation the layout has
+   *                        already made — one row of a list from the next,
+   *                        one row of the infobox from the next, the frame
+   *                        around a thumbnail, the line the article tabs are
+   *                        attached to. Delete it and nothing becomes
+   *                        unreadable and no control becomes unfindable, so
+   *                        it is exempt under 1.4.11 and **deliberately stays
+   *                        below 3:1**. The exemption is named in
+   *                        `app/globals.test.ts` with that reason rather than
+   *                        left as a token the guard happens not to ask
+   *                        about.
+   *
+   * The test to apply at a call site is therefore not "is this a border" but
+   * "if this line were not drawn, would something stop being identifiable?".
+   * A field with no border is a piece of paper. A list with no row rules is
+   * still a list.
+   *
+   * `--color-rule` was `#a2a9b1` — Vector 2022's border, and 2.37:1 on paper.
+   * `#72777d` is the next step down WikimediaUI's own grey ramp and is what
+   * Codex ships as `border-color-interactive`, i.e. Wikimedia's answer to "a
+   * border that has to be seen". It is 4.52:1 on paper and 3.82:1 on
+   * `--color-wash`, the darkest surface, so it clears the floor with room
+   * rather than by a rounding error. Nothing here invents a colour.
+   *
+   * A surface token is never a border. `--color-wash` was doing border duty
+   * under the sticky header and down the sidebar's edge at 1.18:1, which is
+   * not a seam so much as a rumour; both are `--color-rule` now, and
+   * `app/globals.test.ts` fails on any `border-paper` / `border-panel` /
+   * `border-wash` utility at a call site.
+   *
+   * Form controls that are *not* restyled are left alone on purpose: 1.4.11
+   * exempts an appearance the browser determines, and repainting a native
+   * checkbox to "fix" it would trade a compliant control for one this
+   * stylesheet then owns.
+   */
+  --color-rule: #72777d; /* structural: bounds a control or a region */
+  --color-rule-soft: #c8ccd1; /* decorative hairline: exempt under 1.4.11 */
 
   /* ---- Diff (E1-T6) -----------------------------------------------------
    * Blue for what arrived, yellow for what left — Wikipedia's own diff
@@ -255,11 +314,16 @@
     font-family: var(--font-mono);
   }
 
+  /* The hairline here is `--color-rule-soft` rather than a surface token:
+   * `--color-wash` on `--color-panel` is 1.12:1, which draws no line at all.
+   * It stays on the decorative token because what identifies a `code` span is
+   * the monospace face and the fill — the border is a nicety, and the text
+   * inside it is content rather than a control. */
   code,
   kbd,
   samp {
     background-color: var(--color-panel);
-    border: 1px solid var(--color-wash);
+    border: 1px solid var(--color-rule-soft);
     border-radius: var(--radius-panel);
     padding: 1px 4px;
     font-size: 0.9em;
@@ -267,7 +331,7 @@
 
   pre {
     background-color: var(--color-panel);
-    border: 1px solid var(--color-wash);
+    border: 1px solid var(--color-rule-soft);
     border-radius: var(--radius-panel);
     padding: 1rem;
     line-height: 1.4;
@@ -729,4 +793,62 @@
 .react-flow .react-flow__node.selectable:focus-visible {
   outline: 2px solid var(--color-link);
   outline-offset: 2px;
+}
+
+/*
+ * The canvas's own non-text contrast (`YEO-107`).
+ *
+ * ## Why these are variables rather than styles on the edges
+ *
+ * React Flow draws every edge at `--xy-edge-stroke-default`, which is
+ * `#b1b1b7` — 2.13:1 on the paper the canvas sits on, and lighter than the
+ * `--color-rule` this ticket had to darken. SC 1.4.11 wants 3:1 of a
+ * graphical object needed to understand the content, and an edge is exactly
+ * that here: it is the whole of what says who is married to whom.
+ *
+ * It cannot be fixed where the edges are built. `lib/tree-layout.ts` states —
+ * and `lib/tree-layout.test.ts` enforces — that **no edge declares a colour**,
+ * because the qualification on a relationship rides entirely on
+ * `strokeDasharray` and a later "improvement" that tinted an ended marriage
+ * red would take the one channel a colour-blind reader has and hand it to
+ * colour. That rule is worth keeping, so the colour arrives from the
+ * stylesheet instead: one declaration for every edge, both dash states
+ * included, and still nothing per-edge to disagree about.
+ *
+ * `--color-rule` is 4.52:1 on `--color-paper`. A dashed line at that ratio is
+ * legible as a dashed line, which is the point — the dash is only a signal if
+ * the gaps can be told from the strokes.
+ *
+ * ## Why unlayered, like the focus ring above
+ *
+ * These are custom properties and React Flow declares none of them itself
+ * (only the `-default` fallbacks), so the cascade has nothing to resolve and
+ * a layer would not actually hurt. They live here anyway because this is the
+ * seam with React Flow's stylesheet, and keeping every declaration that
+ * exists *because of* that stylesheet in one place is what stops the next
+ * person tidying one of them somewhere it stops working.
+ *
+ * ## What is left alone, and why that is allowed
+ *
+ * `<Background />` draws a dot grid at `#91919a`. It is texture — it says the
+ * surface can be panned, it carries no information about the family, and
+ * removing it entirely would lose nothing but the sense of movement. That is
+ * decoration in 1.4.11's sense, so it is named here rather than quietly
+ * raised to a floor it does not owe.
+ *
+ * The minimap's dimmed mask is likewise not a boundary anything is
+ * identified by: the minimap duplicates a canvas that is fully present beside
+ * it, and every operation it offers is on `<Controls />` and the keyboard as
+ * well. Its *nodes* are not decoration under that argument — they are the
+ * drawing — so they take `--color-rule` below.
+ */
+.react-flow {
+  /* Every edge, in both dash states. */
+  --xy-edge-stroke: var(--color-rule);
+  /* The zoom buttons are stacked and divided only by this line, so it is what
+   * separates one control from the next. `#eee` is 1.16:1. */
+  --xy-controls-button-border-color: var(--color-rule);
+  /* The shapes in the minimap are the drawing, not its frame. `#e2e2e2` is
+   * 1.30:1 on the minimap's white. */
+  --xy-minimap-node-background-color: var(--color-rule);
 }

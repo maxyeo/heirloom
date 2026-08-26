@@ -84,7 +84,7 @@ export function NewEntryForm({ suggestedTitle = "" }: NewEntryFormProps) {
         placeholder="Rose Hall"
         aria-invalid={state.error !== null}
         aria-describedby={state.error === null ? undefined : errorId}
-        className="mt-1 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink"
+        className="mt-1 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink"
       />
 
       <p className="mt-2 text-note text-ink-muted">

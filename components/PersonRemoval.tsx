@@ -290,7 +290,7 @@ function ChoiceButton({
       type="button"
       onClick={onClick}
       className={`mt-1 block w-full rounded-panel border px-3 py-2 text-left hover:bg-wash ${
-        destructive ? "border-rule bg-wash" : "border-rule-soft"
+        destructive ? "border-rule bg-wash" : "border-rule"
       }`}
     >
       <span className="text-caption">{label}</span>

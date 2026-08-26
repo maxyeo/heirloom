@@ -990,7 +990,7 @@ function EntryEditorToolbar({
               title={item.hint}
               value={state.blockStyle}
               onChange={(event) => selectBlockStyle(event.target.value)}
-              className="rounded-panel border border-rule-soft bg-paper px-1.5 py-1 text-note text-ink"
+              className="rounded-panel border border-rule bg-paper px-1.5 py-1 text-note text-ink"
             >
               {BLOCK_STYLES.map((style) => (
                 <option key={style.value} value={style.value}>
@@ -1334,7 +1334,7 @@ function LinkPanel({
             autoComplete="off"
             aria-describedby={linkIsBroken ? missingId : undefined}
             onChange={(event) => setQuery(event.target.value)}
-            className="block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1 text-note text-ink"
+            className="block w-full rounded-panel border border-rule bg-paper px-2 py-1 text-note text-ink"
           />
 
           {/* Not debounced, and nothing to debounce against: the entries are
@@ -1342,7 +1342,7 @@ function LinkPanel({
               array. See `lib/entry-links.ts`. */}
           <ul
             aria-label="Matching entries"
-            className="mt-1 max-h-40 overflow-y-auto rounded-panel border border-rule-soft"
+            className="mt-1 max-h-40 overflow-y-auto rounded-panel border border-rule"
           >
             {results.length === 0 ? (
               <li className="px-2 py-1.5 text-note text-ink-muted">
@@ -1380,7 +1380,7 @@ function LinkPanel({
               setRejected(false);
               setUrl(event.target.value);
             }}
-            className="min-w-0 flex-1 rounded-panel border border-rule-soft bg-paper px-2 py-1 text-note text-ink"
+            className="min-w-0 flex-1 rounded-panel border border-rule bg-paper px-2 py-1 text-note text-ink"
           />
           <button
             type="submit"

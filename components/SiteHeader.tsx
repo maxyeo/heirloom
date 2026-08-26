@@ -34,7 +34,7 @@ export function SiteHeader({
   const name = siteName();
 
   return (
-    <header className="sticky top-0 z-40 flex h-(--header-height) items-center gap-2 border-b border-wash bg-paper px-2 sm:gap-3 sm:px-3">
+    <header className="sticky top-0 z-40 flex h-(--header-height) items-center gap-2 border-b border-rule bg-paper px-2 sm:gap-3 sm:px-3">
       <SidebarToggle controls={sidebarId} />
 
       {/* Serif over sans, the way the masthead of a Wikipedia page is set. The

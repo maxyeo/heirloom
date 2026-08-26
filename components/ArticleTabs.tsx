@@ -274,7 +274,7 @@ export function ArticleTabs({ pathname }: { pathname: string }) {
         <ul
           id={MENU_ID}
           role="list"
-          className="absolute right-0 z-20 mt-1 w-44 rounded-panel border border-rule-soft bg-paper py-1"
+          className="absolute right-0 z-20 mt-1 w-44 rounded-panel border border-rule bg-paper py-1"
         >
           {viewTabs.map((tab) => (
             <li key={tab.id}>

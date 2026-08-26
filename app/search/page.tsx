@@ -112,7 +112,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           defaultValue={trimmed}
           placeholder="Search people and entries"
           autoComplete="off"
-          className="block w-full max-w-96 rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink"
+          className="block w-full max-w-96 rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink"
         />
         <button
           type="submit"

@@ -32,6 +32,118 @@ const css = readFileSync(join(repoRoot, "app/globals.css"), "utf8").replace(
   "",
 );
 
+/**
+ * The palette, and the one way it is read (E10-T5, `YEO-107`).
+ *
+ * Both contrast criteria this file holds — 4.5:1 for text and 3:1 for
+ * everything else — are computed from `app/globals.css` with the arithmetic
+ * below rather than transcribed from a table. That is deliberate and it is
+ * why the helpers are up here instead of inside one `describe`: two copies of
+ * the WCAG formula are two chances to get it wrong, and the failure they both
+ * have to catch is somebody nudging a token by two hex digits, which a
+ * transcription follows along with.
+ *
+ * There are no colours in this block. The names are the only thing it knows.
+ */
+
+/**
+ * A token's value, as declared. Throws rather than defaulting, because a
+ * renamed token must fail this suite loudly instead of quietly contributing
+ * no assertions.
+ */
+function token(name: string): string {
+  const value = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8});`).exec(css)?.[1];
+  if (value === undefined) throw new Error(`${name} is not declared`);
+  return value;
+}
+
+/** Every `--color-*` this stylesheet declares, in declaration order. */
+function declaredColours(): string[] {
+  return [...css.matchAll(/(--color-[a-z0-9-]+):\s*#[0-9a-fA-F]{3,8};/g)].map(
+    (found) => found[1],
+  );
+}
+
+/** `#abc` and `#aabbcc` are the same colour; the maths only reads one. */
+function channels(hex: string): [number, number, number] {
+  const digits = hex.slice(1);
+  const full =
+    digits.length === 3
+      ? [...digits].map((digit) => digit + digit).join("")
+      : digits;
+  return [0, 2, 4].map((at) => parseInt(full.slice(at, at + 2), 16)) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+/** Relative luminance, straight out of the WCAG 2.2 definition. */
+function luminance(hex: string): number {
+  const [r, g, b] = channels(hex).map((value) => {
+    const channel = value / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** The contrast ratio of two colours, also WCAG's own formula. */
+function ratio(one: string, other: string): number {
+  const [lighter, darker] = [luminance(one), luminance(other)].sort(
+    (a, b) => b - a,
+  );
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** The colours this stylesheet sets text in. */
+const INKS = [
+  "--color-ink",
+  "--color-ink-muted",
+  "--color-link",
+  "--color-link-visited",
+  "--color-link-new",
+];
+
+/** The colours it fills a surface with. Anything drawn on one is drawn on all
+ * five as far as these suites are concerned — see "Which pairs are asked
+ * about" below. */
+const SURFACES = [
+  "--color-paper",
+  "--color-panel",
+  "--color-wash",
+  "--color-diff-added",
+  "--color-diff-removed",
+];
+
+/**
+ * How deeply nested the character at `index` is in `{ … }`.
+ *
+ * Every layer in this file is written as `@layer name { … }`, so "depth zero"
+ * and "outside every layer" are the same statement, and a declaration inside
+ * one unlayered rule is at depth one. This is the cheap way to say either
+ * without parsing CSS.
+ */
+function braceDepth(index: number): number {
+  const before = css.slice(0, index);
+  return before.split("{").length - 1 - (before.split("}").length - 1);
+}
+
+/**
+ * The formula, checked against the values the standard names. Without this
+ * every suite below could pass because `ratio` returns 21 for everything,
+ * which is the way a home-made contrast check usually breaks.
+ */
+describe("the contrast formula", () => {
+  it("computes the ratios the standard's own examples give", () => {
+    expect(ratio("#000000", "#ffffff")).toBeCloseTo(21, 5);
+    expect(ratio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
+    // Order must not matter: the formula sorts its own arguments.
+    expect(ratio("#ffffff", "#000000")).toBeCloseTo(21, 5);
+  });
+});
+
 describe("theme tokens", () => {
   // Exactly the values the ticket's acceptance criteria name.
   it.each([
@@ -47,7 +159,14 @@ describe("theme tokens", () => {
     ["--color-link-visited", "#6a60b0"],
     ["--color-link-new", "#bf3c2c"],
     ["--color-panel", "#f8f9fa"],
-    ["--color-rule", "#a2a9b1"],
+    /*
+     * `#a2a9b1` is Vector 2022's border and it is 2.37:1 on paper, which is
+     * a hairline the audience this application is for cannot reliably see.
+     * `YEO-107` moved it to WikimediaUI's next grey down — the one Codex
+     * ships as `border-color-interactive` — and "non-text contrast" below is
+     * what holds the reason. This literal only pins the answer reached.
+     */
+    ["--color-rule", "#72777d"],
     ["--color-ink", "#202122"],
     ["--container-content", "46em"],
   ])("declares %s as %s", (token, value) => {
@@ -107,89 +226,14 @@ describe("theme tokens", () => {
  * somebody had noticed would have passed on the palette this ticket had to
  * change.
  *
- * Borders and rules are **not** here. `--color-rule` at 2.37:1 on paper is a
- * hairline rather than text; the standard's 3:1 floor for non-text contrast
- * (SC 1.4.11) is a separate question from this ticket's criterion, and
- * quietly folding it in would mean darkening every rule in a skin whose whole
- * point is that it looks like Wikipedia.
+ * Borders and rules are not here, and that is a division of labour rather
+ * than an omission: SC 1.4.11 asks 3:1 of them rather than 4.5:1, and
+ * "non-text contrast" below is the suite that holds it. E10-T5 left that gap
+ * open on purpose and `YEO-107` closed it.
  */
 describe("text contrast", () => {
-  /** The colours this stylesheet sets text in. */
-  const INKS = [
-    "--color-ink",
-    "--color-ink-muted",
-    "--color-link",
-    "--color-link-visited",
-    "--color-link-new",
-  ];
-
-  /** The colours it fills a surface behind that text with. */
-  const SURFACES = [
-    "--color-paper",
-    "--color-panel",
-    "--color-wash",
-    "--color-diff-added",
-    "--color-diff-removed",
-  ];
-
   /** WCAG 2.2 SC 1.4.3, at the size everything in this skin is set at. */
   const AA_TEXT = 4.5;
-
-  /**
-   * A token's value, as declared. Throws rather than defaulting, because a
-   * renamed token must fail this suite loudly instead of quietly contributing
-   * no assertions.
-   */
-  function token(name: string): string {
-    const value = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8});`).exec(css)?.[1];
-    if (value === undefined) throw new Error(`${name} is not declared`);
-    return value;
-  }
-
-  /** `#abc` and `#aabbcc` are the same colour; the maths only reads one. */
-  function channels(hex: string): [number, number, number] {
-    const digits = hex.slice(1);
-    const full =
-      digits.length === 3
-        ? [...digits].map((digit) => digit + digit).join("")
-        : digits;
-    return [0, 2, 4].map((at) => parseInt(full.slice(at, at + 2), 16)) as [
-      number,
-      number,
-      number,
-    ];
-  }
-
-  /** Relative luminance, straight out of the WCAG 2.2 definition. */
-  function luminance(hex: string): number {
-    const [r, g, b] = channels(hex).map((value) => {
-      const channel = value / 255;
-      return channel <= 0.04045
-        ? channel / 12.92
-        : ((channel + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  }
-
-  /** The contrast ratio of two colours, also WCAG's own formula. */
-  function ratio(one: string, other: string): number {
-    const [lighter, darker] = [luminance(one), luminance(other)].sort(
-      (a, b) => b - a,
-    );
-    return (lighter + 0.05) / (darker + 0.05);
-  }
-
-  /**
-   * The formula, checked against the two values the standard names. Without
-   * this the suite below could pass because `ratio` returns 21 for
-   * everything, which is the way a home-made contrast check usually breaks.
-   */
-  it("computes the ratios the standard's own examples give", () => {
-    expect(ratio("#000000", "#ffffff")).toBeCloseTo(21, 5);
-    expect(ratio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
-    // Order must not matter: the formula sorts its own arguments.
-    expect(ratio("#ffffff", "#000000")).toBeCloseTo(21, 5);
-  });
 
   it.each(INKS)("sets %s above 4.5:1 on every surface", (ink) => {
     const failures = SURFACES.filter(
@@ -212,6 +256,187 @@ describe("text contrast", () => {
     for (const name of [...INKS, ...SURFACES]) {
       expect(token(name)).toMatch(/^#[0-9a-f]{3,8}$/i);
     }
+  });
+});
+
+/**
+ * WCAG AA non-text contrast (`YEO-107`), computed the same way.
+ *
+ * ## What the criterion actually asks
+ *
+ * SC 1.4.11 wants 3:1 of two things and nothing else: the visual information
+ * needed to identify a **user interface component** and its state, and the
+ * parts of a **graphical object** needed to understand the content. It says
+ * nothing about decoration, and it explicitly exempts an appearance the
+ * browser determines — so a native control this stylesheet has not restyled
+ * is already compliant and repainting it would only make it ours to get
+ * wrong.
+ *
+ * That shape is why `app/globals.css` carries two border tokens rather than
+ * one pushed down until its worst case passes. `--color-rule` bounds a
+ * control or a region and owes 3:1. `--color-rule-soft` repeats a separation
+ * the layout has already made and owes nothing. The argument lives at the
+ * tokens; this suite is where it is held to.
+ *
+ * ## Why exemptions are a list with reasons rather than a shorter loop
+ *
+ * A guard that only asks about the tokens somebody remembered to add is a
+ * guard that goes quiet exactly when the palette grows. So every `--color-*`
+ * the stylesheet declares has to land in one of four buckets — a surface, an
+ * ink, a non-text colour held to 3:1, or an exemption **with a stated
+ * reason** — and `covers every colour the stylesheet declares` fails if one
+ * of them is in none of them. Adding a token without deciding what it is
+ * becomes a red test rather than a silent gap.
+ *
+ * Nothing here asserts that an exempt colour *fails* 3:1. It is allowed to be
+ * darker than it has to be; what it is not allowed to be is unclassified.
+ */
+describe("non-text contrast", () => {
+  /** WCAG 2.2 SC 1.4.11. */
+  const AA_NON_TEXT = 3;
+
+  /**
+   * The colours that draw a control, a state, or a line the reader has to
+   * see. Every one of them is held to 3:1 on every surface.
+   *
+   *   `--color-rule`      buttons, fields, menus, panels, table cells, the
+   *                       card on the tree canvas, the rule under an h1 or
+   *                       h2, and — through `--xy-edge-stroke` — every edge
+   *                       on the family tree.
+   *   `--color-link`      every focus indicator in the application, the
+   *                       selected article tab, and a selected person's ring.
+   *   `--color-link-new`  the frame around the sign-in error.
+   */
+  const NON_TEXT = ["--color-rule", "--color-link", "--color-link-new"];
+
+  /**
+   * Colours that draw something 1.4.11 does not reach, and why. A reason is
+   * required; the assertion below is that none of them is empty.
+   */
+  const EXEMPT: Record<string, string> = {
+    "--color-rule-soft":
+      "the decorative hairline. It repeats a separation the layout has " +
+      "already made — one row of a list or of the infobox from the next, " +
+      "the frame of a thumbnail, the line the article tabs attach to. " +
+      "Remove it and nothing becomes unreadable and no control becomes " +
+      "unfindable, which is the test 1.4.11 applies.",
+    "--color-diff-added-rule":
+      "the gutter mark on a block a revision added. The compare view names " +
+      "every changed block in words as well, so the colour is the fastest " +
+      "way to read the page rather than the only way — the same argument " +
+      "the diff fills themselves are chosen on.",
+    "--color-diff-removed-rule":
+      "the gutter mark on a block a revision removed, exempt for the reason " +
+      "its counterpart above is.",
+  };
+
+  it.each(NON_TEXT)("draws %s above 3:1 on every surface", (colour) => {
+    const failures = SURFACES.filter(
+      (surface) => ratio(token(colour), token(surface)) < AA_NON_TEXT,
+    ).map(
+      (surface) =>
+        `${colour} on ${surface}: ${ratio(token(colour), token(surface)).toFixed(2)}:1`,
+    );
+
+    expect(failures).toEqual([]);
+  });
+
+  it("covers every colour the stylesheet declares", () => {
+    const classified = new Set([
+      ...SURFACES,
+      ...INKS,
+      ...NON_TEXT,
+      ...Object.keys(EXEMPT),
+    ]);
+
+    const declared = declaredColours();
+    // A guard that scans nothing passes for the wrong reason.
+    expect(declared.length).toBeGreaterThan(10);
+    expect(declared.filter((name) => !classified.has(name))).toEqual([]);
+  });
+
+  it("gives every exemption a reason", () => {
+    for (const [name, reason] of Object.entries(EXEMPT)) {
+      expect(token(name)).toMatch(/^#[0-9a-f]{3,8}$/i);
+      // Long enough to be an argument rather than a label.
+      expect(reason.length).toBeGreaterThan(40);
+    }
+  });
+
+  it("never claims a colour is both held to 3:1 and exempt from it", () => {
+    expect(NON_TEXT.filter((name) => name in EXEMPT)).toEqual([]);
+  });
+
+  /**
+   * A surface is a fill, not a border.
+   *
+   * `--color-wash` was drawing the seam under the sticky header and down the
+   * sidebar's edge at 1.18:1 — a line only in the sense that a declaration
+   * exists. The fix is not to darken a surface, which is needed at that
+   * lightness for the thing it actually is; it is to stop a fill token doing
+   * a border's job. `call sites` below is where that is enforced, because it
+   * is a property of the components rather than of this file.
+   */
+  it("draws the seams around the shell in the structural rule", () => {
+    expect(ratio(token("--color-wash"), token("--color-paper"))).toBeLessThan(
+      AA_NON_TEXT,
+    );
+  });
+
+  /**
+   * Focus indicators, which are the one non-text thing a keyboard reader
+   * cannot work around. Both of these are `--color-link`, which the loop
+   * above holds to 3:1 — asserting the *colour* here is what connects the two
+   * halves, so that swapping the outline to a hex or to a softer token fails
+   * rather than quietly dropping below the floor.
+   */
+  it("draws every focus indicator in a colour this suite checks", () => {
+    expect(css).toMatch(
+      /:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-link\);/,
+    );
+    expect(css).toMatch(
+      /\.react-flow__node\.selectable:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-link\);/,
+    );
+    expect(NON_TEXT).toContain("--color-link");
+  });
+});
+
+/**
+ * The family tree's edges (`YEO-107`).
+ *
+ * React Flow draws every edge at `#b1b1b7`, which is 2.13:1 on the paper the
+ * canvas sits on — and an edge is the whole of what says who is married to
+ * whom, so it is a graphical object in 1.4.11's sense rather than decoration.
+ *
+ * It cannot be fixed at the edges. `lib/tree-layout.ts` states, and
+ * `lib/tree-layout.test.ts` enforces, that no edge declares a colour: the
+ * qualification on a relationship rides entirely on `strokeDasharray`, and an
+ * edge that could carry a colour is an edge somebody later tints red. So the
+ * colour arrives from the stylesheet, once, for both dash states — which is
+ * the only place the two rules can both be true.
+ */
+describe("the family tree's edges", () => {
+  it("draws them in the structural rule rather than React Flow's grey", () => {
+    expect(css).toMatch(/--xy-edge-stroke:\s*var\(--color-rule\);/);
+  });
+
+  it("leaves the canvas's other controls above the floor too", () => {
+    // The zoom buttons are stacked and divided only by this line, and the
+    // minimap's shapes are its drawing rather than its frame.
+    expect(css).toMatch(
+      /--xy-controls-button-border-color:\s*var\(--color-rule\);/,
+    );
+    expect(css).toMatch(
+      /--xy-minimap-node-background-color:\s*var\(--color-rule\);/,
+    );
+  });
+
+  it("declares them where React Flow's own stylesheet can be seen", () => {
+    // One rule, unlayered, next to the focus ring: everything that exists
+    // *because of* `@xyflow/react/dist/style.css` is in one place, so that
+    // tidying one of them somewhere else is a visible move rather than a
+    // silent one. Depth one is "inside `.react-flow { … }` and no layer".
+    expect(braceDepth(css.indexOf("--xy-edge-stroke"))).toBe(1);
   });
 });
 
@@ -294,20 +519,6 @@ describe("photographs", () => {
  * written about. So the layer is asserted, not just the declaration.
  */
 describe("the family tree's focus ring", () => {
-  /**
-   * Whether the character at `index` sits inside any `{ … }` block.
-   *
-   * Every layer in this file is written as `@layer name { … }`, so "at brace
-   * depth zero" and "not inside a layer" are the same statement — and this is
-   * the cheap way to say it without parsing CSS.
-   */
-  function insideABlock(index: number): boolean {
-    const before = css.slice(0, index);
-    const opened = before.split("{").length - 1;
-    const closed = before.split("}").length - 1;
-    return opened > closed;
-  }
-
   it("puts the outline back on a focused node", () => {
     expect(css).toMatch(
       /\.react-flow__node\.selectable:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-link\);/,
@@ -317,7 +528,7 @@ describe("the family tree's focus ring", () => {
   it("declares it outside every layer, or React Flow wins", () => {
     const at = css.indexOf(".react-flow .react-flow__node");
     expect(at).toBeGreaterThan(-1);
-    expect(insideABlock(at)).toBe(false);
+    expect(braceDepth(at)).toBe(0);
   });
 
   it("out-specifies the rule it is overriding", () => {
@@ -430,6 +641,36 @@ describe("call sites", () => {
     const offenders = files
       .filter((file) => !exempt.has(file))
       .filter((file) => hex.test(readFileSync(join(repoRoot, file), "utf8")));
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * A surface token is a fill, not a border (`YEO-107`).
+   *
+   * `--color-paper`, `--color-panel` and `--color-wash` are chosen to be a
+   * background for text, so they are within about 1.2:1 of each other and of
+   * nothing that matters. Drawn as a border — `border-b border-wash` under
+   * the sticky header, `border-r border-wash` down the sidebar — they make a
+   * seam that exists in the stylesheet and not on the screen, and no amount
+   * of darkening the *token* can fix that without ruining the fill.
+   *
+   * So the rule is structural rather than numeric, and it is the kind that
+   * decays one component at a time: the two border tokens are the only
+   * things that draw a line, and this scan is what keeps the third from
+   * being reinvented as a utility.
+   */
+  it("never draws a border in a colour meant to be a fill", () => {
+    const asABorder = /\b(?:border|divide|outline|ring)-(?:paper|panel|wash)\b/;
+
+    const files = sourceFiles();
+    expect(files.length).toBeGreaterThan(5);
+
+    const offenders = files
+      .filter((file) => !exempt.has(file))
+      .filter((file) =>
+        asABorder.test(readFileSync(join(repoRoot, file), "utf8")),
+      );
 
     expect(offenders).toEqual([]);
   });

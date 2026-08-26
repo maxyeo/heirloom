@@ -61,7 +61,7 @@ export function ArticleCategories({ categories }: ArticleCategoriesProps) {
       // "Categories" rather than a second unlabelled navigation region beside
       // the sidebar's.
       aria-labelledby="article-categories-label"
-      className="mt-8 clear-both rounded-panel border border-rule-soft bg-panel px-3 py-2 text-caption"
+      className="mt-8 clear-both rounded-panel border border-rule bg-panel px-3 py-2 text-caption"
     >
       <span id="article-categories-label" className="font-medium">
         {/* Wikipedia's own singular, which reads as written English rather

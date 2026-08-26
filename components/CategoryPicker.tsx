@@ -167,7 +167,7 @@ export function CategoryPicker({
           {value.map((category) => (
             <li
               key={category.slug}
-              className="flex items-center gap-1 rounded-panel border border-rule-soft bg-panel px-2 py-0.5"
+              className="flex items-center gap-1 rounded-panel border border-rule bg-panel px-2 py-0.5"
             >
               <span>{category.name}</span>
               <button
@@ -223,13 +223,13 @@ export function CategoryPicker({
             // field called "category" is noise over the list underneath it.
             autoComplete="off"
             aria-describedby={describedBy}
-            className="mt-2 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink"
+            className="mt-2 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink"
           />
 
           {suggestions.length === 0 && !creatable ? null : (
             <ul
               aria-label="Matching categories"
-              className="mt-1 max-h-40 overflow-y-auto rounded-panel border border-rule-soft"
+              className="mt-1 max-h-40 overflow-y-auto rounded-panel border border-rule"
             >
               {suggestions.map((category) => (
                 <li key={category.slug}>

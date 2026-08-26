@@ -207,7 +207,7 @@ const SEX_LABELS: Record<Sex, string> = {
 };
 
 const CONTROL_CLASS =
-  "mt-1 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60";
+  "mt-1 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60";
 
 export interface IndividualFieldsetProps {
   /** The current values, held by the caller. See the note on control above. */
