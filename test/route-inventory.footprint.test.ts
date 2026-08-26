@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -6,6 +7,7 @@ import {
   actionSourceFiles,
   appSourceFiles,
   read,
+  repoRoot,
   SOURCE_DIRS,
   sourceFiles,
   unscannedSources,
@@ -110,6 +112,44 @@ describe("sourceFiles", () => {
 
     // `app/` is scanned by the route half as well, through the same enumerator.
     expect(appSourceFiles().every((file) => files.includes(file))).toBe(true);
+  });
+
+  it("covers every directory that holds application code", () => {
+    // The assertion above walks `SOURCE_DIRS` and so cannot notice a directory
+    // missing *from* it — the direction that matters, since that is what
+    // shrinking the footprint looks like and it fails green. This one walks
+    // the repository instead, so a new top-level directory of TypeScript is an
+    // error until somebody decides which side of the line it is on. It is the
+    // same "list nobody remembers to extend" failure `SOURCE_DIRS` is
+    // documented as removing, one level up: the list is now shared, but shared
+    // and complete are different properties.
+    const notApplicationCode = new Set([
+      // Schema, migrations and scripts. Nothing here renders or answers a
+      // request, so neither tripwire has a question to ask of it.
+      "db",
+      // The tripwires themselves, and the helpers they are built from. A
+      // fixture in here is *meant* to contain the shapes being scanned for —
+      // `test/inner-html-inventory.test.ts` is full of them — so scanning this
+      // directory would turn every fixture into a call site to be justified.
+      "test",
+    ]);
+
+    const holdsTypeScript = (dir: string): boolean =>
+      readdirSync(join(repoRoot, dir), {
+        recursive: true,
+        encoding: "utf8",
+      }).some((entry) => /\.[mc]?tsx?$/.test(entry));
+
+    const uncategorised = readdirSync(repoRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => !name.startsWith(".") && name !== "node_modules")
+      .filter(holdsTypeScript)
+      .filter(
+        (name) => !SOURCE_DIRS.includes(name) && !notApplicationCode.has(name),
+      );
+
+    expect(uncategorised).toEqual([]);
   });
 
   it("holds nothing the tripwires cannot read", () => {
