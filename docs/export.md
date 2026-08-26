@@ -143,14 +143,17 @@ the file and none of this. In outline:
 1. Create the database and apply the first `schema.migrationsApplied`
    migrations from `drizzle/`, in filename order.
 2. Load the tables in the order `RESTORE.md` lists — `pages`, `revisions`,
-   `gedcom_imports`, `individuals`, `unions`, `union_children`. It is a
-   foreign-key topological sort, so a restore in that order never has to defer
-   a constraint. `revisions` are written oldest-first for the same reason:
-   `restored_from_id` points at another revision, and a revision can only ever
-   have been restored from one that already existed. `gedcom_imports`
-   (`YEO-89`) sits ahead of the three tables it provides provenance for —
-   `individuals`, `unions` and `union_children` each carry an `import_id`
-   that references it, nullable, and null for every row nothing imported.
+   `gedcom_imports`, `individuals`, `unions`, `union_children`, `categories`,
+   `page_categories`. It is a foreign-key topological sort, so a restore in
+   that order never has to defer a constraint. `revisions` are written
+   oldest-first for the same reason: `restored_from_id` points at another
+   revision, and a revision can only ever have been restored from one that
+   already existed. `gedcom_imports` (`YEO-89`) sits ahead of the three tables
+   it provides provenance for — `individuals`, `unions` and `union_children`
+   each carry an `import_id` that references it, nullable, and null for every
+   row nothing imported. `page_categories` (`YEO-78`) sits last because it
+   references two tables rather than one, `pages` and `categories`; the
+   category rows themselves reference nothing and could sit anywhere.
 3. Upload each file under `images/` back to the image store **under exactly
    its path in the archive** — that path is the key the entry bodies refer to,
    so nothing in any body needs editing.

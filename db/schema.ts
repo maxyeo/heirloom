@@ -370,6 +370,120 @@ export const revisions = pgTable(
 );
 
 /**
+ * A heading an entry can be filed under (E11-T8, `YEO-78`).
+ *
+ * ## What a category is for
+ *
+ * The tree answers "who is related to whom" and search answers "where does
+ * this word appear". Neither answers "everyone who emigrated" or "everyone
+ * buried at St Mary's" — a second axis of navigation that is neither blood
+ * nor text, and that only a person deciding this entry belongs with those
+ * entries can supply. That decision is what a row here holds.
+ *
+ * ## Why a table and not `[[Category:…]]` in the body
+ *
+ * MediaWiki puts categories in the wikitext, which is why a MediaWiki page's
+ * categories are revisioned for free. This wiki has no wikitext: the body is
+ * sanitised HTML produced by a WYSIWYG editor, and docs/product.md is explicit
+ * that the primary author does not write markup. A syntax nobody types is a
+ * syntax nobody can use, and one that would have to survive `sanitizeHtml`,
+ * `readArticleOutline`, `ts_headline` and the diff view intact — four places
+ * that would each need to know that some text in the body is not prose.
+ *
+ * A table is also the only shape in which the listing page (`/wiki/category/
+ * [slug]`) is one indexed query rather than a scan of every body looking for a
+ * marker.
+ *
+ * ## `slug` is the identity, `name` is the label
+ *
+ * The slug is derived from the name by `slugFromTitle` (`lib/entry-slug.ts`) —
+ * the same derivation entry addresses use, so accents fold, apostrophes
+ * vanish, and every Unicode script survives. It is unique, and that uniqueness
+ * is the whole of de-duplication: an author who types "Whitfield Family" into
+ * the picker when "Whitfield family" already exists is filing under the
+ * existing category rather than creating a near-twin nobody would notice until
+ * the two lists disagreed.
+ *
+ * The constraint is what does that, not a check-then-insert in TypeScript.
+ * Two authors saving two entries under a brand-new category name at the same
+ * instant both find nothing and both insert; the index refuses the second, and
+ * `lib/categories.ts` handles the refusal by reading the winner's row. See
+ * the same argument at greater length on {@link gedcomImports}.
+ *
+ * `name` is not unique and deliberately so: it is display text, and making it
+ * unique would add a second way for the same category to be rejected — one
+ * that speaks about capitalisation, which is not a difference this feature
+ * believes in.
+ */
+export const categories = pgTable("categories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** The address at `/wiki/category/[slug]`, and the de-duplication key. */
+  slug: text("slug").notNull().unique(),
+  /** The name as the author who created it typed it, whitespace normalised. */
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * Which entries are filed under which category (E11-T8, `YEO-78`).
+ *
+ * A row here is a *statement about a relationship* and holds nothing else —
+ * no ordering column, no note, no author. Wikipedia's category bar lists in
+ * alphabetical order and so does this, so there is no sequence to remember;
+ * and an entry is either in a category or it is not, so there is no third
+ * state a column could record.
+ *
+ * ## The `on delete` decision, which is the ticket's last acceptance criterion
+ *
+ * **"Deleting a category detaches it from entries rather than deleting them."**
+ * That is `cascade` on *this* table's two foreign keys, and nothing on
+ * `pages`. Deleting a category removes the rows that say "these entries are
+ * filed here" and stops; the entries themselves are untouched, because no
+ * foreign key runs in that direction. The same holds the other way: deleting
+ * an entry removes its filings and leaves every category standing, possibly
+ * empty, which is the right outcome for a category three other entries are
+ * still using.
+ *
+ * It is worth stating why `cascade` and not `restrict` here, since `restrict`
+ * is the reflex when a deletion sounds dangerous. `restrict` would make
+ * deleting a category impossible while any entry used it — the author would
+ * have to unfile every entry by hand first, and the failure would surface as a
+ * constraint violation rather than as a sentence. And it would not be safer:
+ * the row being deleted either way is the filing, and a filing is exactly what
+ * "detach" means. `set null` is not available at all — both columns are part
+ * of the primary key.
+ *
+ * `lib/categories.db.test.ts` asserts the criterion directly rather than
+ * trusting this docblock: it files two entries under a category, deletes the
+ * category, and checks that both `pages` rows are still there.
+ *
+ * ## Why the second index
+ *
+ * The primary key is `(page_id, category_id)`, which is the order the article
+ * page asks in — "what is this entry filed under". The listing page asks the
+ * opposite question, "what is filed under this category", and a composite
+ * index leading on `page_id` cannot serve it. `page_categories_category_id_idx`
+ * is that access path.
+ */
+export const pageCategories = pgTable(
+  "page_categories",
+  {
+    pageId: uuid("page_id")
+      .notNull()
+      .references(() => pages.id, { onDelete: "cascade" }),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.pageId, t.categoryId] }),
+    index("page_categories_category_id_idx").on(t.categoryId),
+  ],
+);
+
+/**
  * The provenance ledger for GEDCOM imports (`YEO-89`).
  *
  * ## What this exists to stop
@@ -745,10 +859,26 @@ export const unionChildren = pgTable(
 export const pagesRelations = relations(pages, ({ many, one }) => ({
   revisions: many(revisions),
   individual: one(individuals),
+  categories: many(pageCategories),
 }));
 
 export const revisionsRelations = relations(revisions, ({ one }) => ({
   page: one(pages, { fields: [revisions.pageId], references: [pages.id] }),
+}));
+
+export const categoriesRelations = relations(categories, ({ many }) => ({
+  pages: many(pageCategories),
+}));
+
+export const pageCategoriesRelations = relations(pageCategories, ({ one }) => ({
+  page: one(pages, {
+    fields: [pageCategories.pageId],
+    references: [pages.id],
+  }),
+  category: one(categories, {
+    fields: [pageCategories.categoryId],
+    references: [categories.id],
+  }),
 }));
 
 export const gedcomImportsRelations = relations(gedcomImports, ({ many }) => ({

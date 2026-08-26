@@ -805,6 +805,51 @@ photographs travel in the [full export](export.md), which is an archive and
 can carry bytes. The round trip is unaffected — neither half writes or reads
 the column, so the two texts still match byte for byte.
 
+### Categories, and the `on delete` that makes them safe
+
+`categories` and `page_categories` (E11-T8, `YEO-78`) are the second axis of
+navigation. The tree answers "who is related to whom" and search answers
+"where does this word appear"; neither answers "everyone who emigrated" or
+"everyone buried at St Mary's", because that is a judgement somebody makes
+rather than a fact either structure records.
+
+Three decisions worth keeping.
+
+**A table, not `[[Category:…]]` in the body.** MediaWiki puts categories in
+the wikitext, which is why its categories are revisioned for free. This wiki
+has no wikitext — the body is sanitised HTML from a WYSIWYG editor, and
+product.md is explicit that the primary author does not write markup. A syntax
+nobody types is a syntax nobody uses, and one that would have to survive
+`sanitizeHtml`, `readArticleOutline`, `ts_headline` and the diff view intact,
+each of which would need to know that some text in a body is not prose.
+
+**The slug is the identity, not the name.** `categories.slug` is derived by
+the same `slugFromTitle` entry addresses use and is unique, so "Whitfield
+Family" typed into the picker files under the existing "Whitfield family"
+rather than creating a near-twin. The constraint does that, not a
+check-then-insert: two authors filing two entries under one brand-new name at
+the same instant both find nothing and both insert, and `lib/categories.ts`
+inserts with `on conflict do nothing` and then reads the winner's row.
+`lib/categories.db.test.ts` races two writers to prove it.
+
+**Deleting a category detaches; it cannot delete an entry.** Both of
+`page_categories`'s foreign keys are `on delete cascade`, and no foreign key
+runs from `pages` to `categories`. So retiring a category removes the rows
+that said which entries were filed under it and stops — there is no statement
+`deleteCategory` could issue that reaches an entry. `restrict` was the
+alternative and is worse: it would make retiring a category impossible while
+anything used it, and the _only_ row a deletion touches either way is the
+filing, which is exactly what "detach" means. `set null` is not available —
+both columns are part of the primary key.
+
+One consequence is deliberate rather than missing. A category is **not**
+recorded in `revisions`. A revision is what the article said; a category is
+where it is filed, and the two change for different reasons. So a save that
+only re-files an entry appends no history entry, and `savePage` returns a null
+`revisionId` to say so — which means `pages.updated_at` and the newest
+revision's `created_at`, which are otherwise the same instant, are equal only
+after a save that changed the article. See `lib/save-page.ts`.
+
 ### Ordering
 
 Unions sort by `sequence` first and `start_date` second. In older generations

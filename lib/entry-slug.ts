@@ -48,8 +48,31 @@ export const FALLBACK_SLUG = "entry";
  * `lib/entry-slug.test.ts` checks this set against the directories actually
  * present under `app/wiki`, so a static route added later cannot quietly
  * start shadowing entries.
+ *
+ * **It guards new entries only.** Nothing consults this set when *choosing* an
+ * address except `lib/create-page.ts` (the other reader, `lib/article-tabs.ts`
+ * below, only decides whether to draw a tab row), so adding a name to it does
+ * nothing about a row that already holds that slug. Such an entry becomes
+ * unreachable the moment the matching route ships, silently, since Next
+ * resolves the static segment and nothing compares the two. Adding a member
+ * here is therefore also a question to ask of the deployed database:
+ *
+ * ```sql
+ * select slug, title from pages where slug in ('new', 'category');
+ * ```
+ *
+ * An entry that turns up is renamed by hand before the deploy. Neither name
+ * matched anything when it was added.
+ *
+ * `category` is E11-T8's (`YEO-78`): `/wiki/category` lists every category and
+ * `/wiki/category/[slug]` lists what is filed under one. Being in this set
+ * buys a second thing there, worth knowing before anyone considers removing
+ * it — `lib/article-tabs.ts` reads a reserved first segment as "this is not an
+ * entry", so this is also what stops the shell rendering an *Article / Edit /
+ * View history* row above a category listing, two of whose three tabs would
+ * point at addresses that do not exist.
  */
-export const RESERVED_SLUGS: ReadonlySet<string> = new Set(["new"]);
+export const RESERVED_SLUGS: ReadonlySet<string> = new Set(["new", "category"]);
 
 /**
  * How long a base slug may be, in code points rather than UTF-16 units, so

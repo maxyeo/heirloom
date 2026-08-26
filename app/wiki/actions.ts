@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { deleteCategory } from "@/lib/categories";
 import { createPage } from "@/lib/create-page";
 import { restoreRevision } from "@/lib/restore-revision";
 import {
@@ -56,10 +57,23 @@ export async function savePageAction(
     // hatnote", which `savePage` reads as the empty one. A number or an object
     // arriving here is a caller that thinks this field means something else,
     // and that is worth refusing rather than coercing.
-    (edit.hatnote !== undefined && typeof edit.hatnote !== "string")
+    (edit.hatnote !== undefined && typeof edit.hatnote !== "string") ||
+    /**
+     * And the categories (E11-T8, `YEO-78`), on the same terms: absent means
+     * "no opinion" and is allowed, anything that is not an array of strings is
+     * refused. The shapes a caller might send instead — one string, an array
+     * of objects, `null` — are each a caller that thinks this field means
+     * something else. This decides only that they are names; `savePage`
+     * decides what the names mean.
+     */
+    (edit.categories !== undefined &&
+      (!Array.isArray(edit.categories) ||
+        edit.categories.some((name) => typeof name !== "string")))
   ) {
     throw new TypeError(
-      "savePageAction expects a slug, title and bodyHtml, all strings, and an optional hatnote.",
+      "savePageAction expects a slug, title and bodyHtml, all strings, an " +
+        "optional hatnote string, and optional categories as an array of " +
+        "strings.",
     );
   }
 
@@ -68,6 +82,7 @@ export async function savePageAction(
     title: edit.title,
     bodyHtml: edit.bodyHtml,
     hatnote: edit.hatnote,
+    categories: edit.categories,
     editedBy,
   });
 
@@ -95,6 +110,31 @@ export async function savePageAction(
      * entry's cached payload to fix one row on one list.
      */
     revalidatePath("/wiki");
+
+    /**
+     * And every category listing (E11-T8, `YEO-78`) — the *pattern*, with the
+     * `"page"` type Next requires for a path holding a dynamic segment, which
+     * clears all of them at once.
+     *
+     * The pattern rather than the specific categories, because this action
+     * cannot name them: a save can file an entry under a category *and* unfile
+     * it from another, and only the removal makes the list it left stale. The
+     * result carries no such list, and inventing one would mean returning the
+     * before-and-after filing from `savePage` for the sole purpose of clearing
+     * a client cache. There are a handful of categories in a family wiki and
+     * these routes are all dynamic, so what this discards is a handful of RSC
+     * payloads, once per save.
+     */
+    revalidatePath("/wiki/category/[slug]", "page");
+
+    /**
+     * And the index of every category, which a save can genuinely add a row
+     * to: filing an entry under a name nothing used before *creates* the
+     * category. The same argument as `/wiki` two blocks up — an author who
+     * invents a category and then opens "All categories" would otherwise be
+     * served the payload fetched before they invented it.
+     */
+    revalidatePath("/wiki/category");
   }
 
   return result;
@@ -273,14 +313,17 @@ export async function restoreRevisionAction(
 
   /**
    * Everything this write moved, revalidated before the `redirect` below,
-   * because `redirect` throws. Bare paths rather than `"layout"`, matching
-   * `savePageAction`: each of these is one route by name, and the layout form
-   * would additionally discard every other entry's cached payload.
+   * because `redirect` throws. Named routes rather than `"layout"`, matching
+   * `savePageAction`: the layout form would additionally discard every other
+   * entry's cached payload. The first four are bare paths, one route each; the
+   * last is a *pattern*, for the reason its own note gives — this action
+   * cannot name which category listings an entry appears on.
    *
-   * All four are dynamic routes that call `requireSession()`, so nothing
-   * server-side is stale — what is being cleared is the *client* router cache,
-   * which otherwise serves the reader the payload it fetched on the way in and
-   * shows them the restore they just performed as not having happened.
+   * Every one of them is a dynamic route that calls `requireSession()`, so
+   * nothing server-side is stale — what is being cleared is the *client*
+   * router cache, which otherwise serves the reader the payload it fetched on
+   * the way in and shows them the restore they just performed as not having
+   * happened.
    */
   revalidatePath(`/wiki/${slug}`);
   revalidatePath(`/wiki/${slug}/history`);
@@ -290,6 +333,16 @@ export async function restoreRevisionAction(
   // And the index (E1-T9), which shows this entry's title and the date it last
   // changed — a restore can move both.
   revalidatePath("/wiki");
+  /**
+   * And every category listing (E11-T8, `YEO-78`). Not because a restore
+   * re-files anything — it cannot, since categories are not recorded in
+   * `revisions` — but because a restore can change an entry's *title*, and a
+   * category listing renders titles and sorts on them
+   * (`listEntriesInCategory` orders by `compareEntriesByTitle`). Without this,
+   * restoring a rename leaves the entry listed under its old name, in its old
+   * position, on every category page it appears on.
+   */
+  revalidatePath("/wiki/category/[slug]", "page");
 
   /**
    * To the entry, which is where "restore" actually finishes: the payoff is
@@ -299,4 +352,127 @@ export async function restoreRevisionAction(
    * to be a valid URL.
    */
   redirect(`/wiki/${encodeURIComponent(slug)}`);
+}
+
+/**
+ * What the delete-category confirmation renders while it waits, and after a
+ * refusal.
+ *
+ * Shaped like `RestoreFormState` above, and for the same reason: a successful
+ * deletion ends in a `redirect`, which throws, so the only state this action
+ * ever returns is one in which the reader is still standing in front of the
+ * confirmation.
+ */
+export type DeleteCategoryFormState = {
+  /** A sentence to show the reader, or null when there is nothing to say. */
+  error: string | null;
+};
+
+/**
+ * Retire a category (E11-T8, `YEO-78`).
+ *
+ * ## What this deletes, and what it deliberately cannot
+ *
+ * The category row, and — by `on delete cascade` on
+ * `page_categories.category_id` — the rows saying which entries were filed
+ * under it. **No entry is reachable from either.** That is the ticket's last
+ * acceptance criterion, and it is a property of the schema rather than of the
+ * code below: there is no foreign key running from `pages` to `categories`, so
+ * there is no statement this action could write that would take an entry with
+ * it. See `db/schema.ts` and `lib/categories.ts`.
+ *
+ * The confirmation in front of this says how many entries will lose a line
+ * from their footer bar, because that is the only consequence, and a reader
+ * who can see it is a reader who does not have to guess.
+ *
+ * ## Why the category is named rather than identified
+ *
+ * The form posts the slug, which is the address the reader is standing on and
+ * is entitled to name, rather than the primary key. `getCategoryBySlug` does
+ * read the id — the listing route needs it to ask what is filed here — but
+ * nothing hands it onward: the route passes `category.slug` to
+ * `CategoryRemoval` and stops, and the type every *rendering* path uses
+ * (`NamedCategory`, in `lib/category-name.ts`) has no `id` field to pass. So
+ * the id stays on the server, which is the "send a reference plus the user's
+ * change" shape the Next.js server-actions guide asks for.
+ *
+ * Shaped for `useActionState`, so it takes the previous state and the form's
+ * own `FormData`, which also means the confirmation works as a plain form POST
+ * before any JavaScript has loaded.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields — `slug`, and nothing else
+ * @returns a state to render, or never, when the redirect fires
+ */
+export async function deleteCategoryAction(
+  _previous: DeleteCategoryFormState,
+  form: FormData,
+): Promise<DeleteCategoryFormState> {
+  await requireSession();
+
+  // A hidden field on a form the browser posts; `File` and null are what a
+  // direct POST can send instead, and neither is a reference to anything.
+  const slug = form.get("slug");
+  if (typeof slug !== "string") {
+    throw new TypeError("deleteCategoryAction expects a slug field, as text.");
+  }
+
+  const deleted = await deleteCategory(slug);
+
+  if (!deleted) {
+    /**
+     * Not an error the reader caused. The likeliest cause by far is a second
+     * tab, or a back button onto a confirmation for a category somebody has
+     * already retired — so it is said as a fact about the world rather than as
+     * a failure, and the reader is left where they can navigate away.
+     */
+    return {
+      error:
+        "That category no longer exists. It may have been deleted in another tab.",
+    };
+  }
+
+  /**
+   * Everything this write moved, revalidated before the `redirect` below,
+   * because `redirect` throws.
+   *
+   * The entry pattern with the `"page"` type, rather than the entries by name:
+   * every entry that was filed here has lost a line from its footer bar, and
+   * this action deliberately did not read which ones (the cascade did the
+   * detaching, in the database, without returning a list). A family wiki's
+   * entries are a few hundred dynamic routes, so what this discards is the
+   * client router cache — nothing server-side was stale, since every one of
+   * them calls `requireSession()`.
+   */
+  revalidatePath("/wiki/[slug]", "page");
+  revalidatePath(`/wiki/category/${slug}`);
+  // And the index of every category, which has just lost a row — the page the
+  // redirect below sends the reader to.
+  revalidatePath("/wiki/category");
+  /**
+   * And every editor, which is the one route here where a stale payload is
+   * more than cosmetic.
+   *
+   * `app/wiki/[slug]/edit/page.tsx` renders `listCategories()` into the
+   * picker's suggestions and `readEntryCategories()` into its chips. An editor
+   * opened before this retirement still holds both, so saving from it sends
+   * the retired name back through `setEntryCategories` — which finds no row,
+   * creates one, and quietly resurrects the category somebody just retired.
+   * Every other stale route here shows an old answer; this one writes one.
+   *
+   * The pattern rather than the entries by name, matching the line above: the
+   * cascade did the detaching in the database and returned no list of which
+   * entries it touched.
+   */
+  revalidatePath("/wiki/[slug]/edit", "page");
+
+  /**
+   * To the list of categories, which is where "the category is gone" is
+   * actually legible: the reader arrived from a category page and the payoff
+   * is seeing the heading absent from the set. The address they were standing
+   * on no longer answers, so sending them back to it would be a 404 as the
+   * reward for a successful action, and `/wiki` — the *entry* index — would
+   * answer a question they were not asking.
+   */
+  redirect("/wiki/category");
 }
