@@ -324,7 +324,11 @@ describe("the portrait", () => {
     const image = box({ portraitSrc: PORTRAIT_SRC }).querySelector("img");
     if (!image) throw new Error("no image rendered");
 
-    expect(image.getAttribute("src")).toBe(PORTRAIT_SRC);
+    // `next/image` reassigns `img.src = img.src` after mount, which
+    // absolutises the attribute in jsdom; the path is what this application
+    // controls and what the criterion is about.
+    const raw = image.getAttribute("src") ?? "";
+    expect(new URL(raw, "http://localhost").pathname).toBe(PORTRAIT_SRC);
   });
 
   it("names whose face it is", () => {

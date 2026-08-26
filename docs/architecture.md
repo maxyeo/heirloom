@@ -177,6 +177,13 @@ discovered — one square, `object-cover`, which is the crop the same face
 already gets on the canvas and in the panel, so the article invents no framing
 the author has not already seen.
 
+A portrait whose object is no longer in the store removes the figure rather
+than leaving a broken-image glyph under the name: a key with nothing behind it
+is "no photograph" arrived at from a different direction, and the box already
+knows what to do with that. The canvas cannot answer the same way — it has a
+fixed slot to fill — which is why `components/InfoboxPortrait.tsx` and
+`components/PersonPortrait.tsx` handle the same 404 differently on purpose.
+
 #### Reclaiming what nothing points at any more
 
 An image can outlive every reference to it: an author picks a photograph, the

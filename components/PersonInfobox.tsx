@@ -1,6 +1,7 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
+
+import { InfoboxPortrait } from "@/components/InfoboxPortrait";
 
 import {
   type InfoboxEvent,
@@ -73,7 +74,9 @@ import { personSearch } from "@/lib/tree-selection";
  * the tree and in the detail panel, so no framing is invented here that the
  * author has not already seen. The thumbnail is not used — it exists because
  * the canvas paints hundreds of faces into 48-pixel boxes, and this is one
- * face in a box 328 across.
+ * face in a box 328 across. `components/InfoboxPortrait.tsx` holds the
+ * figure, and holds the one case this file cannot see: a key whose image is
+ * no longer in the store.
  *
  * ## Why it is not a heading, and why the name is repeated
  *
@@ -130,45 +133,15 @@ export function PersonInfobox({
         directly above it and in the page title above that. A figure without
         one is the ordinary shape for a picture that is already labelled by
         what surrounds it.
+
+        The figure itself is `components/InfoboxPortrait.tsx` rather than
+        markup here, and that file says why: an image is the one thing in this
+        box that can fail after the server has rendered it, noticing needs an
+        `onError`, and this component should not become a client component to
+        hold one.
       */}
       {infobox.portraitSrc ? (
-        <figure className="border-b border-rule-soft">
-          {/*
-            The square is what makes the load shift-free: the ratio is
-            reserved before the bytes arrive, so the article text wraps once.
-            `max-w-infobox` caps it at the width the box has when it floats,
-            which matters below `sm` where the box is as wide as the article —
-            without it a phone would open on a portrait as tall as the column
-            is wide. `relative` is what `fill` needs to size against.
-          */}
-          <div className="relative mx-auto aspect-square w-full max-w-infobox">
-            <Image
-              src={infobox.portraitSrc}
-              alt={`Portrait of ${infobox.name}`}
-              fill
-              /*
-                Never rendered wider than the infobox, at any breakpoint, so
-                the browser is told one width rather than left to assume the
-                whole viewport.
-              */
-              sizes="20.5rem"
-              /*
-                The `src` is `/api/images/…`: a session-checked redirect to a
-                private, expiring signed URL. Next's optimiser "will _not_
-                forward headers when fetching the `src` image" and recommends
-                `unoptimized` for exactly this
-                (`node_modules/next/dist/docs/01-app/03-api-reference/02-components/image.md`),
-                and letting it follow the redirect would mean naming the
-                storage host in `next.config.ts` — the vendor written into the
-                build config, which is what `lib/storage.call-sites.test.ts`
-                and docs/architecture.md's storage seam exist to prevent.
-                `components/PersonPortrait.tsx` makes the same call.
-              */
-              unoptimized
-              className="object-cover"
-            />
-          </div>
-        </figure>
+        <InfoboxPortrait src={infobox.portraitSrc} name={infobox.name} />
       ) : null}
 
       <table className="w-full border-collapse">
