@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readGedcomTree, readPointer } from "@/lib/gedcom-lines";
+import { readGedcomTree } from "@/lib/gedcom-lines";
 
 /**
  * GEDCOM's grammar (E6-T1, `YEO-46`).
@@ -18,6 +18,12 @@ function tree(text: string) {
   const result = readGedcomTree(text);
   expect(result.issues).toEqual([]);
   return result.records;
+}
+
+/** The one child line of a one-record file, for the node it becomes. */
+function only(line: string) {
+  const [record] = tree(["0 @X1@ REC", line].join("\n"));
+  return record.children[0];
 }
 
 describe("levels build the tree", () => {
@@ -71,16 +77,25 @@ describe("cross-references", () => {
   });
 
   it("reads a pointer value back the same way", () => {
-    expect(readPointer("@F1@")).toBe("F1");
-    expect(readPointer(" @F1@ ")).toBe("F1");
+    expect(only("1 HUSB @F1@").pointer).toBe("F1");
+    expect(only("1 HUSB  @F1@ ").pointer).toBe("F1");
   });
 
   it("refuses a value that is not a pointer", () => {
     // The caller turns this into an issue naming the tag that expected one.
-    expect(readPointer("F1")).toBeNull();
-    expect(readPointer("@F1")).toBeNull();
-    expect(readPointer("Mary Byrne")).toBeNull();
-    expect(readPointer(null)).toBeNull();
+    expect(only("1 HUSB F1").pointer).toBeNull();
+    expect(only("1 HUSB @F1").pointer).toBeNull();
+    expect(only("1 HUSB Mary Byrne").pointer).toBeNull();
+    expect(only("1 HUSB").pointer).toBeNull();
+  });
+
+  it("leaves the pointer null on a line that is not one", () => {
+    // Every node carries the field, and on the overwhelming majority of them
+    // — a `SURN`, a `DATE`, a record's own `0` line — the answer is no.
+    const [record] = tree("0 @I1@ INDI\n1 SURN Byrne");
+
+    expect(record.pointer).toBeNull();
+    expect(record.children[0].pointer).toBeNull();
   });
 });
 
@@ -208,6 +223,92 @@ describe("values", () => {
     // blank. Collapsing the two would lose a real distinction.
     expect(record.children[0].value).toBeNull();
     expect(record.children[1].value).toBe("");
+  });
+});
+
+/**
+ * The `@` escape (`YEO-105`).
+ *
+ * `@` is the format's only metacharacter and a literal one inside a value is
+ * written doubled, so `O@@Brien` is the name `O@Brien`. This layer had never
+ * undone it, which meant the doubled spelling went into the database and onto
+ * the screen — and the round trip could not see it, because the export had
+ * never put the doubling back either and two absences cancel.
+ *
+ * Most of these cases are about *order*, which is the only hard thing here:
+ * the escape applies to a value, after the line's structure has been taken off
+ * and after the continuations have been folded in. Either one done the other
+ * way round is a different bug rather than a missing feature.
+ */
+describe("the @ escape", () => {
+  it("reads a doubled @ as the single one it spells", () => {
+    expect(only("1 SURN O@@Brien").value).toBe("O@Brien");
+  });
+
+  it("undoes every occurrence rather than the first", () => {
+    expect(only("1 NAME @@a@@b@@").value).toBe("@a@b@");
+  });
+
+  it("reads @@@@ as the two characters it escapes", () => {
+    // Left to right and non-overlapping: an escaped `@@` is four characters
+    // in the file and two in the value, not one.
+    expect(only("1 NAME a@@@@b").value).toBe("a@@b");
+  });
+
+  it("leaves a lone @ as it found it", () => {
+    // No conforming writer emits one, and real files are full of them —
+    // unescaped email addresses most of all. This layer reports lines it
+    // cannot parse, and this is not one of them.
+    expect(only("1 NAME nobody@example.com").value).toBe("nobody@example.com");
+  });
+
+  it("leaves the delimiters around a record identifier alone", () => {
+    // The unescaping runs on the value, and a record's identifier is not one:
+    // `0 @I1@ INDI` still names `I1`, and the `@`s are gone as punctuation
+    // rather than reduced as an escape.
+    const [record] = tree("0 @I1@ INDI");
+
+    expect(record.xref).toBe("I1");
+    expect(record.value).toBeNull();
+  });
+
+  it("does not let an escaped @ invent a cross-reference", () => {
+    // The hazard the ordering exists for. `@@I1@@` is the *text* `@I1@`, and
+    // a reader that unescaped before asking would find in it a pointer to a
+    // record the file never mentioned.
+    const husband = only("1 HUSB @@I1@@");
+
+    expect(husband.pointer).toBeNull();
+    expect(husband.value).toBe("@I1@");
+  });
+
+  it("still reads a real pointer, whose @s are delimiters", () => {
+    const husband = only("1 HUSB @I1@");
+
+    expect(husband.pointer).toBe("I1");
+    expect(husband.value).toBe("@I1@");
+  });
+
+  it("undoes a @@ that CONC split down the middle", () => {
+    // The second hazard: two characters that are one escape, and a writer
+    // breaking at a fixed column may break between them. A replacement
+    // applied per physical line sees two lone `@`s and undoes neither.
+    const [record] = tree(
+      ["0 @I1@ INDI", "1 SURN O@", "2 CONC @Brien"].join("\n"),
+    );
+
+    expect(record.children[0].value).toBe("O@Brien");
+  });
+
+  it("does not join two @s that CONT put on separate lines", () => {
+    // The same two characters with a line break between them are not an
+    // escape at all, and the difference is the whole reason `CONT` and `CONC`
+    // are folded before this runs rather than after.
+    const [record] = tree(
+      ["0 @I1@ INDI", "1 NAME O@", "2 CONT @Brien"].join("\n"),
+    );
+
+    expect(record.children[0].value).toBe("O@\n@Brien");
   });
 });
 
