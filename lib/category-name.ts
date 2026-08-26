@@ -131,6 +131,27 @@ export function compareCategoriesByName(a: NamedCategory, b: NamedCategory) {
  * (`categorySlug`). Two categories cannot share one, so this order is total
  * with no tie-break.
  *
+ * ## The one boundary worth naming
+ *
+ * "The same order everywhere" is a claim about this comparator, not about
+ * every way two slugs have ever been ordered. JavaScript's `<` compares UTF-16
+ * *code units*, so a slug holding a character outside the Basic Multilingual
+ * Plane sorts by its surrogate pair — which is a different answer from the
+ * code-*point* order Postgres's `COLLATE "C"` gives, and
+ * `drizzle/0012_revision_categories.sql` backfills with exactly that. The two
+ * agree for every slug made of BMP characters, which is every slug this wiki
+ * has.
+ *
+ * Nothing downstream can be broken by the difference, and it is worth being
+ * precise about why: every filing written after that migration is ordered by
+ * this function, so two snapshots the no-op rule compares are always ordered
+ * the same way as each other. The only place the seam is visible is a diff
+ * between a backfilled revision and the one saved after it, for an entry filed
+ * under two categories whose slugs differ first in a supplementary-plane
+ * character — where the diff would report a re-ordering nobody performed.
+ * `restoreWouldChangeNothing` (`lib/restore-preview.ts`) sidesteps it entirely
+ * by comparing filings as sets, which is what a filing is.
+ *
  * @param a a category
  * @param b another category
  * @returns negative if `a` sorts first, positive if `b` does, 0 if neither

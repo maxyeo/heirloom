@@ -869,6 +869,14 @@ behind it to attribute.
 for a save that changed only the filing;
 `lib/restore-revision.db.test.ts` asserts it for a restore.
 
+Only four pieces of code write to `pages` at all, which is what makes the claim
+checkable rather than hopeful. `lib/save-page.ts` and `lib/restore-revision.ts`
+are the two that move `updated_at`, and both append a revision in the same
+transaction; `lib/create-page.ts` inserts an entry and its first revision
+together; and `db/seed.ts` does the same for the seeded entry. One transaction
+is the whole mechanism — Postgres evaluates `now()` once per transaction, so
+the two columns are equal rather than merely close.
+
 Three answers were coherent, and this is the one that was chosen.
 
 1. **Categories are not revisioned, and `updated_at` does not move for them.**

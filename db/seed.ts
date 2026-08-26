@@ -69,18 +69,36 @@ async function main() {
 
   console.log("Writing an entry, for the person it is about to point at...");
   const title = `${seedPerson.thomas.givenName} ${seedPerson.thomas.surname}`;
-  await db.insert(schema.pages).values({
-    id: THOMAS_ENTRY_ID,
-    slug: slugFromTitle(title),
-    title,
-    bodyHtml: ENTRY_BODY_HTML,
-    updatedBy: SEED_AUTHOR,
-  });
-  await db.insert(schema.revisions).values({
-    pageId: THOMAS_ENTRY_ID,
-    title,
-    bodyHtml: ENTRY_BODY_HTML,
-    createdBy: SEED_AUTHOR,
+  /**
+   * One transaction, because "written together" is a claim about timestamps
+   * and not only about intent. Both `pages.updated_at` and
+   * `revisions.created_at` default to `now()`, which Postgres evaluates once
+   * per *transaction* — so as two statements these rows landed microseconds
+   * apart and a freshly seeded entry was one whose newest revision was newer
+   * than the entry itself.
+   *
+   * That mattered from `YEO-106`, which restored the invariant that a page and
+   * its newest revision share an instant and states it with no exception
+   * attached (`lib/save-page.ts`, docs/architecture.md). A seed that broke it
+   * would make the one database a developer looks at first the one database
+   * where the rule does not hold — and `db/seed-family.ts`'s whole purpose is
+   * that what a developer sees after `npm run db:seed` is what the application
+   * actually writes.
+   */
+  await db.transaction(async (tx) => {
+    await tx.insert(schema.pages).values({
+      id: THOMAS_ENTRY_ID,
+      slug: slugFromTitle(title),
+      title,
+      bodyHtml: ENTRY_BODY_HTML,
+      updatedBy: SEED_AUTHOR,
+    });
+    await tx.insert(schema.revisions).values({
+      pageId: THOMAS_ENTRY_ID,
+      title,
+      bodyHtml: ENTRY_BODY_HTML,
+      createdBy: SEED_AUTHOR,
+    });
   });
 
   console.log("Inserting individuals...");

@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { RestoreRevisionForm } from "@/components/RestoreRevisionForm";
+import { readEntryCategories } from "@/lib/categories";
 import { getPageBySlug } from "@/lib/pages";
+import { filingOf, restoreWouldChangeNothing } from "@/lib/restore-preview";
 import {
   formatRevisionAuthor,
   formatRevisionTimestamp,
@@ -64,7 +66,18 @@ const loadRestore = cache(async (slug: string, revisionId: string) => {
   const revision = await getRevisionById(revisionId);
   if (!revision || revision.pageId !== page.id) return undefined;
 
-  return { page, revision };
+  /**
+   * The entry's live filing (`YEO-106`), which the comparison below needs and
+   * which `getPageBySlug` deliberately does not carry — it is a join, and the
+   * three other routes that call it do not want one.
+   *
+   * Read after the guards rather than beside the page, so a 404 costs the
+   * query it does today. It is inside this `cache()`-wrapped loader, so
+   * `generateMetadata` and the render share the one round trip.
+   */
+  const filing = await readEntryCategories(page.id);
+
+  return { page, revision, filing };
 });
 
 export async function generateMetadata({
@@ -89,22 +102,27 @@ export default async function RestoreRevisionPage({
 
   if (!loaded) notFound();
 
-  const { page, revision } = loaded;
+  const { page, revision, filing } = loaded;
 
   /**
    * Whether this restore would change anything, answered on the way in.
    *
-   * `restoreRevision` asks the same question authoritatively, under a row
-   * lock, and refuses with `unchanged` — this is the cheap version, and its
-   * only job is to keep a reader from pressing a button that was always going
-   * to decline. It compares titles and bodies as stored rather than as they
-   * would be written (no trim, no sanitiser pass), so it can differ from the
-   * real answer for a row that predates the sanitiser. It errs in the harmless
-   * direction: the worst case is offering a restore that turns out to rewrite
-   * only the stored markup, which is a real change and does get recorded.
+   * The predicate itself is `lib/restore-preview.ts`, which argues why it is a
+   * courtesy rather than a boundary, why it errs towards offering a restore
+   * rather than hiding one, and why it is a shared definition instead of the
+   * inline title-and-body comparison that used to sit here — that one silently
+   * answered "nothing to restore" for a revision whose filing or hatnote
+   * differed, hiding the form for a restore that would have worked.
    */
-  const alreadyCurrent =
-    page.title === revision.title && page.bodyHtml === revision.bodyHtml;
+  const alreadyCurrent = restoreWouldChangeNothing(
+    {
+      title: page.title,
+      bodyHtml: page.bodyHtml,
+      hatnote: page.hatnote,
+      categories: filingOf(filing),
+    },
+    revision,
+  );
 
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
