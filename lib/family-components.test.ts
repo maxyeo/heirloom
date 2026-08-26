@@ -200,6 +200,31 @@ describe("connectedFamilies", () => {
     expect(grouped(graph)).toEqual(grouped(unjoinedArchive()));
   });
 
+  it("ignores a union partner who is not in the archive", () => {
+    const graph = unjoinedArchive();
+    graph.unions = [
+      ...graph.unions,
+      union({
+        id: "u-birch-2",
+        partnerAId: "birch-child",
+        partnerBId: "nobody-here",
+      }),
+    ];
+
+    // Same rule as the child link above, and today the same expression: both
+    // ids reach one `id !== null && neighbours.has(id)` over the whole union.
+    // Which is exactly why this is written down separately — the shared
+    // filter is a fact about the current implementation, not a promise, and
+    // splitting partners off from children is a natural enough refactor that
+    // nothing should be resting on nobody having done it yet. A partner id is
+    // also the one that can be `null`, so the partner half is where a rewrite
+    // is most tempted to reduce the test to a null check.
+    //
+    // Bram's union names nobody real but Bram, so it joins him to no one and
+    // the Birches stay the family they already were.
+    expect(grouped(graph)).toEqual(grouped(unjoinedArchive()));
+  });
+
   it("returns nothing for an empty archive", () => {
     expect(
       connectedFamilies({ people: [], unions: [], childLinks: [] }),
