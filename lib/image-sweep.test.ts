@@ -402,6 +402,18 @@ describe("the printed report", () => {
     );
   });
 
+  it("prints a line per standing refusal, not just the first", () => {
+    // The printed half of the blocker fix. An operator who is about to pass
+    // --allow-unreferenced-store needs to see the fraction cap in the report
+    // as well, or lifting the one they were shown looks like the whole
+    // argument.
+    const objects = Array.from({ length: 20 }, (_, i) => listed(key(i % 9)));
+
+    const text = render(plan(objects, []));
+
+    expect(text.match(/This run would be refused:/g)).toHaveLength(2);
+  });
+
   it("says nothing about refusals when there are none", () => {
     const referenced = collectImageReferences({ keys: [key(1)] });
 
