@@ -312,3 +312,70 @@ A locally taken backup is **not encrypted** — encryption happens in the
 workflow, because that is where the file becomes public. A dump on your laptop
 is the whole wiki in one readable file. `./backups` is gitignored so it cannot
 be committed by accident, which is the mistake that would matter most.
+
+## Reclaiming storage from orphaned images
+
+An image can outlive every reference to it. The common way is ordinary: an
+author picks a photograph, the browser uploads it straight away (`E5-T2`
+uploads before the entry is saved), and the entry is then abandoned. The file
+stays in the store, pointed at by nothing, forever.
+
+```bash
+npm run db:images-sweep              # report only — the default
+npm run db:images-sweep -- --delete  # actually remove them
+```
+
+**The report is the default and deleting is a second decision**, because this
+is the one operation on the deployed system that a restore cannot undo.
+[What is not in these backups](#what-is-not-in-these-backups) is the reason:
+the nightly dump carries the rows that point at photographs and never the
+photographs. A wrong delete here is not recovered by restoring anything.
+
+### Read this line before you type `--delete`
+
+The report begins with the database it read its references from:
+
+```
+References read from: postgres.abcdefgh@aws-0-us-west-2.pooler.supabase.com/postgres
+  12 from entry bodies, 47 from revisions, 8 from portrait columns
+```
+
+That line exists because of the one mistake nothing in the system can catch on
+its own: **references come from `DATABASE_URL` and deletions go to
+`STORAGE_TOKEN`'s store, and nothing relates the two.** A laptop ordinarily has
+a local database in `DATABASE_URL`. If `STORAGE_TOKEN` names the deployed
+store, every real photograph in it is unreferenced as far as that run is
+concerned. Check that both name the same deployment; the sweep cannot.
+
+Two refusals cover the rest, and both are decided on dry runs as well, so the
+report tells you a delete would be refused rather than letting you find out:
+
+- **The store holds objects and the database refers to none of them.** A wrong
+  connection string, a half-applied migration, or a restore in progress all
+  look like this. Overridable with `--allow-unreferenced-store`, which is only
+  ever right for a store that really is nothing but abandoned uploads.
+- **The run would remove more than a tenth of the store.** A wrong pairing
+  does not look like a few extra orphans, it looks like most of the store at
+  once. Raise it with `--max-orphan-fraction=0.4` once you have read the list
+  and believe it.
+
+### What is spared, and why
+
+| Kept                      | Because                                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| In a current entry body   | Obviously in use.                                                                                                                                      |
+| In **any revision**       | History is append-only and `E1-T7` can restore any revision. This is much stricter than "not in the current body", and it is the point of the feature. |
+| In a **portrait column**  | `individuals.portrait_key` and `portrait_thumb_key` appear in no HTML. A sweep that read only bodies would delete every portrait in the wiki.          |
+| Uploaded in the last day  | Uploads happen before saves, so a fresh image is legitimately unreferenced while its author is still typing. `--min-age-hours` changes the window.     |
+| Not a key this app minted | The sweep's reference model says nothing about it, and not understanding something is not a reason to delete it.                                       |
+
+### There is no schedule, deliberately
+
+Nothing runs this on a cron. The acceptance criterion — never delete on a
+schedule without a dry run — is met by there being no scheduled deleter at
+all, and a scheduled _reporter_ was considered and left out: it would need
+`STORAGE_TOKEN` as an Actions secret that nothing else in Actions needs, it
+would file an issue every month saying much the same thing, and a recurring
+issue that is usually "a few megabytes" is one people learn to close unread.
+The reclaim on a family wiki is small and the judgement is the expensive part,
+so this stays a thing a person runs and reads.

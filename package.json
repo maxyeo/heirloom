@@ -22,7 +22,8 @@
     "db:seed": "tsx db/seed.ts",
     "db:keep-alive": "tsx db/keep-alive.ts",
     "db:backup": "tsx db/backup.ts",
-    "db:restore": "tsx db/restore.ts"
+    "db:restore": "tsx db/restore.ts",
+    "db:images-sweep": "tsx db/images-sweep.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",

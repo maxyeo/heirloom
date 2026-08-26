@@ -29,6 +29,7 @@ const blob = vi.hoisted(() => ({
   put: vi.fn(),
   head: vi.fn(),
   del: vi.fn(),
+  list: vi.fn(),
   issueSignedToken: vi.fn(),
   presignUrl: vi.fn(),
   /**
@@ -44,6 +45,7 @@ vi.mock("@vercel/blob", () => ({
   put: blob.put,
   head: blob.head,
   del: blob.del,
+  list: blob.list,
   issueSignedToken: blob.issueSignedToken,
   presignUrl: blob.presignUrl,
   BlobNotFoundError: blob.BlobNotFoundError,
@@ -107,14 +109,27 @@ afterEach(() => {
 });
 
 describe("the exported surface", () => {
-  it("is put, get and delete, and nothing else", () => {
-    // The acceptance criterion, stated as an assertion. A fourth export is
-    // how a seam stops being one: `list` or `copy` or `presign` narrows the
+  it("is put, get, delete and list, and nothing else", () => {
+    // The acceptance criterion, stated as an assertion. A *fifth* export is
+    // how a seam stops being one: `copy`, `rename` or `presign` narrows the
     // set of hosts that can implement this to the ones that agree with
     // Vercel. Signing is why that is worth restating — it arrived as two new
     // vendor calls and stayed *inside* the module, which is the claim YEO-41
     // made and YEO-86 collected on.
-    expect(Object.keys(storage).sort()).toEqual(["delete", "get", "put"]);
+    //
+    // `list` is the one that was argued out and then back in. E5-T1 named it
+    // as the example of a fourth function that must never appear; E5-T5
+    // (`YEO-45`) found the requirement that no reference query can satisfy —
+    // an orphan is by definition an object no row names, so only the store
+    // can produce a candidate — and established that enumeration was inside
+    // the intersection all along. The reasoning is in `lib/storage.ts`. This
+    // number moving again should cost somebody the same argument.
+    expect(Object.keys(storage).sort()).toEqual([
+      "delete",
+      "get",
+      "list",
+      "put",
+    ]);
   });
 });
 
@@ -353,5 +368,138 @@ describe("delete", () => {
     // `import { delete }` does not parse; `storage.delete` does. This is why
     // the module documents a namespace import as the way to reach it.
     expect(typeof storage.delete).toBe("function");
+  });
+});
+
+describe("list", () => {
+  const listedBlob = (pathname: string, overrides = {}) => ({
+    pathname,
+    url: `https://abc123.private.blob.vercel-storage.com/${pathname}`,
+    downloadUrl: `https://abc123.private.blob.vercel-storage.com/${pathname}?download=1`,
+    size: 1024,
+    uploadedAt: new Date("2026-01-01T00:00:00.000Z"),
+    etag: "abc",
+    ...overrides,
+  });
+
+  it("returns the key, size and upload time of every object", async () => {
+    blob.list.mockResolvedValue({
+      blobs: [
+        listedBlob("images/ab/one.jpg", {
+          size: 2048,
+          uploadedAt: new Date("2026-02-03T04:05:06.000Z"),
+        }),
+      ],
+      hasMore: false,
+    });
+
+    // Size and upload time are both load-bearing rather than informational.
+    // The sweep's report is about reclaimed bytes, and its grace period is
+    // the only thing standing between it and an image an author uploaded
+    // thirty seconds ago and has not saved yet.
+    expect(await storage.list()).toEqual([
+      {
+        key: "images/ab/one.jpg",
+        size: 2048,
+        uploadedAt: new Date("2026-02-03T04:05:06.000Z"),
+      },
+    ]);
+  });
+
+  it("hands back no URL", async () => {
+    // A listing is a worklist, not something to render. Minting a signed URL
+    // per listed object would sign one for every photograph in the wiki in
+    // order to delete forty of them — and `key` is the durable handle, which
+    // is the rule the whole module is built on.
+    blob.list.mockResolvedValue({
+      blobs: [listedBlob("images/ab/one.jpg")],
+      hasMore: false,
+    });
+
+    const [object] = await storage.list();
+
+    expect(object).not.toHaveProperty("url");
+    expect(blob.presignUrl).not.toHaveBeenCalled();
+  });
+
+  it("follows the cursor to the end and never exposes it", async () => {
+    // The property that matters for a cleanup: a listing that stopped at the
+    // first page would report every object on page two as an orphan, because
+    // "not in the listing" is how this caller spells "referenced by nothing"
+    // in reverse. A truncated page is the one bug here that deletes data.
+    blob.list
+      .mockResolvedValueOnce({
+        blobs: [listedBlob("images/ab/one.jpg")],
+        cursor: "page-2",
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        blobs: [listedBlob("images/cd/two.jpg")],
+        cursor: "page-3",
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        blobs: [listedBlob("images/ef/three.jpg")],
+        hasMore: false,
+      });
+
+    const objects = await storage.list({ prefix: "images/" });
+
+    expect(objects.map((object) => object.key)).toEqual([
+      "images/ab/one.jpg",
+      "images/cd/two.jpg",
+      "images/ef/three.jpg",
+    ]);
+    expect(blob.list).toHaveBeenCalledTimes(3);
+    expect(blob.list.mock.calls[0][0].cursor).toBeUndefined();
+    expect(blob.list.mock.calls[1][0].cursor).toBe("page-2");
+    expect(blob.list.mock.calls[2][0].cursor).toBe("page-3");
+  });
+
+  it("stops when the host says there is no more, even if it still sent a cursor", async () => {
+    // `hasMore` is the terminator, not the presence of a cursor. Reading it
+    // the other way round is an infinite loop against a host that always
+    // echoes one back.
+    blob.list.mockResolvedValue({
+      blobs: [listedBlob("images/ab/one.jpg")],
+      cursor: "always-here",
+      hasMore: false,
+    });
+
+    await storage.list();
+
+    expect(blob.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the prefix and the credential through", async () => {
+    blob.list.mockResolvedValue({ blobs: [], hasMore: false });
+
+    await storage.list({ prefix: "images/" });
+
+    expect(blob.list.mock.calls[0][0].prefix).toBe("images/");
+    expect(blob.list.mock.calls[0][0].token).toBe("vercel_blob_rw_test_token");
+  });
+
+  it("refuses a store far larger than this application could have produced", async () => {
+    // The bound on a loop somebody else's cursor drives. Reaching it means
+    // the wrong store, a prefix that did not apply, or a cursor that never
+    // terminates — and a cleanup that quietly ran on part of a store is the
+    // failure mode this whole ticket is about.
+    blob.list.mockResolvedValue({
+      blobs: Array.from({ length: 1000 }, (_, index) =>
+        listedBlob(`images/ab/${index}.jpg`),
+      ),
+      cursor: "next",
+      hasMore: true,
+    });
+
+    await expect(storage.list()).rejects.toThrow(/Refusing to list more than/);
+  });
+
+  it("fails with a readable error when STORAGE_TOKEN is unset", async () => {
+    vi.stubEnv("STORAGE_TOKEN", "");
+
+    await expect(storage.list()).rejects.toThrow(/STORAGE_TOKEN/);
+    expect(blob.list).not.toHaveBeenCalled();
   });
 });

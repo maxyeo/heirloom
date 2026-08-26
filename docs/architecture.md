@@ -160,6 +160,52 @@ a card to its contents — would re-rank the tree the moment somebody uploaded a
 picture, sliding a great-grandmother's descendants sideways because her face
 arrived.
 
+#### Reclaiming what nothing points at any more
+
+An image can outlive every reference to it: an author picks a photograph, the
+browser uploads it immediately, and the entry is never saved. `E5-T5` is the
+sweep that reclaims those, and the whole of its difficulty is in deciding what
+"unreferenced" means.
+
+**Much stricter than "not in the current body."** History is append-only, and
+E1-T7 can restore any revision, so a photograph taken out of an entry last
+year is still referenced by every version that had it. A sweep that scanned
+`pages` alone would delete it, and the restore months later would bring back a
+body pointing at a file that no longer exists — with the broken `<img>` baked
+into an append-only row that can never be edited. The failure is silent, it is
+delayed, and it lands on the one feature the whole revision model exists for.
+
+**And references are not all in bodies.** Since `E5-T4` a key can be held by a
+_column_: `individuals.portrait_key` and `portrait_thumb_key` appear in no
+HTML anywhere. A sweep that knew only about bodies would find every portrait
+in the wiki unreferenced and delete the lot on its first run. So the scan asks
+three sources — current bodies, revisions, and both portrait columns — and
+`lib/image-references.ts` is where that union lives, shared with the export so
+the two cannot come to disagree about what "referenced" means.
+
+**Three things are spared beyond that**, because the two errors here are not
+symmetrical. An orphan left behind costs a few kilobytes until the next run; a
+photograph deleted by mistake is gone, since the nightly backup carries the
+rows that point at images and never the images themselves
+([Backups](backups.md#what-is-not-in-these-backups)). So an object is also
+kept if it was uploaded within the last day — uploads happen _before_ saves,
+so a just-uploaded image is legitimately unreferenced for as long as its
+author keeps typing — or if its key is not one this application could have
+minted, because "I do not understand this" is not a reason to delete
+something.
+
+**Reporting is the default and deleting is a flag.** `npm run db:images-sweep`
+prints what it would do and stops. What that guards against is not the orphan
+rule, which is pure and tested, but the pairing nothing in the system checks:
+references come from `DATABASE_URL` and deletions go to `STORAGE_TOKEN`'s
+store, and a developer's machine ordinarily has a local database and could
+have the deployed store's token. Every real photograph would then look
+unreferenced. Two refusals cover it — a store whose objects the database
+refers to _none_ of, and any run that would take more than a tenth of the
+store — because a wrong pairing does not look like a few extra orphans, it
+looks like most of the store at once. The runbook is in
+[Backups](backups.md#reclaiming-storage-from-orphaned-images).
+
 #### What the upload endpoint takes out of a photograph
 
 The boundary above protects the picture. It does not protect what is written
@@ -952,12 +998,12 @@ Node host with any Postgres:
 ### The storage seam
 
 That first bullet is the one that needs enforcing rather than asserting, and
-`lib/storage.ts` (E5-T1) is the enforcement. It exports three functions —
-`put`, `get`, `delete` — and it is the only file in the repository that
-imports a storage vendor's SDK.
+`lib/storage.ts` (E5-T1) is the enforcement. It exports four functions —
+`put`, `get`, `delete`, `list` — and it is the only file in the repository
+that imports a storage vendor's SDK.
 
 Both halves of that are checked. `lib/storage.test.ts` asserts the export list
-is exactly those three names, and `lib/storage.call-sites.test.ts` scans the
+is exactly those four names, and `lib/storage.call-sites.test.ts` scans the
 source tree and fails if any other file names a `@vercel/*` package — the same
 tripwire shape `lib/sanitize-html.call-sites.test.ts` uses, and for the same
 reason. The claim above is not hard to keep true; it is hard to _notice_
@@ -965,11 +1011,46 @@ becoming false, because `import { put } from "@vercel/blob"` in a route
 handler works perfectly, reviews fine, and only costs anything on the day
 somebody tries to leave.
 
-The three functions are the intersection, not a subset chosen for now. Every
-object store has `put`/`get`/`delete`; the moment a fourth appears — `list`,
-`copy`, a presigned-URL helper — the set of hosts that can implement this
-narrows to the ones that agree with Vercel, which is the seam leaking rather
-than widening.
+The four functions are the intersection, not a set chosen for now. Every
+object store has `put`/`get`/`delete`/`list`; the moment a fifth appears —
+`copy`, `rename`, a presigned-URL helper — the set of hosts that can implement
+this narrows to the ones that agree with Vercel, which is the seam leaking
+rather than widening.
+
+#### The fourth function, and why this section used to forbid it
+
+E5-T1 shipped three and this section named `list` as the example of a fourth
+that must never appear. E5-T5 tested that against a requirement and it did not
+survive.
+
+An orphan is **by definition an object no row names**. The reference graph can
+only ever confirm what _is_ referenced, so no query over `pages`, `revisions`
+and `individuals` can produce a candidate — the photograph an author uploaded
+and never saved appears in no body, no revision and no column. Enumeration is
+the one question only the store can answer, and a cleanup that cannot ask it
+cannot find anything to clean.
+
+The alternative kept the count at three and was worse: a ledger table written
+by `POST /api/images`, listing every key it minted. It cannot see an object
+that was already in the store when it shipped, and one missed insert leaks
+that object forever with nothing able to find it again. The store is the
+ground truth for what is taking up space; a table shadowing it is a second
+copy that is wrong in the direction nobody checks.
+
+So the original reasoning was right in general and too broad about this one
+function. `copy` and `presign` genuinely differ between hosts — which is why
+signing stayed _inside_ the module when `YEO-86` added it. Enumeration does
+not: S3's `ListObjectsV2`, GCS, R2, Azure and `readdir` all take a prefix, all
+paginate, and all report a size and a modification time. `list` was inside the
+intersection all along; it was excluded on a generalisation rather than on an
+examination.
+
+Two things keep the widening honest. The cursor stays inside the module —
+`list` returns a complete array and does its own paging, because a cursor is
+the shape of one host's pagination and exporting one would make every caller
+re-implement a loop against the next host's. And `lib/storage.test.ts` asserts
+the export list is exactly those four, so a fifth costs somebody the same
+argument this one cost.
 
 Five decisions inside the module are worth naming, because each is a default
 that would have been wrong:
@@ -999,11 +1080,13 @@ short-lived signed URLs "changes `put` and `get` in this one file and no call
 site". `YEO-86` made the move: `lib/storage.ts` changed, its tests changed,
 and the tripwire stayed green because the two new vendor calls
 (`issueSignedToken`, `presignUrl`) landed inside the same file as the old
-ones. The exported surface is still exactly `put` / `get` / `delete` — signing
-is not a fourth function, which matters, because a `presign` export would have
-narrowed the seam to hosts that agree with Vercel about how signing works.
-S3, GCS and R2 all sign; a directory on disk can mint its own token. What they
-do not agree on is the shape of the call, which is why it stays in here.
+ones. Signing added no exported function, which matters, because a `presign`
+export would have narrowed the seam to hosts that agree with Vercel about how
+signing works. S3, GCS and R2 all sign; a directory on disk can mint its own
+token. What they do not agree on is the shape of the call, which is why it
+stays in here — and it is the reason `presign` stayed out even after
+[the fourth function](#the-fourth-function-and-why-this-section-used-to-forbid-it)
+established that `list` belonged in.
 
 **Fifteen minutes**, chosen against what the URL has to survive rather than
 against a round number. Its real job is the gap between rendering a page and

@@ -46,12 +46,7 @@
  */
 
 import { readText } from "./field-input";
-import {
-  IMAGE_KEY_PREFIX,
-  UnsafeStorageKeyError,
-  assertSafeStorageKey,
-  imagePath,
-} from "./storage-key";
+import { imagePath, isStoredImageKey } from "./storage-key";
 
 /**
  * How wide the portrait is drawn on a tree node, in CSS pixels.
@@ -80,14 +75,12 @@ export const PORTRAIT_NODE_SIZE = 48;
  * refuse.
  */
 export function isPortraitKey(key: string): boolean {
-  if (!key.startsWith(IMAGE_KEY_PREFIX)) return false;
-  try {
-    assertSafeStorageKey(key);
-    return true;
-  } catch (error) {
-    if (error instanceof UnsafeStorageKeyError) return false;
-    throw error;
-  }
+  // A portrait key is a stored image key and nothing more — the column
+  // constrains who points at the image, not what the key may look like. The
+  // rule lives in `lib/storage-key.ts` beside the mint and the validator it
+  // is made of, so that this predicate and E5-T5's orphan sweep cannot come
+  // to disagree about which keys are this application's.
+  return isStoredImageKey(key);
 }
 
 /**

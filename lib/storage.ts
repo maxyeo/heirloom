@@ -3,6 +3,7 @@ import {
   del,
   head,
   issueSignedToken,
+  list as blobList,
   presignUrl,
   put as blobPut,
   type IssuedSignedToken,
@@ -20,14 +21,50 @@ import {
  *    (`lib/storage.call-sites.test.ts`) fails the build if a second one
  *    appears — which is how this decays in practice, one convenient
  *    `import { put } from "@vercel/blob"` in a route handler at a time.
- * 2. Its runtime surface is exactly three functions: `put`, `get`, `delete`.
- *    Every object store in existence has those three; the moment a fourth
- *    (`list`, `copy`, `presign`) is exported, the set of hosts that can
- *    implement this shrinks to the ones that happen to agree with Vercel.
+ * 2. Its runtime surface is exactly four functions: `put`, `get`, `delete`,
+ *    `list`. Every object store in existence has those four; anything a
+ *    fifth would add (`copy`, `rename`, `presign`, a multipart uploader)
+ *    shrinks the set of hosts that can implement this to the ones that happen
+ *    to agree with Vercel.
  *
  * The retrofit is what this ticket exists to prevent. Three call sites
  * reaching for `@vercel/blob` directly is not a refactor you do later; it is
  * the point at which the portability claim quietly stops being true.
+ *
+ * ## Why there are four and not three
+ *
+ * E5-T1 shipped three and said, in this docblock, that a fourth — naming
+ * `list` first — would narrow the seam. E5-T5 (`YEO-45`) is the ticket that
+ * tested that claim against a real requirement, and it did not survive
+ * contact.
+ *
+ * An orphan is **by definition an object no row names**. The reference graph
+ * can only ever confirm what *is* referenced, so no query over `pages`,
+ * `revisions` and `individuals` can produce a candidate: the photograph an
+ * author uploaded and never saved appears in no body, no revision and no
+ * column, and enumeration is the one question only the store can answer. A
+ * cleanup that cannot enumerate cannot find anything to clean.
+ *
+ * The alternative was a ledger table written by `POST /api/images`, which
+ * keeps the count at three and is worse. It cannot see an object that was
+ * already in the store when it shipped, and a single missed insert leaks that
+ * object forever with nothing in the system able to find it again. The store
+ * is the ground truth for what is taking up space; a table that shadows it is
+ * a second copy that is wrong in the direction nobody checks.
+ *
+ * So the original reasoning was right in general and too broad about this one
+ * function. `copy` and `presign` genuinely differ between hosts — that is why
+ * signing stayed *inside* this file when `YEO-86` added it. Enumeration does
+ * not: S3's `ListObjectsV2`, GCS, R2, Azure and `readdir` all take a prefix,
+ * all paginate, and all report a size and a modification time. `list` was
+ * always inside the intersection; it was excluded on a generalisation rather
+ * than on an examination.
+ *
+ * The way to keep this honest is the way `lib/storage.call-sites.test.ts`
+ * already prescribes: widen the exported functions deliberately, in this
+ * file, and make the assertion in `lib/storage.test.ts` say four. What must
+ * never happen is a second module importing the vendor because this one was
+ * "missing something".
  *
  * ## Using it
  *
@@ -385,3 +422,131 @@ async function deleteObject(key: string): Promise<void> {
 }
 
 export { deleteObject as delete };
+
+/**
+ * The most objects `list` will gather before it gives up.
+ *
+ * A bound on a loop that is otherwise driven by somebody else's cursor. A
+ * family wiki's store holds photographs of a family; a hundred thousand of
+ * them is far past anything this application produces, so reaching this
+ * number means something is wrong — the wrong store, a prefix that did not
+ * apply, or a host whose cursor never terminates — and continuing would turn
+ * that into an out-of-memory kill instead of a sentence.
+ *
+ * Refusing is the safe direction for the one caller. A truncated listing
+ * cannot invent an orphan (an object missing from the list is simply never
+ * considered), but it also cannot be told apart from a complete one, and a
+ * cleanup that silently ran on half a store is exactly the kind of quiet
+ * wrongness E5-T5 is about. Better a failure that names the number.
+ */
+const MAX_LISTED_OBJECTS = 100_000;
+
+/**
+ * One object as `list` describes it.
+ *
+ * Wider than {@link StoredObject}, and the difference is not an
+ * inconsistency. `StoredObject` omits size and upload time because *Vercel's
+ * `put` response does not carry them*, and a `put` that promised them would
+ * have to fetch them back — so the field would exist on the type and be a lie
+ * on the host. Every store's **listing** is the opposite case: S3's `Size`
+ * and `LastModified`, GCS's `size` and `updated`, R2's, Azure's, and
+ * `fs.stat` all come back with the entry, unasked. Promising them here costs
+ * no host anything, and both are load-bearing for the caller — see `size` and
+ * `uploadedAt` below.
+ *
+ * There is deliberately no `url`. A listing is a worklist, and the rule this
+ * module is built on is that `key` is the durable handle and a URL is a
+ * credential with a timer on it. Minting one per listed object would sign a
+ * URL for every photograph in the wiki in order to delete forty of them.
+ */
+export interface ListedObject {
+  /** The key it is stored under — the same string `put` was given. */
+  key: string;
+  /**
+   * How many bytes it occupies.
+   *
+   * The point of the sweep is reclaiming storage, so a report that cannot say
+   * *how much* is a materially weaker answer to "should I run this with
+   * `--delete`" than the one the operator is entitled to.
+   */
+  size: number;
+  /**
+   * When it was written.
+   *
+   * Load-bearing rather than informational, and the reason is a race the
+   * cleanup would otherwise lose. `components/EntryEditor.tsx` and
+   * `components/PortraitField.tsx` upload the moment an author picks a file,
+   * *before* the entry or the person is saved — so a just-uploaded image is
+   * legitimately referenced by nothing for as long as the author keeps
+   * typing. Without an age, a sweep running in that window deletes the
+   * photograph out from under a live editor and the save writes a body
+   * pointing at a file that is already gone.
+   */
+  uploadedAt: Date;
+}
+
+export interface ListOptions {
+  /**
+   * Only objects whose key starts with this.
+   *
+   * Every host takes one, and the caller is expected to pass
+   * `IMAGE_KEY_PREFIX` rather than enumerate the whole store: the namespace
+   * exists precisely so that a store shared with something else one day has a
+   * boundary the sweep cannot reach across (`lib/storage-key.ts`).
+   */
+  prefix?: string;
+}
+
+/**
+ * Every object under `prefix`, in one array.
+ *
+ * Pagination is handled in here and the cursor is never exported. That is the
+ * same judgement the rest of this module makes about signing: a cursor is the
+ * shape of one host's paging, and a seam that handed one out would make every
+ * future caller re-implement a loop against whatever the next host's cursor
+ * happens to be. What every store agrees on is "give me everything under this
+ * prefix"; what they disagree about is how the pages are stitched, so the
+ * stitching stays on this side of the seam.
+ *
+ * The whole listing in memory is the deliberate trade, and it is the same
+ * "a family wiki is small" assumption `getFamilyGraph` makes when it loads
+ * every person at once. {@link MAX_LISTED_OBJECTS} is where that assumption
+ * stops being made silently.
+ *
+ * Order is not promised. Hosts differ, and the one caller sorts its report
+ * for itself.
+ */
+export async function list(options: ListOptions = {}): Promise<ListedObject[]> {
+  const credential = token();
+  const objects: ListedObject[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const page = await blobList({
+      prefix: options.prefix,
+      cursor,
+      token: credential,
+    });
+
+    for (const blob of page.blobs) {
+      objects.push({
+        key: blob.pathname,
+        size: blob.size,
+        uploadedAt: blob.uploadedAt,
+      });
+    }
+
+    if (objects.length > MAX_LISTED_OBJECTS) {
+      throw new Error(
+        `Refusing to list more than ${MAX_LISTED_OBJECTS} objects` +
+          (options.prefix ? ` under ${JSON.stringify(options.prefix)}` : "") +
+          ". A store this size is not one this application produced; check " +
+          "STORAGE_TOKEN points at the right store before going further.",
+      );
+    }
+
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+
+  return objects;
+}

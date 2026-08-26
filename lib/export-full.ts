@@ -2,7 +2,6 @@ import { asc, getTableColumns, getTableName, sql } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 
 import { db, schema } from "@/db";
-import { scanEntryImages } from "@/lib/entry-images";
 import {
   archiveMembers,
   type ExportArchiveInput,
@@ -11,6 +10,7 @@ import {
   type OpenedImage,
 } from "@/lib/export-archive";
 import { exportTreeAsGedcom } from "@/lib/export-tree";
+import { collectImageReferences } from "@/lib/image-references";
 import { isPortraitKey } from "@/lib/portrait";
 import * as storage from "@/lib/storage";
 import { imagePath } from "@/lib/storage-key";
@@ -367,10 +367,12 @@ const PORTRAIT_COLUMNS = ["portrait_key", "portrait_thumb_key"] as const;
  * Adding the second kind here rather than teaching `scanEntryImages` about it
  * is deliberate: that function answers "which images does this HTML use", and
  * a portrait is not in any HTML. What the two share is the *question* — which
- * keys are still referenced — and that question is this function's, which is
- * also why E5-T5's orphan sweep should ask it here rather than re-derive half
- * of it. A sweep that knew only about bodies would delete every portrait in
- * the wiki as unreferenced.
+ * keys are still referenced — and that question now lives in
+ * `lib/image-references.ts`, which this function and E5-T5's orphan sweep
+ * both go through so the two cannot come to disagree. A sweep that knew only
+ * about bodies would delete every portrait in the wiki as unreferenced; a
+ * sweep that disagreed with *this* function about anything else would leave
+ * holes in a backup that nobody notices until the restore.
  *
  * A key that is not a well-formed image key is skipped rather than exported.
  * These columns are written through `validateIndividual`, so a bad one means
@@ -385,14 +387,24 @@ const PORTRAIT_COLUMNS = ["portrait_key", "portrait_thumb_key"] as const;
 function referencedImages(
   tables: readonly ExportTable[],
 ): { key: string; url: string }[] {
-  const keys = new Set<string>();
+  const html: string[] = [];
+  const portraitKeys: string[] = [];
 
   for (const table of tables) {
     if (table.table === "individuals") {
       for (const row of table.rows) {
         for (const column of PORTRAIT_COLUMNS) {
           const key = row[column];
-          if (typeof key === "string" && isPortraitKey(key)) keys.add(key);
+          // Filtered here rather than inside `collectImageReferences`,
+          // because the export and E5-T5's sweep want opposite tie-breaks on
+          // exactly this value and only the call sites can know which. The
+          // archive is about to *fetch* each key, so a malformed one is a
+          // request that cannot succeed; the sweep passes the same values in
+          // raw, because there a value it does not recognise can only fail to
+          // match an object and filtering it out is what could delete one.
+          if (typeof key === "string" && isPortraitKey(key)) {
+            portraitKeys.push(key);
+          }
         }
       }
       continue;
@@ -400,11 +412,22 @@ function referencedImages(
 
     if (table.table !== "pages" && table.table !== "revisions") continue;
     for (const row of table.rows) {
-      const body = row.body_html;
-      if (typeof body !== "string") continue;
-      for (const key of scanEntryImages(body)) keys.add(key);
+      // `hatnote` as well as `body_html`, and today that finds nothing:
+      // `normaliseHatnote` flattens a hatnote to text and anchors, so no
+      // `img` survives into the column. It is here so that the sentence
+      // docs/export.md now prints — that the export and E5-T5's sweep ask
+      // one question through one function — is true of the code rather than
+      // true by accident of what hatnotes currently hold. The sweep scans
+      // both columns; an export that scanned one would start quietly
+      // omitting images on the day the hatnote allowlist widened.
+      for (const column of ["body_html", "hatnote"]) {
+        const value = row[column];
+        if (typeof value === "string") html.push(value);
+      }
     }
   }
+
+  const keys = collectImageReferences({ html, keys: portraitKeys });
 
   return [...keys].sort().map((key) => ({ key, url: imagePath(key) }));
 }

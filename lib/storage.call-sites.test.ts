@@ -160,9 +160,13 @@ describe("Vercel imports", () => {
       .filter((file) => !ALLOWED[file]?.includes("@vercel/blob"));
 
     // Route the call through `lib/storage.ts` instead. If the module is
-    // genuinely missing something you need, widen its three functions — that
+    // genuinely missing something you need, widen its four functions — that
     // is a decision about what every host must be able to do, which is the
-    // decision worth making deliberately.
+    // decision worth making deliberately. E5-T5 (`YEO-45`) is the worked
+    // example: it needed to enumerate the store, argued the case in
+    // `lib/storage.ts`, added `list` there, and changed the count in
+    // `lib/storage.test.ts`. What it did not do is import the SDK a second
+    // time, which is the only thing this file is here to stop.
     expect(offenders).toEqual([]);
   });
 
