@@ -133,12 +133,18 @@ describe("dangerouslySetInnerHTML call sites", () => {
     expect(files.length).toBeGreaterThan(5);
   });
 
-  it("finds the read route, so the guard below is not vacuous", () => {
-    // The one unexempt call site that exists today. When a second arrives this
-    // stays true; if it ever empties, the assertions below have stopped
-    // meaning anything and should be looked at rather than deleted.
-    expect(callSites.map(({ file }) => file)).toContain(
-      join("app", "wiki", "[slug]", "page.tsx"),
+  it("finds the read routes, so the guard below is not vacuous", () => {
+    // Both unexempt call sites that exist today: the entry itself, and the
+    // revision it is diffed against. Naming both rather than one is the point
+    // — a guard demonstrated on a single file is a guard nobody has watched
+    // handle a second. If either disappears from this list the assertions
+    // below have stopped meaning what they say, and should be looked at
+    // rather than deleted.
+    const found = callSites.map(({ file }) => file);
+
+    expect(found).toContain(join("app", "wiki", "[slug]", "page.tsx"));
+    expect(found).toContain(
+      join("app", "wiki", "[slug]", "history", "[revisionId]", "page.tsx"),
     );
   });
 
