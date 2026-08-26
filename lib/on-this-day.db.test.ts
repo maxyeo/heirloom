@@ -296,10 +296,9 @@ beforeAll(async () => {
       The leap day itself (`YEO-109`). This person was born and died on a 29
       February — 1896 and 1968 are both leap years — so one row is both a
       birth and a death, and `U_LEAP` below carries the third pair of date
-      columns. The
-      predicate is literally one function, so a leap-day fixture on any one of
-      the three would prove the rule; all three are here because the cost is
-      two rows and the thing being protected is a decision a later
+      columns. The predicate is literally one function, so a leap-day fixture
+      on any one of the three would prove the rule; all three are here because
+      the cost is two rows and the thing being protected is a decision a later
       "simplification" of one query could lose without touching the others.
     */
     {
