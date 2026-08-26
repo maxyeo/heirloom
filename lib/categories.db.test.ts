@@ -8,6 +8,7 @@ import {
   listCategories,
   listEntriesInCategory,
   readEntryCategories,
+  readEntryFiling,
   setEntryCategories,
 } from "@/lib/categories";
 import { raceWriters } from "@/test/db-concurrency";
@@ -59,6 +60,14 @@ async function file(pageId: string, names: readonly string[]) {
   return db.transaction((tx) => setEntryCategories(tx, pageId, names));
 }
 
+/**
+ * Whether that filing moved a row — the half of the result the no-op rule
+ * reads. The other half, `names`, has a describe block of its own below.
+ */
+async function moved(pageId: string, names: readonly string[]) {
+  return (await file(pageId, names)).changed;
+}
+
 async function joinRowsFor(pageId: string) {
   return db
     .select()
@@ -86,7 +95,7 @@ beforeEach(async () => {
 
 describe("filing an entry", () => {
   it("creates the categories it has not seen before", async () => {
-    const changed = await file(PAGE, [name("Emigrated"), name("Kilkenny")]);
+    const changed = await moved(PAGE, [name("Emigrated"), name("Kilkenny")]);
 
     expect(changed).toBe(true);
     expect((await readEntryCategories(PAGE)).map((c) => c.name)).toEqual([
@@ -131,16 +140,16 @@ describe("filing an entry", () => {
 
     // The no-op rule `savePage` depends on: an author who opens the editor and
     // presses Save without touching anything must not move `updated_at`.
-    expect(await file(PAGE, [name("Emigrated")])).toBe(false);
+    expect(await moved(PAGE, [name("Emigrated")])).toBe(false);
     // Including through normalisation — this is the same request, differently
     // typed.
-    expect(await file(PAGE, [`  ${name("Emigrated")}  `])).toBe(false);
+    expect(await moved(PAGE, [`  ${name("Emigrated")}  `])).toBe(false);
   });
 
   it("detaches the ones that were taken away and keeps the rest", async () => {
     await file(PAGE, [name("Emigrated"), name("Kilkenny")]);
 
-    expect(await file(PAGE, [name("Kilkenny"), name("Whitfield")])).toBe(true);
+    expect(await moved(PAGE, [name("Kilkenny"), name("Whitfield")])).toBe(true);
     expect((await readEntryCategories(PAGE)).map((c) => c.name)).toEqual([
       name("Kilkenny"),
       name("Whitfield"),
@@ -157,7 +166,7 @@ describe("filing an entry", () => {
   it("un-files an entry completely when given no categories", async () => {
     await file(PAGE, [name("Emigrated")]);
 
-    expect(await file(PAGE, [])).toBe(true);
+    expect(await moved(PAGE, [])).toBe(true);
     expect(await readEntryCategories(PAGE)).toEqual([]);
     expect(await joinRowsFor(PAGE)).toEqual([]);
   });
@@ -172,6 +181,63 @@ describe("filing an entry", () => {
     expect((await readEntryCategories(OTHER_PAGE)).map((c) => c.name)).toEqual([
       name("Emigrated"),
     ]);
+  });
+});
+
+/**
+ * The other half of what `setEntryCategories` hands back (`YEO-106`): the
+ * filing itself, which is what `lib/save-page.ts` writes into
+ * `revisions.categories`.
+ *
+ * Asserted here rather than through `savePage` because these are properties of
+ * *this* function — which names it chooses, and in which order — and a test
+ * that reached them through a save would be asserting them at one remove,
+ * where a failure names the wrong module.
+ */
+describe("the filing a revision records", () => {
+  it("orders the names by slug, not by the order they were typed", async () => {
+    /**
+     * Submitted newest-decision-first, the way an author adds to a picker. The
+     * canonical order is the slug's, so "Emigrated" leads whatever the author
+     * did — see `compareCategoriesBySlug` for why this order and not the
+     * alphabetical one the bar renders.
+     */
+    const filing = await file(PAGE, [name("Whitfield"), name("Emigrated")]);
+
+    expect(filing.names).toEqual([name("Emigrated"), name("Whitfield")]);
+  });
+
+  it("records the stored spelling, not the one that was typed", async () => {
+    await file(OTHER_PAGE, [name("Emigrated")]);
+
+    /**
+     * A different capitalisation of a heading that already exists. It resolves
+     * to the same row and deliberately does not rename it, so the entry is
+     * filed under the *existing* spelling — and that is what a revision has to
+     * record, or the next save compares the typed spelling against the real
+     * filing and reports a re-filing nobody performed.
+     */
+    const filing = await file(PAGE, [name("Emigrated").toUpperCase()]);
+
+    expect(filing.names).toEqual([name("Emigrated")]);
+  });
+
+  it("is empty for an entry filed under nothing", async () => {
+    await file(PAGE, [name("Emigrated")]);
+
+    expect((await file(PAGE, [])).names).toEqual([]);
+  });
+
+  it("agrees with what a later transaction reads back", async () => {
+    const filing = await file(PAGE, [name("Whitfield"), name("Emigrated")]);
+
+    // `readEntryFiling` is the path a save takes when its caller expressed no
+    // opinion about the filing, so the two have to produce the same snapshot —
+    // otherwise a save that touched only the body would rewrite the filing
+    // into a different order and diff as a re-filing.
+    const readBack = await db.transaction((tx) => readEntryFiling(tx, PAGE));
+
+    expect(readBack).toEqual(filing.names);
   });
 });
 

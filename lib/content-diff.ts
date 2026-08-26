@@ -72,6 +72,17 @@ import { imageKeyFromHref } from "@/lib/storage-key";
  * have diffed as "No change to the rendered content" — the worst of both
  * answers again, and this time about the one piece of content nobody can
  * retype from memory.
+ *
+ * `category` is here on the same argument, one more ticket later (`YEO-106`).
+ * A re-filing used to write no revision at all, so there was nothing on this
+ * side of the seam for a diff to be wrong about; now that it writes one, a
+ * diff with no kind for it would render a revision whose summary reads "No
+ * change to the rendered content" — the worst of both answers for the third
+ * time, and this time about the only thing that revision recorded. It is its
+ * own kind rather than a paragraph because a category is not prose: filing an
+ * entry under "Emigrated to Canada" and typing that sentence into the lead are
+ * different edits, and two blocks are the same only when kind *and* text
+ * match.
  */
 export type ContentBlockKind =
   | "paragraph"
@@ -80,7 +91,8 @@ export type ContentBlockKind =
   | "heading4"
   | "listItem"
   | "hatnote"
-  | "image";
+  | "image"
+  | "category";
 
 /**
  * One block of rendered content: what kind of thing it is, and the text a
@@ -504,11 +516,20 @@ export function diffContent(
   return diffEntryContent({ bodyHtml: beforeHtml }, { bodyHtml: afterHtml });
 }
 
-/** One side of a comparison: an entry's two content columns. */
+/** One side of a comparison: an entry's stored content, column by column. */
 export type DiffableEntry = {
   bodyHtml: string | null | undefined;
   /** `pages.hatnote` / `revisions.hatnote`, as stored (E11-T9, `YEO-79`). */
   hatnote?: string | null | undefined;
+  /**
+   * `revisions.categories`, as stored (`YEO-106`): the names the entry was
+   * filed under at this revision, in slug order.
+   *
+   * Optional like the hatnote above, and read as "filed under nothing" when it
+   * is absent — which is what `diffContent` means by omitting it, and what a
+   * caller comparing two bare bodies means too.
+   */
+  categories?: readonly string[] | null | undefined;
 };
 
 /**
@@ -526,12 +547,42 @@ function hatnoteBlock(hatnote: string | null | undefined): ContentBlock[] {
 }
 
 /**
- * Diff two revisions of an entry — the hatnote and the body together.
+ * The filing as one block per category (`YEO-106`), or nothing when the entry
+ * was filed under nothing.
  *
- * The hatnote leads, because that is where it renders and a diff should read
- * in the order the page does. From there on it is a block like any other:
- * adding one is an addition, clearing one is a removal, and an unchanged
- * hatnote contributes an unchanged row so the reader can see it stood still.
+ * One block each rather than one block holding a comma-separated list, because
+ * a list is a single string and a single string diffs as a single thing: an
+ * entry gaining one category out of four would print the other three as
+ * removed and re-added. Separate blocks make an added heading one addition and
+ * leave the rest standing as unchanged rows, which is what actually happened.
+ *
+ * The order is the order the column is stored in — slug order, canonical, the
+ * same on both sides of any comparison — so the subsequence diff never sees a
+ * re-ordering that nobody performed. `markMovedBlocks` therefore has nothing
+ * to find here, which is correct: a filing is a set, and a set has no
+ * arrangement for a block to move within.
+ *
+ * Empty names are dropped for the reason `extractContentBlocks` drops empty
+ * blocks: `normaliseEntryCategories` cannot produce one, so this only ever
+ * fires on a row written by hand, and a blank row in a diff reads as a bug.
+ */
+function categoryBlocks(
+  categories: readonly string[] | null | undefined,
+): ContentBlock[] {
+  return (categories ?? [])
+    .filter((name) => name !== "")
+    .map((name) => ({ kind: "category", text: name }));
+}
+
+/**
+ * Diff two revisions of an entry — the hatnote, the body and the filing
+ * together.
+ *
+ * The hatnote leads and the categories trail, because that is where each of
+ * them renders and a diff should read in the order the page does. From there
+ * on both are blocks like any other: adding one is an addition, clearing one
+ * is a removal, and an unchanged one contributes an unchanged row so the
+ * reader can see it stood still.
  *
  * `diffContent` above is this function with no hatnote on either side, kept
  * because a caller comparing two bodies — `lib/content-diff.test.ts` does it
@@ -550,8 +601,13 @@ export function diffEntryContent(
       [
         ...hatnoteBlock(before.hatnote),
         ...extractContentBlocks(before.bodyHtml),
+        ...categoryBlocks(before.categories),
       ],
-      [...hatnoteBlock(after.hatnote), ...extractContentBlocks(after.bodyHtml)],
+      [
+        ...hatnoteBlock(after.hatnote),
+        ...extractContentBlocks(after.bodyHtml),
+        ...categoryBlocks(after.categories),
+      ],
     ),
   );
 }
@@ -655,6 +711,8 @@ export function describeBlockKind(kind: ContentBlockKind): string {
       return "Hatnote";
     case "image":
       return "Photograph";
+    case "category":
+      return "Category";
   }
 }
 

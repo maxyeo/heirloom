@@ -169,6 +169,12 @@ const BLOCK_TEXT_CLASS: Readonly<Record<ContentBlockKind, string>> = {
   // revisions would become thirty image fetches, each one a signed-URL
   // redirect, to say something the row already says in words.
   image: "text-note text-ink-muted",
+  // A category is furniture rather than prose (`YEO-106`), and it is set the
+  // way the bar at the foot of the article sets it: the note size, so it does
+  // not read as a sentence somebody wrote into the entry. Not muted, unlike
+  // the photograph above — an `image` row is a *description of* content, and
+  // this row is the content.
+  category: "text-note",
 };
 
 /**
@@ -312,7 +318,8 @@ export default async function CompareRevisionsPage({
           <p className="mb-4 text-caption text-ink-muted">
             {describeContentDiffSummary(summariseContentDiff(rows))} Headings,
             paragraphs and list items are compared whole, as they read — so a
-            save that only changed the markup shows nothing.
+            save that only changed the markup shows nothing. Categories are
+            compared too, so a re-filing shows here even when not a word moved.
           </p>
 
           {changed ? (

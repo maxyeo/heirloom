@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { RevisionCategories } from "@/components/RevisionCategories";
+import { categorySlug, compareCategoriesByName } from "@/lib/category-name";
 import { getPageBySlug } from "@/lib/pages";
 import {
   formatRevisionAuthor,
@@ -126,6 +128,27 @@ export default async function RevisionDetailPage({
   // by a manual `UPDATE`.
   const bodyHtml = sanitizeHtml(revision.bodyHtml);
 
+  /**
+   * The filing as it stood then (`YEO-106`), alphabetically.
+   *
+   * Sorted here rather than taken as stored, because the column's order is
+   * slug order — canonical for comparing two revisions, and not the order a
+   * reader expects to meet names in. `compareCategoriesByName` is the one
+   * answer to "alphabetical" this application has, and it wants a slug for its
+   * tie-break; the slug a name derives to is exactly what
+   * `/wiki/category/[slug]` would address, so deriving it here agrees with the
+   * live bar by construction rather than by coincidence.
+   *
+   * A name with no derivable slug cannot reach this list — the picker drops
+   * such names (`normaliseEntryCategories`) — so the `?? name` fallback is for
+   * a `revisions` row written by hand, and it keeps such a row rendering
+   * rather than sorting it by nothing.
+   */
+  const filing = revision.categories
+    .map((name) => ({ name, slug: categorySlug(name) ?? name }))
+    .sort(compareCategoriesByName)
+    .map(({ name }) => name);
+
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
       {/*
@@ -215,6 +238,15 @@ export default async function RevisionDetailPage({
             This revision has no content.
           </p>
         )}
+
+        {/*
+          What the entry was filed under *then* (`YEO-106`), on the same
+          reasoning as the `h1` above: the live filing may have moved since,
+          and rendering it here would misrepresent what this revision records.
+          Unlinked — see `RevisionCategories` for why a historical category
+          name is not an address that can be trusted to answer.
+        */}
+        <RevisionCategories categories={filing} />
       </article>
     </main>
   );

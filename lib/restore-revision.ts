@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { setEntryCategories } from "@/lib/categories";
 import { normaliseHatnote } from "@/lib/hatnote";
 import { isRevisionId } from "@/lib/revision-format";
 import { getRevisionById } from "@/lib/revisions";
@@ -34,6 +35,28 @@ import { writeRevision } from "@/lib/save-page";
  *     of the old revision. They are the person who decided the entry should
  *     say this again, and history should name the person who made the
  *     decision, not the one whose words were chosen.
+ *
+ * ## What a restore puts back (`YEO-106`)
+ *
+ * All of it: the title, the body, the hatnote, **and the categories the entry
+ * was filed under at that revision.**
+ *
+ * That last one is new, and it was not new by accident. Between E11-T8
+ * (`YEO-78`) and `YEO-106` categories lived only in `page_categories`, so a
+ * restore returned the words and left the filing wherever the last edit had
+ * put it. There was a case for that — the filing is a decision about where an
+ * entry belongs rather than about what it says, and it is not obvious that
+ * winding the prose back should wind that decision back too — but nobody had
+ * made it, and "arguably correct, decided by nobody" is what `YEO-106` exists
+ * to end. The decision is: a revision is the entry's whole state, so a restore
+ * restores the whole of it, and an entry after a restore is indistinguishable
+ * from the entry as it stood at the revision restored from.
+ *
+ * A category the revision names but that has since been retired is re-created,
+ * by the ordinary find-or-create in `setEntryCategories`. That falls out of
+ * storing names rather than ids (`db/schema.ts`) and it is the right outcome:
+ * the alternative is a restore that silently drops one of the headings the
+ * entry used to sit under, which is the lossiness this section is about.
  *
  * ## Why it is not `savePage`
  *
@@ -205,11 +228,21 @@ export async function restoreRevision(
      * revision. They agree by construction (see `lib/save-page.ts`), but the
      * page is the row being written, so it is the row that decides whether the
      * write would change anything.
+     *
+     * The filing is part of the comparison because it is part of the restore
+     * (`YEO-106`), and it is asked about the same way `savePage` asks: by
+     * doing the write and letting `setEntryCategories` report whether it moved
+     * a row. That is not a leak when the answer turns out to be `unchanged` —
+     * it returns `unchanged` only when nothing moved, and the transaction
+     * commits the same rows it would have had this branch not run at all.
      */
+    const filing = await setEntryCategories(tx, page.id, source.categories);
+
     if (
       page.title === title &&
       page.bodyHtml === bodyHtml &&
-      page.hatnote === hatnote
+      page.hatnote === hatnote &&
+      !filing.changed
     ) {
       return { status: "unchanged", pageId: page.id };
     }
@@ -225,6 +258,16 @@ export async function restoreRevision(
       title,
       bodyHtml,
       hatnote,
+      /**
+       * `filing.names` rather than `source.categories`, and the two can
+       * genuinely differ. The source revision holds the names as they were
+       * spelled then; `setEntryCategories` has just filed the entry under the
+       * rows those names resolve to, and where such a row already existed
+       * under a different spelling it is the existing spelling the entry is
+       * now filed under. Recording what was asked for rather than what
+       * happened would make the very next save look like a re-filing.
+       */
+      categories: filing.names,
       editedBy: input.restoredBy,
       restoredFrom: source.id,
     });

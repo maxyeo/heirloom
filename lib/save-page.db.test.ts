@@ -465,13 +465,13 @@ describe("savePage", () => {
       expect(await categoryNames()).toEqual([CATEGORY]);
     });
 
-    it("counts a re-filing as a change, and writes no revision for it", async () => {
+    it("appends a revision for a re-filing, and records the filing in it", async () => {
       /**
-       * The decision `SavePageResult.revisionId` is nullable for. A revision
-       * records what the article *said*; a category is where it is *filed*, so
-       * a save that moved only the filing appends no history entry — but it
-       * did move something, so it is a save rather than a no-op and the entry
-       * climbs the recently-changed feed with the person who did it on it.
+       * The decision `YEO-106` made, and the reversal of what E11-T8 left. A
+       * save that moves only the filing is an edit like any other: it appends
+       * one revision, that revision holds the new filing, and the entry climbs
+       * the recently-changed feed with the person who did it on it — so the
+       * feed has a revision behind every row it shows.
        */
       await savePage({
         slug: SLUG,
@@ -493,8 +493,18 @@ describe("savePage", () => {
         editedBy: OTHER_EDITOR,
       });
 
-      expect(result).toMatchObject({ status: "saved", revisionId: null });
-      expect(await readRevisions()).toHaveLength(revisionsBefore.length);
+      expect(result.status).toBe("saved");
+      const revisions = await readRevisions();
+      expect(revisions).toHaveLength(revisionsBefore.length + 1);
+
+      const newest = revisions.at(-1);
+      expect(newest?.categories).toEqual(
+        [CATEGORY, OTHER_CATEGORY].sort((a, b) => (a < b ? -1 : 1)),
+      );
+      // The body did not move, so the revision is a copy of the text plus the
+      // new filing — which is what makes a restore of it total.
+      expect(newest?.bodyHtml).toBe(ORIGINAL.bodyHtml);
+      expect(newest?.createdBy).toBe(OTHER_EDITOR);
 
       const after = await readPage();
       expect(after.updatedBy).toBe(OTHER_EDITOR);
@@ -513,9 +523,75 @@ describe("savePage", () => {
         editedBy: EDITOR,
       });
 
-      expect(result.status).toBe("saved");
+      expect(result).toMatchObject({ status: "saved" });
       if (result.status !== "saved") return;
-      expect(result.revisionId).not.toBeNull();
+      expect(result.revisionId).toEqual(expect.any(String));
+    });
+
+    it("records the filing a caller said nothing about", async () => {
+      /**
+       * The other half of "a revision is the entry's whole state" (`YEO-106`).
+       * This save moves the body and expresses no opinion about the filing, so
+       * the filing does not move — but the revision still has to record it, or
+       * restoring this revision later would quietly un-file the entry.
+       */
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: "<p>Body only.</p>",
+        editedBy: EDITOR,
+      });
+
+      expect((await readRevisions()).at(-1)?.categories).toEqual([CATEGORY]);
+    });
+
+    it("gives the recently-changed feed a revision to attribute it to", async () => {
+      /**
+       * The invariant `YEO-106` restored, asserted for the save that used to
+       * break it — and the ticket's acceptance criterion about the feed, which
+       * is the same fact read from the other end.
+       *
+       * `listRecentlyChangedEntries` selects exactly `pages.updated_at` and
+       * `pages.updated_by` and joins nothing (see `lib/recent-changes.ts` for
+       * why it must not join `revisions`). So "the feed does not present a
+       * change it cannot attribute" is precisely the claim that those two
+       * columns always have a revision standing behind them: same instant,
+       * same author. Between E11-T8 and `YEO-106` a re-filing broke it — the
+       * page moved and history did not — which is what this asserts is over.
+       *
+       * The sibling assertion near the top of this file makes the same check
+       * for a save that changed the article.
+       */
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY, OTHER_CATEGORY],
+        editedBy: OTHER_EDITOR,
+      });
+
+      const page = await readPage();
+      const newest = (await readRevisions()).at(-1);
+
+      expect(newest?.createdAt).toEqual(page.updatedAt);
+      expect(newest?.createdBy).toBe(page.updatedBy);
+      expect(page.updatedBy).toBe(OTHER_EDITOR);
     });
 
     it("writes nothing at all when neither the article nor the filing moved", async () => {
@@ -585,7 +661,11 @@ describe("savePage", () => {
         editedBy: EDITOR,
       });
 
-      expect(result).toMatchObject({ status: "saved", revisionId: null });
+      expect(result).toMatchObject({ status: "saved" });
+      // Un-filing is a change like any other, so it is a revision like any
+      // other — and the revision records the empty filing, which is what lets
+      // a later restore of an earlier revision put the categories back.
+      expect((await readRevisions()).at(-1)?.categories).toEqual([]);
       expect(await categoryNames()).toEqual([]);
       // And the category itself survives being emptied — see
       // `lib/categories.db.test.ts`.

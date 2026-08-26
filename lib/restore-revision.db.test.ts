@@ -1,7 +1,8 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
+import { deleteCategory, getCategoryBySlug } from "@/lib/categories";
 import { restoreRevision } from "@/lib/restore-revision";
 import { savePage } from "@/lib/save-page";
 import { raceWriters } from "@/test/db-concurrency";
@@ -493,6 +494,198 @@ describe("restoreRevision", () => {
           restoredBy: RESTORER,
         }),
       ).resolves.toMatchObject({ status: "restored" });
+    });
+  });
+
+  /**
+   * What a restore does about the filing (`YEO-106`).
+   *
+   * The ticket's acceptance criterion is that this behaviour be "explicit and
+   * tested, not incidental", and before `YEO-106` it was exactly incidental:
+   * categories were not in `revisions`, so a restore returned the words and
+   * silently left the entry filed wherever the last edit had put it. The
+   * decision is now that a revision is the entry's whole state, so a restore
+   * puts the whole of it back — and these are the assertions that hold that
+   * decision in place rather than a docblock claiming it.
+   */
+  describe("the categories", () => {
+    const FILED = "Restore Fixture Filed";
+    const REFILED = "Restore Fixture Refiled";
+    const FILED_SLUG = "restore-fixture-filed";
+
+    beforeEach(async () => {
+      await db
+        .delete(schema.categories)
+        .where(like(schema.categories.slug, "restore-fixture-%"));
+    });
+
+    afterAll(async () => {
+      await db
+        .delete(schema.categories)
+        .where(like(schema.categories.slug, "restore-fixture-%"));
+    });
+
+    /** What the entry is filed under right now, alphabetically. */
+    async function filing(pageId = PAGE) {
+      const rows = await db
+        .select({ name: schema.categories.name })
+        .from(schema.pageCategories)
+        .innerJoin(
+          schema.categories,
+          eq(schema.categories.id, schema.pageCategories.categoryId),
+        )
+        .where(eq(schema.pageCategories.pageId, pageId));
+      return rows.map((row) => row.name).sort();
+    }
+
+    /**
+     * The revision this entry was filed under {@link FILED} at.
+     *
+     * A helper rather than an index into `readRevisions()`, for the reason the
+     * hatnote block above gives for its own: these tests are about restore,
+     * and a fixture that did not write the row they need should fail saying so
+     * rather than as a `TypeError` inside the function under test.
+     */
+    async function revisionFiledUnder(name: string) {
+      const found = (await readRevisions()).find((revision) =>
+        revision.categories.includes(name),
+      );
+      if (!found)
+        throw new Error(`fixture wrote no revision filed under ${name}`);
+      return found;
+    }
+
+    it("puts the filing back along with the content", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V1,
+        categories: [FILED],
+        editedBy: AUTHOR,
+      });
+      await savePage({
+        slug: SLUG,
+        ...V2,
+        categories: [REFILED],
+        editedBy: AUTHOR,
+      });
+      expect(await filing()).toEqual([REFILED]);
+
+      const target = await revisionFiledUnder(FILED);
+
+      const result = await restoreRevision({
+        slug: SLUG,
+        revisionId: target.id,
+        restoredBy: RESTORER,
+      });
+
+      expect(result).toMatchObject({ status: "restored" });
+      // Both halves, because "total" is the claim: the words *and* where the
+      // entry sits, as one revision had them.
+      expect((await readPage()).bodyHtml).toBe(V1.bodyHtml);
+      expect(await filing()).toEqual([FILED]);
+    });
+
+    it("counts a filing-only difference as something to restore", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V2,
+        categories: [FILED],
+        editedBy: AUTHOR,
+      });
+      await savePage({ slug: SLUG, ...V2, categories: [], editedBy: AUTHOR });
+
+      const target = await revisionFiledUnder(FILED);
+
+      // Title, body and hatnote are identical between the page and the target,
+      // so the no-op rule would refuse this restore if it did not look at the
+      // filing — which is the shape the hatnote test above asserts for the
+      // hatnote, one column later.
+      await expect(
+        restoreRevision({
+          slug: SLUG,
+          revisionId: target.id,
+          restoredBy: RESTORER,
+        }),
+      ).resolves.toMatchObject({ status: "restored" });
+
+      expect(await filing()).toEqual([FILED]);
+    });
+
+    it("records the restored filing on the revision it appends", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V1,
+        categories: [FILED],
+        editedBy: AUTHOR,
+      });
+      await savePage({ slug: SLUG, ...V2, categories: [], editedBy: AUTHOR });
+
+      const target = await revisionFiledUnder(FILED);
+      await restoreRevision({
+        slug: SLUG,
+        revisionId: target.id,
+        restoredBy: RESTORER,
+      });
+
+      // The appended row is a full snapshot like any other, so restoring *it*
+      // later is as total as restoring its source — which is what "restoring
+      // is itself undoable" has to mean once the filing is part of a revision.
+      expect((await readRevisions()).at(-1)?.categories).toEqual([FILED]);
+    });
+
+    it("re-creates a category that has been retired since", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V1,
+        categories: [FILED],
+        editedBy: AUTHOR,
+      });
+      await savePage({ slug: SLUG, ...V2, categories: [], editedBy: AUTHOR });
+
+      const target = await revisionFiledUnder(FILED);
+
+      /**
+       * The heading is retired between the edit and the restore, which is the
+       * case that decides whether storing *names* in `revisions.categories`
+       * was the right call. An id would be dangling here and the restore would
+       * have to drop the category — quietly losing one of the headings the
+       * entry used to sit under, which is the lossiness this whole block is
+       * about. A name can be filed under again, by the same find-or-create any
+       * save uses.
+       */
+      expect(await deleteCategory(FILED_SLUG)).toBe(true);
+      expect(await getCategoryBySlug(FILED_SLUG)).toBeUndefined();
+
+      await restoreRevision({
+        slug: SLUG,
+        revisionId: target.id,
+        restoredBy: RESTORER,
+      });
+
+      expect(await filing()).toEqual([FILED]);
+      expect(await getCategoryBySlug(FILED_SLUG)).toBeDefined();
+    });
+
+    it("leaves the page and its newest revision on the same instant", async () => {
+      await savePage({
+        slug: SLUG,
+        ...V1,
+        categories: [FILED],
+        editedBy: AUTHOR,
+      });
+      await savePage({ slug: SLUG, ...V2, categories: [], editedBy: AUTHOR });
+
+      const target = await revisionFiledUnder(FILED);
+      await restoreRevision({
+        slug: SLUG,
+        revisionId: target.id,
+        restoredBy: RESTORER,
+      });
+
+      // The same invariant `lib/save-page.db.test.ts` asserts for a save. A
+      // restore is a save by another name, so it keeps it too.
+      const page = await readPage();
+      expect((await readRevisions()).at(-1)?.createdAt).toEqual(page.updatedAt);
     });
   });
 });

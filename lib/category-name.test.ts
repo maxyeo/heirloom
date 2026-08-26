@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   categorySlug,
   compareCategoriesByName,
+  compareCategoriesBySlug,
   MAX_CATEGORIES_PER_ENTRY,
   MAX_CATEGORY_NAME_LENGTH,
   normaliseCategoryName,
@@ -134,6 +135,60 @@ describe("compareCategoriesByName", () => {
     expect(compareCategoriesByName(a, b)).toBeLessThan(0);
     expect(compareCategoriesByName(b, a)).toBeGreaterThan(0);
     expect(compareCategoriesByName(a, a)).toBe(0);
+  });
+});
+
+describe("compareCategoriesBySlug", () => {
+  const sorted = (names: string[]) =>
+    names
+      .map((name) => ({ name, slug: categorySlug(name) ?? "" }))
+      .sort(compareCategoriesBySlug)
+      .map((category) => category.name);
+
+  it("consults no locale, so the same names sort the same way anywhere", () => {
+    /**
+     * The same four names the block above sorts, and the same answer — but
+     * reached without asking anything about English. The slug has already
+     * folded the case and the accent (`categorySlug`), so by the time this
+     * comparator runs there is nothing left for a collator to have an opinion
+     * about, and `<` on the result is defined by the language rather than by
+     * the host's ICU data. That is the property `revisions.categories` needs
+     * (`YEO-106`): two snapshots are compared by equality, so the same set of
+     * categories has to serialise identically on a laptop and in a serverless
+     * function.
+     */
+    expect(sorted(["Zoe", "alice", "Émile", "Ada"])).toEqual([
+      "Ada",
+      "alice",
+      "Émile",
+      "Zoe",
+    ]);
+  });
+
+  it("does not read a digit run as a number, where the reader's order does", () => {
+    // The visible divergence between the two comparators, and the reason both
+    // exist. `compareCategoriesByName` puts "Farm 2" before "Farm 10" because
+    // a reader expects it to; this one does not, because a canonical order has
+    // nothing to gain from being clever and everything to lose from depending
+    // on a collator option.
+    expect(sorted(["Farm 10", "Farm 2", "Farm 1"])).toEqual([
+      "Farm 1",
+      "Farm 10",
+      "Farm 2",
+    ]);
+  });
+
+  it("is total, with no tie-break needed", () => {
+    // The slug is the identity, so two categories cannot share one — there is
+    // no tie for a second key to break. Consistency matters anyway:
+    // `resolveCategories` sorts with this to take its locks in one order, and
+    // an inconsistent comparator is a poor foundation for that.
+    const a = { name: "Kin", slug: "kin-a" };
+    const b = { name: "Kin", slug: "kin-b" };
+
+    expect(compareCategoriesBySlug(a, b)).toBeLessThan(0);
+    expect(compareCategoriesBySlug(b, a)).toBeGreaterThan(0);
+    expect(compareCategoriesBySlug(a, a)).toBe(0);
   });
 });
 

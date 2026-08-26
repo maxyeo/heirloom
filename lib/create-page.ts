@@ -149,6 +149,10 @@ export async function createPageIn(
       // A new entry has no hatnote, and stating that rather than defaulting it
       // is what `writeRevision` requires the field for — see its docblock.
       hatnote: "",
+      // Nor any filing (`YEO-106`), for the same reason and stated the same
+      // way: creation takes a title and nothing else, so there is no picker to
+      // read and `[]` is the truth rather than a placeholder.
+      categories: [],
       editedBy: input.createdBy,
     });
 
