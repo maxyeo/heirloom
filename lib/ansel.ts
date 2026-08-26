@@ -53,6 +53,25 @@
  * on top of that; guessing at those would put a plausible-looking wrong letter
  * into somebody's surname, which is strictly worse than the visible
  * replacement character an unmapped byte gets below.
+ *
+ * Three of the standard's own assignments were missing until `YEO-92` ran the
+ * published GEDCOM 5.5 torture test through this — a file that spells out the
+ * whole upper half a byte at a time, which is how the gaps became visible at
+ * all. `0xbc` and `0xbd` are the *lowercase* hook-o and hook-u whose capitals
+ * (`0xac`, `0xad`) were already here, so they were an asymmetry rather than a
+ * judgement; a Vietnamese name written in lower case lost its vowels. `0xcf`
+ * is ß, which the torture file lists without the "LDS extension" note it puts
+ * on the four genuine extensions, and which has one unambiguous Unicode code
+ * point — so mapping it is not the kind of guess the paragraph above refuses.
+ * ANSEL is a paid ANSI standard, so all three were checked against the
+ * fixture's own table and against Eichmann's published ANSEL-to-Unicode
+ * mapping (`http://heiner-eichmann.de/gedcom/ansset.htm`): U+01A1, U+01B0 and
+ * U+00DF respectively, and the two sources agree.
+ *
+ * Those four extensions — `0xbe` empty box, `0xbf` black box, `0xcd` midline
+ * e, `0xce` midline o — are deliberately still unmapped. They are LDS
+ * additions to ANSEL rather than part of it, and none has a Unicode character
+ * that means the same thing; `docs/gedcom.md` records them as a narrowing.
  */
 const ANSEL_GRAPHIC: Readonly<Record<number, string>> = {
   0xa1: "Ł", // Ł
@@ -80,6 +99,8 @@ const ANSEL_GRAPHIC: Readonly<Record<number, string>> = {
   0xb8: "ı", // ı dotless i
   0xb9: "£", // £
   0xba: "ð", // ð
+  0xbc: "\u01a1", // ơ — the lowercase of 0xac, added by `YEO-92`
+  0xbd: "\u01b0", // ư — the lowercase of 0xad, added by `YEO-92`
   0xc0: "°", // °
   0xc1: "ℓ", // ℓ
   0xc2: "℗", // ℗
@@ -87,6 +108,7 @@ const ANSEL_GRAPHIC: Readonly<Record<number, string>> = {
   0xc4: "♯", // ♯
   0xc5: "¿", // ¿
   0xc6: "¡", // ¡
+  0xcf: "ß", // ß es zet, added by `YEO-92`
 };
 
 /**

@@ -1,4 +1,4 @@
-import { parseGedcomText } from "@/lib/gedcom";
+import { type GedcomFile, parseGedcom, parseGedcomText } from "@/lib/gedcom";
 import { type GedcomExportInput, writeGedcom } from "@/lib/gedcom-export";
 import { type GedcomMapping, mapGedcom } from "@/lib/gedcom-map";
 import { type ImportRows, rowsFromMapping } from "@/lib/import-rows";
@@ -309,4 +309,37 @@ export function roundTripFile(text: string): RoundTrip & {
   const imported = mapGedcom(parseGedcomText(text));
 
   return { ...roundTrip(rowsFromMapping(imported)), imported };
+}
+
+/**
+ * The same trip again, starting from the bytes rather than from decoded text.
+ *
+ * `roundTripFile` takes a string, which quietly assumes somebody already knew
+ * the file's character set. For a file written here that assumption is free.
+ * For a real third-party one it is the whole problem: `TGC55C.ged` is ANSEL,
+ * and decoding ANSEL as UTF-8 does not fail — it succeeds, and produces
+ * mojibake. A round trip run on the mojibake would be a perfectly stable
+ * fixed point over the wrong text, which is the one way this test can pass
+ * and mean nothing.
+ *
+ * So the fixture that most needs the round trip is the one `roundTripFile`
+ * cannot be handed, and this entry point starts a step earlier — at
+ * `parseGedcom`, which chooses the encoding from the byte order mark, the
+ * `HEAD.CHAR` line and the bytes themselves, exactly as an upload does. The
+ * parsed file comes back with the trip so a test can assert *which* encoding
+ * was chosen rather than take the round trip's word that it was the right
+ * one.
+ *
+ * @param bytes a GEDCOM file as it sits on disk, in whatever character set
+ */
+export function roundTripBytes(bytes: Uint8Array): RoundTrip & {
+  /** The file as parsed, for its encoding, its issues and its unknown tags. */
+  parsed: GedcomFile;
+  /** The mapping of the original file, for the issues it reported. */
+  imported: GedcomMapping;
+} {
+  const parsed = parseGedcom(bytes);
+  const imported = mapGedcom(parsed);
+
+  return { ...roundTrip(rowsFromMapping(imported)), parsed, imported };
 }

@@ -1,0 +1,7 @@
+# GEDCOM fixtures are compared byte for byte, and one of them (TGC55C.ged) is
+# a third-party file whose SHA-256 is recorded in test/fixtures/gedcom/README.md
+# so it can be checked against the archive it was downloaded from. Line-ending
+# normalisation would break both: `core.autocrlf` is a per-machine setting, so
+# without this a fixture would mean something different depending on who cloned
+# the repository. `-text` disables the conversion and leaves diffs readable.
+*.ged -text

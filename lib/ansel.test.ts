@@ -105,6 +105,23 @@ describe("characters that stand alone", () => {
       "Sigríður",
     );
   });
+
+  it("reads the three the table was missing until a real file said so", () => {
+    // `YEO-92`. The torture test at `test/fixtures/gedcom/TGC55C.ged` lists
+    // the upper half a byte at a time, which is how three assignments the
+    // standard makes turned out never to have been written down here.
+    expect(ansel(0xbc)).toBe("ơ");
+    expect(ansel(0xbd)).toBe("ư");
+    expect(ansel(0xcf)).toBe("ß");
+  });
+
+  it("reads both cases of the hooked vowels, which is the point", () => {
+    // The gap was an asymmetry, not a decision: the capitals were in the
+    // table and their lowercase pairs were not, so half of a Vietnamese name
+    // survived and half came back as replacement characters.
+    expect(ansel(0xac, 0xad, 0xbc, 0xbd)).toBe("ƠƯơư");
+    expect(ansel(...bytesOf("H"), 0xbd, 0xbc, ...bytesOf("ng"))).toBe("Hương");
+  });
 });
 
 describe("what it refuses to guess", () => {
@@ -116,6 +133,17 @@ describe("what it refuses to guess", () => {
 
   it("does not shorten the text when it cannot read a byte", () => {
     expect(ansel(...bytesOf("ab"), 0xd0, ...bytesOf("cd"))).toHaveLength(5);
+  });
+
+  it("leaves the four LDS extensions unread, on purpose", () => {
+    // Empty box, black box, midline e, midline o: additions to ANSEL made by
+    // the LDS church rather than assignments the standard makes, and none has
+    // a Unicode character that means the same thing. Picking a lookalike is
+    // exactly the guess this module refuses. `docs/gedcom.md` records them as
+    // a narrowing, and `YEO-92` is where a real file made them visible.
+    for (const byte of [0xbe, 0xbf, 0xcd, 0xce]) {
+      expect(ansel(byte)).toBe("\ufffd");
+    }
   });
 });
 
