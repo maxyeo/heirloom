@@ -330,6 +330,11 @@ function orderedColumns(statement: string): string[] {
   const clause = /\border by\s+([\s\S]+)$/i.exec(statement);
   if (clause === null) throw new Error(`no \`order by\` in: ${statement}`);
 
+  // Reading to the end of the statement, which is where these three put their
+  // `order by`. A `limit` after it would be swallowed as if it were another
+  // term — loudly, since the assertion then names a column nobody wrote, and
+  // this is the line to fix when one of these queries grows one.
+  //
   // Each term is `"table"."column" asc`; the column is the second identifier.
   return [...clause[1].matchAll(/"[^"]+"\."([^"]+)"/g)].map(
     (column) => column[1],
@@ -349,6 +354,10 @@ async function primaryKeyColumns(
     join information_schema.key_column_usage kcu
       on kcu.constraint_name = tc.constraint_name
      and kcu.table_schema = tc.table_schema
+     -- On the table too, not only the constraint: a name is unique per table
+     -- rather than per schema, so two of these could share one and the join
+     -- would hand each of them the other's columns.
+     and kcu.table_name = tc.table_name
     where tc.constraint_type = 'PRIMARY KEY'
       and tc.table_schema = 'public'
       and tc.table_name in (${sql.join(
