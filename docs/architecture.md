@@ -1087,6 +1087,18 @@ cursor to keep in step with anything.
   generation. Unsorted it was whatever order `getFamilyGraph` returned rows in
   — surname, then given name — which sent Tab jumping between generations
   alphabetically.
+- **Ties are broken by code unit, not by collation** (`YEO-111`). Ordering
+  families by their smallest member id, and the node ids underneath that, is
+  what makes the tab order the _same_ order twice — and `localeCompare` cannot
+  promise that, because its answer comes from the ICU data the process happens
+  to hold rather than from the two strings. `compareIds` in
+  `lib/family-components.ts` compares `<` and `>` instead, and
+  `lib/tree-layout.ts` shares that one function rather than a matching
+  convention. These ids are opaque and nobody reads them as sorted text; the
+  places that _are_ read as sorted text — `lib/parent-options.ts`,
+  `lib/person-detail.ts` — keep `localeCompare` on purpose, so that an
+  accented name lands where a reader expects. Same rule, and the same reason,
+  as [GEDCOM export's byte comparison](gedcom.md).
 - **Edges are out of the tab order and out of the accessibility tree.**
   `edgesFocusable` defaults to true and edges render _before_ nodes, so the
   default order on a canvas of two hundred people is a couple of hundred

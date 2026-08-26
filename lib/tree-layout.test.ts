@@ -781,3 +781,86 @@ describe("layout stability with and without portraits", () => {
     expect(rose?.data.portraitSrc).toBeNull();
   });
 });
+
+/**
+ * The tab order does not move with the runtime's locale (`YEO-111`).
+ *
+ * `layoutFamilyGraph` sorts families by the smallest member id and breaks its
+ * last tie on the node id, and both used to be `localeCompare` — whose answer
+ * comes from the process's ICU data rather than from the strings. Every other
+ * fixture in this file uses lowercase ASCII ids, on which collation and code
+ * units agree, so none of them could tell the two rules apart. These ids can.
+ */
+describe("tab order under a different collation", () => {
+  /**
+   * Two families whose smallest ids are `Zeta-root` and `apple-root`, plus a
+   * loose end at each end of the same disagreement.
+   *
+   * By code unit every capital precedes every lowercase letter, so the Zetas
+   * lead; every ICU collation compares the letters first and would lead with
+   * the apples. The order asserted below is therefore a statement about which
+   * comparator is in force, not just that something came out sorted.
+   */
+  function mixedCaseArchive(): FamilyGraph {
+    return {
+      people: [
+        person({ id: "apple-root", givenName: "Amy" }),
+        person({ id: "Yolk-alone", givenName: "Yuri", sex: "male" }),
+        person({ id: "Zeta-child", givenName: "Zack", sex: "male" }),
+        person({ id: "aardvark-alone", givenName: "Ada" }),
+        person({ id: "Zeta-root", givenName: "Zoe" }),
+        person({ id: "apple-child", givenName: "Anne", sex: "male" }),
+      ],
+      unions: [
+        union({ id: "u-zeta", partnerAId: "Zeta-root", partnerBId: null }),
+        union({ id: "u-apple", partnerAId: "apple-root", partnerBId: null }),
+      ],
+      childLinks: [
+        { unionId: "u-zeta", childId: "Zeta-child", relation: "biological" },
+        { unionId: "u-apple", childId: "apple-child", relation: "biological" },
+      ],
+    };
+  }
+
+  it("tabs the Zeta family first, which is the code-unit answer", () => {
+    const { nodes } = layoutFamilyGraph(mixedCaseArchive());
+
+    // Parent before child within each family is dagre's rank talking, and is
+    // the E10-T5 rule the other tests already cover. What is new here is
+    // which family the keyboard reaches first, and that the two loose ends
+    // come last in the same code-unit order.
+    expect(peopleInTabOrder(nodes).map((node) => node.id)).toEqual([
+      "Zeta-root",
+      "Zeta-child",
+      "apple-root",
+      "apple-child",
+      "Yolk-alone",
+      "aardvark-alone",
+    ]);
+  });
+
+  it("would tab the other way round under any collation", () => {
+    // The guard that makes the assertion above mean something. If ICU ever
+    // agreed with code units on these ids, the test would keep passing while
+    // testing nothing — this fails loudly instead of going quiet.
+    for (const locale of ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"]) {
+      const collator = new Intl.Collator(locale);
+      expect(collator.compare("Zeta-root", "apple-root")).toBeGreaterThan(0);
+      expect(collator.compare("Yolk-alone", "aardvark-alone")).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+
+  it("still finishes with the union markers", () => {
+    const archive = mixedCaseArchive();
+    const { nodes } = layoutFamilyGraph(archive);
+
+    // Cheap, and it is the invariant most likely to be broken by a change to
+    // the person comparator: the markers sit after the people because they
+    // are appended, not because they sorted there.
+    expect(nodes.findIndex((node) => node.type === "union")).toBe(
+      archive.people.length,
+    );
+  });
+});
