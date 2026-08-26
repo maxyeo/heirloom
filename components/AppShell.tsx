@@ -59,7 +59,10 @@ export function AppShell({
         collapsed sidebar that appears for one frame on every page load is the
         thing this avoids. See `lib/sidebar-preference.ts`.
       */}
-      <script dangerouslySetInnerHTML={{ __html: sidebarBootScript }} />
+      <script
+        /* sanitize-html-exempt: sidebar-boot-script */
+        dangerouslySetInnerHTML={{ __html: sidebarBootScript }}
+      />
 
       <SiteHeader
         sidebarId={SIDEBAR_ID}
