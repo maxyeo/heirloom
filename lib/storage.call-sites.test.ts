@@ -1,8 +1,8 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+
+import { CODE_DIRS, filesUnder, read, rootFiles } from "@/test/route-inventory";
 
 /**
  * `lib/storage.test.ts` proves the storage module behaves. This proves it is
@@ -31,14 +31,20 @@ import { describe, expect, it } from "vitest";
  * not the realistic failure and it is not what this is for.
  */
 
-const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-
-const SOURCE_DIRS = ["app", "components", "db", "lib", "test"];
 /**
  * Every extension a module could hide in, not just the ones currently in use.
  * `postcss.config.mjs` and `eslint.config.mjs` have no business importing a
  * storage vendor and today they do not — but a scan whose blind spot is a
  * file extension is one rename away from being a scan of nothing.
+ *
+ * This is the reason this file cannot reach the tree through `sourceFiles`
+ * (`YEO-102`). That enumerator *refuses* a directory containing `.js`,
+ * `.mjs` or `.cjs`, deliberately, so that a route tripwire cannot silently
+ * skip a file it cannot parse — and those three extensions are precisely the
+ * ones this scan exists to cover. The directories are shared all the same,
+ * through `filesUnder`; only the extension set is this file's own. See
+ * `SOURCE_DIRS` in `test/route-inventory.ts` for why the footprint splits
+ * that way.
  */
 const SOURCE_EXTENSIONS = [
   ".ts",
@@ -101,22 +107,19 @@ const ALLOWED: Record<string, readonly string[]> = {
 };
 
 function sourceFiles(): string[] {
-  const fromDirs = SOURCE_DIRS.flatMap((dir) =>
-    readdirSync(join(repoRoot, dir), { recursive: true, encoding: "utf8" })
-      .filter((entry) => SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext)))
-      .map((entry) => join(dir, entry)),
-  );
-
+  // `CODE_DIRS` rather than `SOURCE_DIRS`: the seam is about who holds the
+  // bytes, and `db/backup.ts` and `test/image-fixtures.ts` can reach for a
+  // vendor as easily as a route can. Every top-level directory of code, then,
+  // and derived from the shared halves so a new one arrives here the moment
+  // it is categorised rather than the moment somebody remembers this file.
+  //
   // Root-level modules too — `auth.ts`, `proxy.ts`, `next.config.ts`. A seam
   // that only holds inside `app/` and `lib/` is not a seam, and the config
   // files are precisely where a host-specific import would look at home.
-  const fromRoot = readdirSync(repoRoot, { encoding: "utf8" }).filter(
-    (entry) =>
-      SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext)) &&
-      statSync(join(repoRoot, entry)).isFile(),
-  );
-
-  return [...fromDirs, ...fromRoot];
+  return [
+    ...filesUnder(CODE_DIRS, SOURCE_EXTENSIONS),
+    ...rootFiles(SOURCE_EXTENSIONS),
+  ];
 }
 
 describe("Vercel imports", () => {
@@ -127,11 +130,9 @@ describe("Vercel imports", () => {
       file,
       packages: [
         ...new Set(
-          [
-            ...readFileSync(join(repoRoot, file), "utf8").matchAll(
-              /@vercel\/[a-z0-9-]+/g,
-            ),
-          ].map((match) => match[0]),
+          [...read(file).matchAll(/@vercel\/[a-z0-9-]+/g)].map(
+            (match) => match[0],
+          ),
         ),
       ],
     }))
