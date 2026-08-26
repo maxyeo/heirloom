@@ -20,6 +20,9 @@ import type { AnniversaryDate } from "@/lib/on-this-day-feed";
  *     is no day here" — see `fallsOnAnniversary`;
  *   - that the month and the day are *both* compared, which a query
  *     comparing only one would pass every other assertion in here;
+ *   - that 29 February is 29 February and no other day — the one decision in
+ *     `fallsOnAnniversary`'s docblock that no fixture dated to an ordinary
+ *     day can protect (`YEO-109`);
  *   - that a union with no partner recorded is not offered as a row with
  *     nobody in it, and that a union with one is;
  *   - and that a `LIMIT` cuts a tie the same way every time.
@@ -59,10 +62,22 @@ import type { AnniversaryDate } from "@/lib/on-this-day-feed";
  * | The day comparison dropped                   | `are both compared`                           |
  * | `asc(individuals.id)` dropped from `ORDER BY`| `cuts a tie the same way every time`          |
  * | The "names somebody" predicate dropped       | `is not offered when it names nobody`         |
+ * | The month/day pair replaced by `doy`         | `does not spill over to 1 March …`            |
+ * | The pair replaced by a year interval         | `does not fall back to 28 February …`         |
+ * | 29 February rerouted to 1 March              | `is shown on 29 February …`                   |
  *
- * Every one of them also fails `interleaves births, deaths and unions into
- * one order`, which is the point of that assertion being one list rather than
- * seven.
+ * Every one of the first seven also fails `interleaves births, deaths and
+ * unions into one order`, which is the point of that assertion being one list
+ * rather than seven.
+ *
+ * The last three are the opposite case, and the reason `YEO-109` was raised
+ * against a section that was otherwise proved this way. Run against a real
+ * Postgres, the year-interval mutation turns exactly **one** test in the
+ * repository red — `does not fall back to 28 February in a common year` —
+ * and the reroute turns two, both of them in `29 February` below. Nothing
+ * else in either suite can see them: every other fixture in this file is
+ * dated to a day that exists in every year, so the folded anniversary and the
+ * correct one land on the same date.
  */
 
 /** Explicit, recognisable ids — `59` is the ticket. */
@@ -88,6 +103,12 @@ const U_NOBODY = "00000000-0000-4000-8000-000000005924";
 const U_ONE_PARTNER = "00000000-0000-4000-8000-000000005925";
 const U_PARTNERSHIP = "00000000-0000-4000-8000-000000005926";
 
+/** The leap-day fixtures (`YEO-109`), kept together in their own range. */
+const P_LEAP = "00000000-0000-4000-8000-000000005941";
+const P_FEB_28 = "00000000-0000-4000-8000-000000005942";
+const P_MAR_1 = "00000000-0000-4000-8000-000000005943";
+const U_LEAP = "00000000-0000-4000-8000-000000005944";
+
 const PERSON_IDS = [
   P_BORN,
   P_BORN_ABOUT,
@@ -102,6 +123,9 @@ const PERSON_IDS = [
   P_JAN_EXACT,
   P_JAN_YEAR,
   P_JAN_MONTH,
+  P_LEAP,
+  P_FEB_28,
+  P_MAR_1,
 ];
 
 const UNION_IDS = [
@@ -111,6 +135,7 @@ const UNION_IDS = [
   U_NOBODY,
   U_ONE_PARTNER,
   U_PARTNERSHIP,
+  U_LEAP,
 ];
 
 /** The day almost everything in this file is dated to: 4 June. */
@@ -130,6 +155,22 @@ const JANUARY_1: AnniversaryDate = { year: 2026, month: 1, day: 1 };
 
 /** 7 July, used by nothing but the tie fixtures. */
 const JULY_7: AnniversaryDate = { year: 2026, month: 7, day: 7 };
+
+/**
+ * The three days a leap-day date could plausibly be shown on, and against
+ * which `lib/on-this-day.ts`'s "29 February" section says only the first
+ * counts.
+ *
+ * 2028 is a leap year and 2027 is not, which is the only property of these
+ * three values that matters. Written as year-bearing dates rather than as a
+ * bare month and day because that difference is the whole test: 29 February
+ * exists in `LEAP_DAY`'s year and in neither of the others, so a query that
+ * folded the leap day onto a neighbouring date would have to pick one of the
+ * two below to fold it onto.
+ */
+const LEAP_DAY: AnniversaryDate = { year: 2028, month: 2, day: 29 };
+const FEB_28_COMMON: AnniversaryDate = { year: 2027, month: 2, day: 28 };
+const MAR_1_COMMON: AnniversaryDate = { year: 2027, month: 3, day: 1 };
 
 beforeAll(async () => {
   await db.insert(schema.individuals).values([
@@ -250,6 +291,43 @@ beforeAll(async () => {
       birthDate: "1896-01-01",
       birthDatePrecision: "month",
     },
+
+    /*
+      The leap day itself (`YEO-109`). This person was born and died on a 29
+      February — 1896 and 1968 are both leap years — so one row is both a
+      birth and a death, and `U_LEAP` below carries the third pair of date
+      columns. The
+      predicate is literally one function, so a leap-day fixture on any one of
+      the three would prove the rule; all three are here because the cost is
+      two rows and the thing being protected is a decision a later
+      "simplification" of one query could lose without touching the others.
+    */
+    {
+      id: P_LEAP,
+      givenName: "LeapDay",
+      surname: "Whitfield",
+      birthDate: "1896-02-29",
+      deathDate: "1968-02-29",
+    },
+    /*
+      The two neighbours, and the reason the exclusions are not vacuous: a
+      predicate that matched nothing whatsoever on 28 February or 1 March
+      would satisfy "the leap-day person is absent" perfectly and mean
+      nothing. These two are present on exactly those days, so each assertion
+      below is a whole answer rather than an absence.
+    */
+    {
+      id: P_FEB_28,
+      givenName: "FebTwentyEighth",
+      surname: "Whitfield",
+      birthDate: "1895-02-28",
+    },
+    {
+      id: P_MAR_1,
+      givenName: "MarchFirst",
+      surname: "Whitfield",
+      birthDate: "1897-03-01",
+    },
   ]);
 
   await db.insert(schema.unions).values([
@@ -307,6 +385,18 @@ beforeAll(async () => {
       partnerBId: P_DIED,
       type: "partnership",
       startDate: "1917-06-04",
+    },
+    /*
+      A wedding on a leap day, so `fallsOnAnniversary` is exercised by
+      `YEO-109` through the third pair of date columns as well. 1920 is a leap
+      year; the partners are two of the fixtures above, so the row names
+      somebody and is not excluded for the unrelated reason `U_NOBODY` is.
+    */
+    {
+      id: U_LEAP,
+      partnerAId: P_LEAP,
+      partnerBId: P_FEB_28,
+      startDate: "1920-02-29",
     },
   ]);
 });
@@ -518,6 +608,116 @@ describe("the day and the month", () => {
     // so a query that dropped either half would show one of them.
     expect(ids).not.toContain(P_BORN_NEXT_DAY);
     expect(ids).not.toContain(P_BORN_NEXT_MONTH);
+  });
+});
+
+/**
+ * The half of `lib/on-this-day.ts`'s leap-day section that a docblock cannot
+ * do (`YEO-109`).
+ *
+ * The decision there is that a leap-day date comes round every four years: it
+ * appears on 29 February and on no other day, rather than being folded onto
+ * 28 February or 1 March in a common year. That is a deliberate refusal of
+ * the obvious kindness — the record says the 29th, and this section does not
+ * move a date the archive holds — and until this block it was argued in prose
+ * and asserted nowhere.
+ *
+ * It is also the clause most exposed to a well-meaning tidy-up, because 29
+ * February is the *only* date on which the obvious simplifications of a
+ * month/day comparison disagree with the one in the file — every other
+ * fixture here is dated to a day that exists in every year, so a folded
+ * anniversary and a correct one land on the same date and nothing goes red.
+ * Three such simplifications, and the day each of them gets wrong:
+ *
+ *   - **day-of-year.** `extract(doy from …)` is off by one after February in
+ *     a common year, so 29 February and 1 March are both day 60. Caught by
+ *     `does not spill over to 1 March`, and again from the other direction by
+ *     `is shown on 29 February` — the 1 March fixture turns up on the 29th.
+ *   - **an interval.** Computing this year's anniversary as
+ *     `date + make_interval(years => …)` reads better than two `extract`s and
+ *     asks Postgres to normalise 29 February into 28 February whenever the
+ *     target year has no 29th. Caught by `does not fall back to 28 February`.
+ *   - **the kindness itself**, written as a reroute rather than an addition:
+ *     leap-day people celebrated on 1 March, every year. Caught by `is shown
+ *     on 29 February`, which is why the positive case is asserted as a whole
+ *     list rather than left implicit.
+ *
+ * The three fixtures are read on three different days rather than compared
+ * within one, because the predicate takes `today` as a parameter precisely so
+ * that a test can state the day instead of waiting four years for one.
+ *
+ * Two of those three days are asserted by what is *absent*, which is the kind
+ * of test that can pass while checking nothing, so each is asserted as a whole
+ * list with a neighbour in it. Replacing the month/day comparison with `false`
+ * — a predicate that matches nothing anywhere — turns all three of these red,
+ * which is the check that the two exclusions are load-bearing rather than
+ * vacuously true.
+ */
+describe("29 February", () => {
+  it("is shown on 29 February, from all three source queries", async () => {
+    const anniversaries = await fixtureAnniversaries(LEAP_DAY);
+
+    /*
+      A whole list, for the reason `interleaves births, deaths and unions into
+      one order` gives: this is also what proves `fallsOnAnniversary` is
+      genuinely shared, since one leap-day person and one leap-day union
+      produce a birth, a union and a death from three separate queries and a
+      predicate that had been specialised in any one of them would be short a
+      row here.
+    */
+    expect(anniversaries).toEqual([
+      {
+        kind: "birth",
+        personId: P_LEAP,
+        name: "LeapDay Whitfield",
+        year: 1896,
+      },
+      {
+        kind: "union-started",
+        unionId: U_LEAP,
+        unionType: "marriage",
+        partners: [
+          { personId: P_LEAP, name: "LeapDay Whitfield" },
+          { personId: P_FEB_28, name: "FebTwentyEighth Whitfield" },
+        ],
+        year: 1920,
+      },
+      {
+        kind: "death",
+        personId: P_LEAP,
+        name: "LeapDay Whitfield",
+        year: 1968,
+      },
+    ]);
+  });
+
+  it("does not fall back to 28 February in a common year", async () => {
+    const anniversaries = await fixtureAnniversaries(FEB_28_COMMON);
+
+    // The 28 February person and nobody else. Asserted as the whole answer
+    // rather than as `not.toContain(P_LEAP)`, so that a predicate which had
+    // stopped matching anything at all could not pass it.
+    expect(anniversaries).toEqual([
+      {
+        kind: "birth",
+        personId: P_FEB_28,
+        name: "FebTwentyEighth Whitfield",
+        year: 1895,
+      },
+    ]);
+  });
+
+  it("does not spill over to 1 March in a common year", async () => {
+    const anniversaries = await fixtureAnniversaries(MAR_1_COMMON);
+
+    expect(anniversaries).toEqual([
+      {
+        kind: "birth",
+        personId: P_MAR_1,
+        name: "MarchFirst Whitfield",
+        year: 1897,
+      },
+    ]);
   });
 });
 
