@@ -161,6 +161,52 @@ describe("callSitesInSource", () => {
     expect(sites(source)).toEqual([{ line: 2, marker: null }]);
   });
 
+  it("is not stepped around by computing the key either", () => {
+    const source = [
+      "const props = {",
+      '  ["dangerouslySetInnerHTML"]: { __html: raw },',
+      "};",
+    ].join("\n");
+
+    // `YEO-100`. The quoted key with a pair of brackets around it: the
+    // compiler folds it to the same property before anything else sees it, so
+    // a guard that read one spelling and not the other would be defeated by
+    // two characters.
+    expect(sites(source)).toEqual([{ line: 2, marker: null }]);
+  });
+
+  it("computes a key written as a template with nothing in it", () => {
+    const source = [
+      "const props = {",
+      "  [`dangerouslySetInnerHTML`]: { __html: raw },",
+      "};",
+    ].join("\n");
+
+    // Same key, third spelling. A no-substitution template is a string
+    // literal that happens to be written in backticks.
+    expect(sites(source)).toEqual([{ line: 2, marker: null }]);
+  });
+
+  it("does not see an assembled key, which is a decision and not an oversight", () => {
+    const source = [
+      "const key = `dangerously${rest}`;",
+      "const props = { [key]: { __html: raw } };",
+      'const built = { ["dangerously" + rest]: { __html: raw } };',
+    ].join("\n");
+
+    // `YEO-100` declined to close this, and the reasoning is at
+    // `isInnerHtmlSink` rather than in the ticket, because the ticket is not
+    // where the next person to consider it will be standing. In short: the
+    // only implementable version fails on *any* computed key in an object
+    // that looks like props, and the marker it would demand carries a
+    // justification — "this expression does not evaluate to that string" —
+    // that no reviewer can check by reading the call site.
+    //
+    // This is here so the gap is a pinned, findable fact rather than
+    // something the next reader has to discover by experiment.
+    expect(sites(source)).toEqual([]);
+  });
+
   it("reads a marker on an object-literal sink", () => {
     const source = [
       "const props = {",
