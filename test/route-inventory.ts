@@ -279,6 +279,11 @@ export function filesUnder(
  *
  * Non-recursive, and never refuses: JavaScript at the root is
  * `eslint.config.mjs` doing its job, not a route nobody can parse.
+ *
+ * `isFile()` is asked of the directory entry rather than of a `statSync`,
+ * which means a symlink at the root is not followed and so is not returned.
+ * There are none today. If one ever stands in for a config file, this is the
+ * line that would quietly stop scanning it.
  */
 export function rootFiles(extensions: readonly string[]): string[] {
   return readdirSync(repoRoot, { withFileTypes: true })
@@ -412,8 +417,18 @@ export type FootprintUsage = {
  * and an exemption for a file that never walked anything is an exemption
  * nobody can later tell from a real one.
  *
- * What it does not look for is a scanner that gives up on walking and writes
- * out `["app/page.tsx", …]` instead. That was tried and removed: naming
+ * `directoryLists` is as literal as `WALK_CALLS` is, and for the same
+ * reasons: it wants an array whose every element is a plain string, so
+ * `[APP_DIR, "components", "lib"]` — one identifier among the literals —
+ * reads as no list at all, and a footprint spelled as object keys or built by
+ * a `.map` reads as none either. So does a walk reached through a renamed
+ * binding, `const { readdirSync: walk } = …`. Each of those is a copy made on
+ * purpose by somebody who would have had to work at it; the copy this exists
+ * to catch is the one made without noticing, which is the shape both of
+ * `YEO-102`'s offenders had.
+ *
+ * What it also does not look for is a scanner that gives up on walking and
+ * writes out `["app/page.tsx", …]` instead. That was tried and removed: naming
  * individual files with a reason beside each is a pattern every one of these
  * suites legitimately uses — `app/auth-boundary.test.ts` justifies its inline
  * action files that way and `lib/storage.call-sites.test.ts`' `ALLOWED` is the

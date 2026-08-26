@@ -159,7 +159,7 @@ describe("sourceFiles", () => {
     // moment it is written rather than the moment somebody remembers to add it
     // here.
     const offenders = candidates
-      .filter((file) => !(file in NOT_A_SOURCE_FOOTPRINT))
+      .filter((file) => !Object.hasOwn(NOT_A_SOURCE_FOOTPRINT, file))
       .map((file) => ({ file, usage: footprintUsage(file) }))
       .filter(
         ({ usage }) =>
