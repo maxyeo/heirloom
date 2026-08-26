@@ -290,7 +290,10 @@ CSP over the top, the allowlist is the whole defence.
 
 `lib/sanitize-html.call-sites.test.ts` enumerates every
 `dangerouslySetInnerHTML` in `app`, `components` and `lib` from the syntax tree
-and fails if one sits in a file that never calls an entry point. Two of them
+— both shapes that reach the sink, a JSX attribute and a property of that name
+in a props object — and fails if one sits in a file that never calls an entry
+point. Reading the tree rather than the text is what lets it tell a call site
+from the several docblocks in here that name the API in prose. Two of them
 are exempt today, each argued in that file: the sidebar boot script, which is a
 constant this repository wrote rather than anything a person typed, and the
 hatnote, whose markup has already been through the allowlist and would lose the

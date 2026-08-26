@@ -116,6 +116,88 @@ describe("callSitesInSource", () => {
     expect(sites(source)).toEqual([{ line: 4, marker: null }]);
   });
 
+  it("finds the sink reached through a spread object", () => {
+    const source = [
+      "export const A = (raw: string) => (",
+      "  <div {...{ dangerouslySetInnerHTML: { __html: raw } }} />",
+      ");",
+    ].join("\n");
+
+    // The shape a syntax tree could have lost. The substring scan this
+    // replaced caught it — crudely, and only at whole-file granularity — so
+    // recognising only the JSX-attribute spelling would have bought this
+    // ticket's granularity with a hole in a stored-XSS guard.
+    expect(sites(source)).toEqual([{ line: 2, marker: null }]);
+  });
+
+  it("finds the sink in a props object assembled before it is spread", () => {
+    const source = [
+      "const props = { dangerouslySetInnerHTML: { __html: raw } };",
+      "export const A = () => <div {...props} />;",
+    ].join("\n");
+
+    // Reported where the property is, not where the spread is — that is the
+    // line somebody has to change, and the line a marker would sit above.
+    expect(sites(source)).toEqual([{ line: 1, marker: null }]);
+  });
+
+  it("finds the sink in a React.createElement call", () => {
+    const source = [
+      "export const A = (raw: string) =>",
+      '  React.createElement("div", { dangerouslySetInnerHTML: { __html: raw } });',
+    ].join("\n");
+
+    expect(sites(source)).toEqual([{ line: 2, marker: null }]);
+  });
+
+  it("is not stepped around by quoting the key", () => {
+    const source = [
+      "const props = {",
+      '  "dangerouslySetInnerHTML": { __html: raw },',
+      "};",
+    ].join("\n");
+
+    // A guard a pair of quotes defeats is not worth reading a tree for.
+    expect(sites(source)).toEqual([{ line: 2, marker: null }]);
+  });
+
+  it("reads a marker on an object-literal sink", () => {
+    const source = [
+      "const props = {",
+      "  /* sanitize-html-exempt: already-sanitised */",
+      "  dangerouslySetInnerHTML: { __html: raw },",
+      "};",
+    ].join("\n");
+
+    expect(sites(source)).toEqual([{ line: 3, marker: "already-sanitised" }]);
+  });
+
+  it("counts a shorthand property as a sink", () => {
+    const source = [
+      "const dangerouslySetInnerHTML = { __html: raw };",
+      "const props = { dangerouslySetInnerHTML };",
+    ].join("\n");
+
+    // Shorthand is the same key by another spelling. Ignoring it would leave
+    // a two-keystroke way past the guard.
+    expect(sites(source)).toEqual([{ line: 2, marker: null }]);
+  });
+
+  it("does not mistake prose about the mechanism for a malformed marker", () => {
+    const source = [
+      "export const A = () => (",
+      "  <div",
+      "    /* A sanitize-html-exemption here would be wrong: this is sanitised. */",
+      "    dangerouslySetInnerHTML={{ __html: a }}",
+      "  />",
+      ");",
+    ].join("\n");
+
+    // The marker is matched at word boundaries, so a sentence that merely
+    // discusses exemptions does not throw at whoever wrote it.
+    expect(sites(source)).toEqual([{ line: 4, marker: null }]);
+  });
+
   it("counts no call site in prose that merely names the attribute", () => {
     const source = [
       "/**",
