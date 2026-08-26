@@ -1,6 +1,7 @@
 import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
 
+import { connectedFamilies } from "./family-components";
 import type { FamilyGraph } from "./family-graph";
 import { formatLifespan } from "./format-date";
 import { formatPersonName } from "./person-format";
@@ -280,9 +281,46 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
    * point — which dagre will not do, but which nothing here guarantees —
    * still come out in a stable order rather than one that depends on the sort
    * being stable.
+   *
+   * ## Why the family comes before the rank (`YEO-103`)
+   *
+   * `y` alone is the reading order of *one* tree, and it was written when the
+   * fixtures were all one tree. Dagre ranks each connected component from its
+   * own root, so two families nobody has joined both start at rank 0 and their
+   * generations come out shuffled together — `a1, b1, a2, b2, a3` for the
+   * chains `a1→a2→a3` and `b1→b2`, confirmed against dagre rather than reasoned
+   * about. Tab then alternates between two unrelated lineages, and the
+   * generation-by-generation promise this docblock makes quietly stops holding.
+   *
+   * That is reachable rather than theoretical: `app/tree/page.tsx` puts the
+   * entire archive on one canvas, and disconnected people are a state
+   * `lib/tree-onboarding.ts` names rather than an invalid one.
+   *
+   * So the key grows a term in front of it — which family, then the rank
+   * inside that family, then across it. Which family is which, in what order,
+   * and where somebody joined to nobody goes are all
+   * {@link connectedFamilies}' decisions, argued there. On a single-tree
+   * canvas the new term is the same number for everybody and the order is
+   * exactly the one E10-T5 left, which is why the two tests it added still
+   * pass untouched.
    */
+  const families = connectedFamilies(graph);
+  const familyOf = new Map<string, number>();
+  families.forEach((members, index) => {
+    for (const id of members) familyOf.set(id, index);
+  });
+
+  /**
+   * A default rather than a `!`, though nothing can reach it: `familyOf` is
+   * built from the same `graph.people` these nodes were built from. If a
+   * later caller ever sorts a node this map has not heard of, sorting it to
+   * the end is a canvas somebody can still read; throwing is not.
+   */
+  const family = (node: Node) => familyOf.get(node.id) ?? families.length;
+
   nodes.sort(
     (a, b) =>
+      family(a) - family(b) ||
       a.position.y - b.position.y ||
       a.position.x - b.position.x ||
       a.id.localeCompare(b.id),
