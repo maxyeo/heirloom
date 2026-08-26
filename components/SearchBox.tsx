@@ -352,7 +352,7 @@ export function SearchBox({ siteName }: { siteName: string }) {
           Search people and entries
         </label>
 
-        <div className="flex items-center gap-1 rounded-panel border border-rule-soft bg-paper px-2 focus-within:border-rule">
+        <div className="flex items-center gap-1 rounded-panel border border-rule bg-paper px-2 focus-within:border-link">
           <input
             ref={inputRef}
             id={inputId}

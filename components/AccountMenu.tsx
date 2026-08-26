@@ -53,7 +53,7 @@ export function AccountMenu({
         </span>
       </summary>
 
-      <div className="absolute right-0 z-50 mt-1 w-60 rounded-panel border border-rule-soft bg-paper p-3">
+      <div className="absolute right-0 z-50 mt-1 w-60 rounded-panel border border-rule bg-paper p-3">
         {email ? (
           <p className="text-note break-words text-ink-muted">
             Signed in as {email}

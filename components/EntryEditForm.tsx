@@ -192,7 +192,7 @@ export function EntryEditForm({
         onChange={(event) => setTitle(event.target.value)}
         aria-invalid={error !== null}
         aria-describedby={error === null ? undefined : errorId}
-        className="mt-1 mb-4 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 font-serif text-h2 text-ink"
+        className="mt-1 mb-4 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 font-serif text-h2 text-ink"
       />
 
       {/*

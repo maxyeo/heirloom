@@ -229,7 +229,7 @@ function MergeChoices({
                   onClick={() =>
                     onChoose({ keepUnionId: keep.id, mergeUnionId: merge.id })
                   }
-                  className="mt-1 block w-full rounded-panel border border-rule-soft px-3 py-2 text-left hover:bg-wash"
+                  className="mt-1 block w-full rounded-panel border border-rule px-3 py-2 text-left hover:bg-wash"
                 >
                   <span className="text-caption">
                     Keep {describeUnionFacts(unionFacts(keep))}

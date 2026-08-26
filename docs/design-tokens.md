@@ -56,8 +56,8 @@ dense article read as an encyclopedia entry rather than a blog post.
 | `--color-wash`              | `#eaecf0` | table headers, hairlines                     |
 | `--color-ink`               | `#202122` | body text                                    |
 | `--color-ink-muted`         | `#54595d` | captions, secondary text                     |
-| `--color-rule`              | `#a2a9b1` | heading rules, panel borders                 |
-| `--color-rule-soft`         | `#c8ccd1` | borders _inside_ a panel                     |
+| `--color-rule`              | `#72777d` | structural: bounds a control or a region     |
+| `--color-rule-soft`         | `#c8ccd1` | decorative hairline — exempt under 1.4.11    |
 | `--color-link`              | `#3366cc` | unvisited                                    |
 | `--color-link-visited`      | `#6a60b0` | visited                                      |
 | `--color-link-new`          | `#bf3c2c` | a red link (E11-T6)                          |
@@ -82,9 +82,54 @@ never found by looking. A red link was `#d33`, which is 4.33:1 on
 Wikimedia's own accessible values, and all three links land at ~4.55:1 on the
 darkest surface. `--color-link` did not move.
 
-Borders are not in that rule. `--color-rule` is 2.37:1 on paper and stays
-there: it is a hairline, WCAG's 3:1 floor for non-text contrast is a separate
-question, and darkening every rule would undo the one thing this skin is for.
+**On the non-text floor.** Borders have their own threshold and their own
+suite. WCAG 2.2 SC 1.4.11 asks **3:1** — not 4.5:1 — of the visual information
+needed to identify a user interface component and its state, and of a graphical
+object needed to understand the content. It asks nothing of decoration, and it
+exempts an appearance the browser determines, so a native control this
+stylesheet has not restyled is already compliant and repainting it would only
+make it ours to get wrong.
+
+`YEO-107` is where that was answered, and the answer is **two tokens with two
+contracts** rather than one border colour pushed down until its worst case
+passes:
+
+| Token               | Owes | What it draws                                                                                                            |
+| ------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------ |
+| `--color-rule`      | 3:1  | a button, a field, a menu, a panel, a table cell, a card on the tree canvas, the rule under an `h1` or `h2`, a tree edge |
+| `--color-rule-soft` | —    | one row of a list or of the infobox from the next, the frame of a thumbnail, the line the article tabs attach to         |
+
+The test to apply at a call site is not "is this a border" but **"if this line
+were not drawn, would something stop being identifiable?"**. A field with no
+border is a piece of paper. A list with no row rules is still a list. The split
+is argued once at the tokens so that no component has to re-decide it.
+
+`--color-rule` was Vector 2022's `#a2a9b1`, which is 2.37:1 on paper — and the
+audience skews older, which is what makes a 2.37:1 line between one table row
+and its neighbour the difference between a table and a grey wash. `#72777d` is
+the next step down WikimediaUI's own grey ramp, and what Codex ships as
+`border-color-interactive`: Wikimedia's answer to "a border that has to be
+seen". It is 4.52:1 on paper and 3.82:1 on `--color-wash`, the darkest surface,
+so it clears the floor with room rather than by a rounding error.
+
+`--color-rule-soft` did not move. It is **named as exempt with its reason** in
+`app/globals.test.ts` rather than left as a token the guard happens not to ask
+about, and so are the two diff gutter rules — the compare view names every
+changed block in words as well, so their colour is the fastest way to read the
+page rather than the only way.
+
+**A surface token is never a border.** `--color-paper`, `--color-panel` and
+`--color-wash` are within about 1.2:1 of each other by design, because they are
+backgrounds for text. `--color-wash` was drawing the seam under the sticky
+header and down the sidebar's edge at 1.18:1 — a line that existed in the
+stylesheet and not on the screen. Both are `--color-rule` now, and
+`app/globals.test.ts` fails on any `border-`, `divide-`, `outline-` or `ring-`
+utility built from a fill.
+
+**Focus indicators** are `--color-link` everywhere — the base `:focus-visible`
+outline and the tree node ring E10-T5 restored — which is 5.37:1 on paper and
+4.54:1 on the darkest surface, so they clear the non-text floor by the same
+margin the text floor gives them.
 
 **On the diff pair.** Blue and yellow, not green and red. That is
 MediaWiki's choice and the reason for it is worth keeping: red and green
@@ -277,6 +322,42 @@ token; the browser uses that when it scrolls to an anchor, and
 heading to decide which section is current. One declaration, three uses — which
 is what keeps "the highlighted section" and "the section a click lands on" from
 drifting apart.
+
+## The tree canvas's borrowed stylesheet
+
+`components/FamilyTree.tsx` imports `@xyflow/react/dist/style.css` as a plain
+stylesheet, so its rules are **unlayered** — and an unlayered declaration beats
+a layered one before specificity is consulted at all. That is why the two
+things `app/globals.css` says about the canvas are the only two rules in the
+file outside every layer:
+
+| Rule                                           | What it is for                                                                      |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `.react-flow .react-flow__node…:focus-visible` | putting back the focus outline React Flow's own `outline: none` takes away (E10-T5) |
+| `.react-flow { --xy-… }`                       | three React Flow variables repointed at `--color-rule` (`YEO-107`)                  |
+
+The variables are `--xy-edge-stroke`, `--xy-controls-button-border-color` and
+`--xy-minimap-node-background-color`. React Flow's defaults for them are
+`#b1b1b7`, `#eee` and `#e2e2e2` — 2.13:1, 1.16:1 and 1.30:1 on the paper the
+canvas sits on.
+
+**The edges are the reason this is done in CSS at all.** An edge is the whole
+of what says who is married to whom, so it is a graphical object under 1.4.11
+rather than decoration. But `lib/tree-layout.ts` states — and
+`lib/tree-layout.test.ts` enforces — that no edge declares a colour, because
+the qualification on a relationship rides entirely on `strokeDasharray` and an
+edge that _could_ carry a colour is an edge somebody later tints red, handing
+the one channel a colour-blind reader has to the one they do not. One
+declaration in the stylesheet covers every edge in both dash states and leaves
+that rule intact.
+
+Two things on the canvas are **deliberately left alone and named as exempt**:
+the `<Background />` dot grid, which is texture that says the surface can be
+panned and carries nothing about the family, and the minimap's dimmed mask,
+which is not a boundary anything is identified by — the minimap duplicates a
+canvas that is fully present beside it, and every operation it offers is on
+`<Controls />` and the keyboard too. Its _nodes_ are the drawing rather than
+the frame, so those do take `--color-rule`.
 
 ## The rule that keeps this honest
 

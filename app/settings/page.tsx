@@ -65,7 +65,7 @@ export default async function SettingsPage() {
 /** One thing you can download, or one thing you will be able to download. */
 function ExportCard({ option }: { option: ExportOption }) {
   return (
-    <section className="rounded-panel border border-rule-soft bg-panel p-4">
+    <section className="rounded-panel border border-rule bg-panel p-4">
       {/* Sans and bold, below the ruled levels — the page's h1 and the section
           h2 above already carry the hierarchy. */}
       <h3>{option.title}</h3>
@@ -77,7 +77,7 @@ function ExportCard({ option }: { option: ExportOption }) {
         a button they have already pressed is documentation with extra steps.
       */}
       {option.caveat ? (
-        <div className="mt-3 rounded-panel border border-rule-soft bg-paper px-3 py-2 text-caption">
+        <div className="mt-3 rounded-panel border border-rule bg-paper px-3 py-2 text-caption">
           <p>{option.caveat.lead}</p>
           <p className="mt-2">It does not contain:</p>
           <ul className="mt-1 list-disc space-y-0.5 ps-5">

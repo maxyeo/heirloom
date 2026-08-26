@@ -365,7 +365,7 @@ export function PortraitField({
               if (file !== undefined) void choose(file);
             }}
             aria-describedby={(failure ?? error) ? errorId : undefined}
-            className="block w-full text-note file:mr-2 file:rounded-panel file:border file:border-rule-soft file:bg-wash file:px-2 file:py-1 file:text-note disabled:cursor-not-allowed disabled:opacity-60"
+            className="block w-full text-note file:mr-2 file:rounded-panel file:border file:border-rule file:bg-wash file:px-2 file:py-1 file:text-note disabled:cursor-not-allowed disabled:opacity-60"
           />
           {portraitKey === "" ? null : (
             <button

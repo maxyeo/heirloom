@@ -601,7 +601,7 @@ function Refusal({ refusal }: { refusal: ImportRefusal }) {
   return (
     <p
       role="alert"
-      className="mt-3 rounded-panel border border-rule-soft bg-panel px-3 py-2 text-caption"
+      className="mt-3 rounded-panel border border-rule bg-panel px-3 py-2 text-caption"
     >
       {refusal.error}
     </p>

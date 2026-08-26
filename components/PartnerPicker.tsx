@@ -102,7 +102,7 @@ export function PartnerPicker({
    */
   if (selected) {
     return (
-      <div className="mt-1 flex items-center justify-between gap-2 rounded-panel border border-rule-soft bg-panel px-2 py-1.5">
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-panel border border-rule bg-panel px-2 py-1.5">
         <span className="min-w-0 truncate">
           {selected.name}
           {selected.lifespan ? (
@@ -133,12 +133,12 @@ export function PartnerPicker({
         autoComplete="off"
         aria-invalid={invalid}
         aria-describedby={describedBy}
-        className="mt-1 block w-full rounded-panel border border-rule-soft bg-paper px-2 py-1.5 text-ink"
+        className="mt-1 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink"
       />
 
       <ul
         aria-label="Matching people"
-        className="mt-1 max-h-40 overflow-y-auto rounded-panel border border-rule-soft"
+        className="mt-1 max-h-40 overflow-y-auto rounded-panel border border-rule"
       >
         {results.length === 0 ? (
           <li className="px-2 py-1.5 text-note text-ink-muted">
