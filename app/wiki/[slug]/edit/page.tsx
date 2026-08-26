@@ -4,6 +4,7 @@ import { cache } from "react";
 
 import { EntryEditForm } from "@/components/EntryEditForm";
 import { readArticleOutline } from "@/lib/article-outline";
+import { listCategories, readEntryCategories } from "@/lib/categories";
 import { normaliseHatnote } from "@/lib/hatnote";
 import { getPageBySlug, listPages } from "@/lib/pages";
 import { sanitizeHtml } from "@/lib/sanitize-html";
@@ -119,6 +120,24 @@ export default async function EntryEditPage({
   const initialHatnote = normaliseHatnote(entry.hatnote);
 
   /**
+   * The picker's two lists (E11-T8, `YEO-78`): what this entry is filed under,
+   * and everything it *could* be filed under.
+   *
+   * Read here for the reason `entries` above is read here — the picker is a
+   * Client Component, and one that imported `@/lib/categories` would drag
+   * postgres.js into the browser bundle and into every suite that mounts it.
+   *
+   * Both are small and both cross the wire whole, which is what makes choosing
+   * an existing category cost no request at all: the filtering happens in the
+   * browser against a list it already holds. Neither carries an `id` — see
+   * `NamedCategory` in `lib/category-name.ts`.
+   */
+  const [initialCategories, categories] = await Promise.all([
+    readEntryCategories(entry.id),
+    listCategories(),
+  ]);
+
+  /**
    * Which heading the author pressed `[edit]` on, as a position in the
    * document (E11-T4, `YEO-74`).
    *
@@ -153,6 +172,8 @@ export default async function EntryEditPage({
         initialHtml={initialHtml}
         initialHatnote={initialHatnote}
         initialHeadingIndex={headingIndex}
+        initialCategories={initialCategories}
+        categories={categories}
       />
     </main>
   );

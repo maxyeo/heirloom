@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
+import { setEntryCategories } from "@/lib/categories";
 import { normaliseHatnote } from "@/lib/hatnote";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 
@@ -35,6 +36,18 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
  * revision (E1-T7) is a copy of that row's fields onto the page, not a
  * reconstruction from an offset chain. It also means every state the page has
  * ever been in has a row of its own, including the current one.
+ *
+ * ## What a revision is not
+ *
+ * E11-T8 (`YEO-78`) added a third thing a save can move — which categories the
+ * entry is filed under — and deliberately did *not* put it in `revisions`.
+ * A revision is what the article said; a category is where it is filed, and
+ * the two change for different reasons and are read by different people. So a
+ * save that only re-files an entry writes no revision at all, and
+ * {@link SavePageResult} carries a null `revisionId` to say so. The filing
+ * still lands inside this transaction, under the same row lock, because an
+ * entry whose text and whose footer bar came from different saves is exactly
+ * the inconsistency the paragraph above exists to prevent.
  */
 
 /**
@@ -128,6 +141,20 @@ export type SavePageEdit = {
    * required to state it as a string.
    */
   hatnote?: string;
+  /**
+   * What the entry is filed under (E11-T8, `YEO-78`), as the picker submitted
+   * them: names, in the author's own order, normalised and de-duplicated
+   * further down by `normaliseEntryCategories`.
+   *
+   * Optional on the same terms as `hatnote` above, and the distinction matters
+   * more here. `undefined` means "this caller has no opinion" and leaves the
+   * entry's filing exactly as it was; `[]` means "file this entry under
+   * nothing" and un-files it. Collapsing the two would make every direct POST
+   * written against the older shape of this action silently strip the
+   * categories off the entry it was saving. `savePageAction` is where a caller
+   * that does have an opinion is required to state it as an array of strings.
+   */
+  categories?: readonly string[];
 };
 
 export type SavePageInput = SavePageEdit & {
@@ -145,7 +172,30 @@ export type SavePageInput = SavePageEdit & {
  * constraint violation — still throws, and rolls the transaction back with it.
  */
 export type SavePageResult =
-  | { status: "saved"; pageId: string; revisionId: string }
+  | {
+      status: "saved";
+      pageId: string;
+      /**
+       * The revision this save appended, or `null` when it appended none
+       * (E11-T8, `YEO-78`).
+       *
+       * `null` has exactly one cause: the only thing the save changed was
+       * which categories the entry is filed under. A revision records what the
+       * article *said* — title, body, hatnote — and a category is where it is
+       * *filed*, so re-filing an entry writes no revision, and a history that
+       * showed one would be showing a version whose text is identical to the
+       * one above it.
+       *
+       * Nullable rather than absent so the compiler makes every consumer say
+       * which it means. The alternative — a fourth status, `refiled` — was
+       * considered and rejected: every caller that switches on the status
+       * wants to treat it exactly as `saved` (revalidate, then show the
+       * entry), so a new member would be a new case for each of them to
+       * forget, in exchange for a distinction only history-adjacent code
+       * cares about.
+       */
+      revisionId: string | null;
+    }
   | { status: "unchanged"; pageId: string }
   | { status: "empty-title" }
   | { status: "not-found" };
@@ -217,21 +267,60 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
      * predates the sanitiser (a seed, a manual `UPDATE`) does count as changed,
      * because saving it genuinely rewrites it.
      */
-    if (
-      page.title === title &&
-      page.bodyHtml === bodyHtml &&
-      page.hatnote === hatnote
-    ) {
+    const contentChanged =
+      page.title !== title ||
+      page.bodyHtml !== bodyHtml ||
+      page.hatnote !== hatnote;
+
+    /**
+     * The filing (E11-T8, `YEO-78`), applied inside the same transaction and
+     * under the same row lock as everything else — so an entry's text and the
+     * bar at the foot of it can never describe two different saves.
+     *
+     * `undefined` is skipped rather than read as an empty list: see
+     * `SavePageEdit.categories` for why absent and `[]` have to stay different
+     * requests. `setEntryCategories` reports whether it actually moved a row,
+     * which is what lets the no-op rule below cover categories too.
+     */
+    const categoriesChanged =
+      input.categories === undefined
+        ? false
+        : await setEntryCategories(tx, page.id, input.categories);
+
+    /**
+     * Comparison is against the values that would actually be written, after
+     * trimming and sanitising, so "no actual change" means "the row would not
+     * change" rather than "the author typed the same thing". Two consequences
+     * worth stating: pressing save on an untouched page writes nothing at all,
+     * not even an `updated_at` bump — a page that nobody edited must not climb
+     * the recently-changed feed (E8-T4). And an existing row whose stored HTML
+     * predates the sanitiser (a seed, a manual `UPDATE`) does count as changed,
+     * because saving it genuinely rewrites it.
+     *
+     * Re-filing an entry counts as a change for the same reason: somebody did
+     * edit it, and a reader looking at what changed recently should find it.
+     * That the category write above has already happened by the time this
+     * returns `unchanged` is not a leak — it returns `unchanged` only when
+     * that write moved nothing.
+     */
+    if (!contentChanged && !categoriesChanged) {
       return { status: "unchanged", pageId: page.id };
     }
 
-    const revisionId = await writeRevision(tx, {
-      pageId: page.id,
-      title,
-      bodyHtml,
-      hatnote,
-      editedBy: input.editedBy,
-    });
+    /**
+     * A revision records what the article *said*, so a save that only re-filed
+     * the entry appends none — see `SavePageResult`'s `revisionId` for the
+     * argument, and for why that is a `null` rather than a fourth status.
+     */
+    const revisionId = contentChanged
+      ? await writeRevision(tx, {
+          pageId: page.id,
+          title,
+          bodyHtml,
+          hatnote,
+          editedBy: input.editedBy,
+        })
+      : null;
 
     /**
      * `now()` rather than a JavaScript `Date`, because `revisions.created_at`
@@ -239,6 +328,23 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
      * time for both. The page and its newest revision therefore carry exactly
      * the same timestamp, so history can be ordered against the page without
      * a millisecond of skew deciding which came first.
+     *
+     * **That equality is now conditional, and E11-T8 (`YEO-78`) is what made
+     * it so.** It holds whenever this save wrote a revision, which is every
+     * save that changed the article. It does *not* hold after a save that only
+     * re-filed the entry: `updated_at` moves and no revision is appended, so
+     * the newest revision is older than the page. Nothing reads the equality —
+     * what the history view depends on is the weaker and still-unconditional
+     * claim that the newest revision's *content* is byte-identical to the
+     * page's, which a category has no part in. Stated rather than left to be
+     * discovered, because the paragraph above reads like a promise.
+     *
+     * The title, body and hatnote are written even when only the filing moved.
+     * They are the values already in the row in that case, so the statement is
+     * a no-op for them and exists for `updated_at` and `updated_by` — which
+     * *have* moved, because re-filing an entry is something somebody did, and
+     * a reader looking at what changed recently should find it, attributed to
+     * whoever did it.
      */
     await tx
       .update(schema.pages)

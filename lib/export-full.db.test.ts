@@ -148,6 +148,12 @@ describe("what is read", () => {
       "individuals",
       "unions",
       "union_children",
+      // E11-T8 (`YEO-78`). Appended rather than placed beside `pages`, which
+      // is where they read most naturally: the assertions below index this
+      // list positionally, so inserting in the middle renumbers them all.
+      // `categories` before `page_categories`, which references it.
+      "categories",
+      "page_categories",
     ]);
   });
 

@@ -48,8 +48,16 @@ export const FALLBACK_SLUG = "entry";
  * `lib/entry-slug.test.ts` checks this set against the directories actually
  * present under `app/wiki`, so a static route added later cannot quietly
  * start shadowing entries.
+ *
+ * `category` is E11-T8's (`YEO-78`): `/wiki/category` lists every category and
+ * `/wiki/category/[slug]` lists what is filed under one. Being in this set
+ * buys a second thing there, worth knowing before anyone considers removing
+ * it — `lib/article-tabs.ts` reads a reserved first segment as "this is not an
+ * entry", so this is also what stops the shell rendering an *Article / Edit /
+ * View history* row above a category listing, two of whose three tabs would
+ * point at addresses that do not exist.
  */
-export const RESERVED_SLUGS: ReadonlySet<string> = new Set(["new"]);
+export const RESERVED_SLUGS: ReadonlySet<string> = new Set(["new", "category"]);
 
 /**
  * How long a base slug may be, in code points rather than UTF-16 units, so

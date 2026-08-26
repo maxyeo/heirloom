@@ -262,17 +262,17 @@ familiar interface is cheaper than teaching a new one — see the principle in
 right visual language rather than restyled afterwards. Everything else here
 layers onto E1.
 
-| ID                 | Ticket                                          | Notes                                                                                                                                                  |
-| ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| E11-T1<br>`YEO-71` | Visual foundation — type, colour, layout tokens | Serif headings (`Linux Libertine`, Georgia fallback) over sans body, `#3366cc` links, `#f8f9fa` panels, Wikipedia's measure and leading. Blocks E1-T1. |
-| E11-T2<br>`YEO-72` | Vector 2022 article shell                       | Sticky header, collapsible left sidebar, centred content column. Collapses cleanly on a phone — reading on mobile is in scope.                         |
-| E11-T3<br>`YEO-73` | Pinned table of contents                        | Auto-generated from headings, pinned in the left margin, tracks scroll position. Needs stable heading IDs — shared with E11-T4.                        |
-| E11-T4<br>`YEO-74` | Section `[edit]` links                          | Opens the full editor scrolled to that section. **Not** true section-level editing — see the note in the ticket.                                       |
-| E11-T5<br>`YEO-75` | Person infobox                                  | Portrait, born/died, spouses, children — **derived from the tree record, never authored.** The one place this departs from Wikipedia on purpose.       |
-| E11-T6<br>`YEO-76` | Red links for entries that do not exist         | A red link is an invitation to write. Pairs with E2-T2 and E2-T5.                                                                                      |
-| E11-T7<br>`YEO-77` | Article tabs                                    | Article / Read / Edit / View history. No Talk tab — discussion is a non-goal.                                                                          |
-| E11-T8<br>`YEO-78` | Categories                                      | New schema: tag entries, footer bar, category listing pages. The only ticket here that is a feature rather than a skin.                                |
-| E11-T9<br>`YEO-79` | Hatnotes                                        | The italic "For other people named Rose, see..." line above the first paragraph.                                                                       |
+| ID                 | Ticket                                          | Notes                                                                                                                                                                  |
+| ------------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E11-T1<br>`YEO-71` | Visual foundation — type, colour, layout tokens | Serif headings (`Linux Libertine`, Georgia fallback) over sans body, `#3366cc` links, `#f8f9fa` panels, Wikipedia's measure and leading. Blocks E1-T1.                 |
+| E11-T2<br>`YEO-72` | Vector 2022 article shell                       | Sticky header, collapsible left sidebar, centred content column. Collapses cleanly on a phone — reading on mobile is in scope.                                         |
+| E11-T3<br>`YEO-73` | Pinned table of contents                        | Auto-generated from headings, pinned in the left margin, tracks scroll position. Needs stable heading IDs — shared with E11-T4.                                        |
+| E11-T4<br>`YEO-74` | Section `[edit]` links                          | Opens the full editor scrolled to that section. **Not** true section-level editing — see the note in the ticket.                                                       |
+| E11-T5<br>`YEO-75` | Person infobox                                  | Portrait, born/died, spouses, children — **derived from the tree record, never authored.** The one place this departs from Wikipedia on purpose.                       |
+| E11-T6<br>`YEO-76` | Red links for entries that do not exist         | A red link is an invitation to write. Pairs with E2-T2 and E2-T5.                                                                                                      |
+| E11-T7<br>`YEO-77` | Article tabs                                    | Article / Read / Edit / View history. No Talk tab — discussion is a non-goal.                                                                                          |
+| E11-T8<br>`YEO-78` | Categories                                      | `categories` + `page_categories`, a picker in the editor, the footer bar, and listings at `/wiki/category`. The only ticket here that is a feature rather than a skin. |
+| E11-T9<br>`YEO-79` | Hatnotes                                        | The italic "For other people named Rose, see..." line above the first paragraph.                                                                                       |
 
 **Not in this epic.** Talk pages, `<ref>` footnotes, "Cite this page",
 disambiguation pages beyond the hatnote itself.

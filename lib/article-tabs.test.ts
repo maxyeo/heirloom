@@ -62,6 +62,19 @@ describe("which pages get tabs", () => {
     expect(RESERVED_SLUGS.has("new")).toBe(true);
   });
 
+  it("puts none on a category listing, which is not an entry", () => {
+    /**
+     * The loop above covers `/wiki/category` itself. This is the address a
+     * reader actually arrives at (E11-T8, `YEO-78`) — every link in an
+     * article's footer bar points here — and it is a *two*-segment path, so it
+     * reaches this function looking exactly like an entry with a sub-route.
+     * Tabs on it would offer to edit a category and to read its history, and
+     * both links would lead to a 404.
+     */
+    expect(articleTabsForPath("/wiki/category/whitfield-family")).toBeNull();
+    expect(RESERVED_SLUGS.has("category")).toBe(true);
+  });
+
   it("puts none on a sub-route it does not recognise", () => {
     // Better a missing row than one that renders with nothing marked current,
     // or with "Read" wrongly marked current. See the header of the module.
