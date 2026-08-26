@@ -373,9 +373,13 @@ used to _widen_ what is public, which is an edit that shows up in a diff.
    `import { requireSession as guard }` and `session.requireSession()` are
    guards. Reporting either as unguarded would be a baffling failure.
 
-   This is the one place the auth boundary goes further than the tripwire
-   idiom of `lib/sanitize-html.call-sites.test.ts` and `app/globals.test.ts`,
-   and the reason is what is underneath it — nothing.
+   Reading the tree is no longer what sets this apart.
+   `lib/sanitize-html.call-sites.test.ts` scans one too since `YEO-96`, for
+   the same reason: a repository that names its own APIs in prose cannot tell
+   a call site from a docblock with a regex. What is still particular to the
+   auth boundary is the shadowing rule above — it is the one guard that also
+   has to refuse a _decoy_ — and the reason is what is underneath it —
+   nothing.
 
 2. Every server action is imported and **called** with no session in place,
    and has to throw `UnauthorizedError`. These can be driven, so they are.
