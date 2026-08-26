@@ -282,6 +282,22 @@ describe("the @ escape", () => {
     expect(husband.value).toBe("@I1@");
   });
 
+  it("does not let a padded escaped @ invent one either", () => {
+    // The same hazard through the one other thing `readPointer` does. It
+    // trims, because `1 HUSB  @F1@ ` is a real pointer somebody's writer
+    // padded — so padding on its own is never what makes a value not a
+    // pointer, and this combination rests entirely on the question being
+    // asked before the unescaping rather than after it.
+    //
+    // The value keeps its spaces while the pointer ignores them, which is the
+    // asymmetry worth pinning: trimming a value belongs a layer up, where the
+    // tag's meaning is known and a trailing space might be somebody's data.
+    const husband = only("1 HUSB  @@F1@@ ");
+
+    expect(husband.pointer).toBeNull();
+    expect(husband.value).toBe(" @F1@ ");
+  });
+
   it("still reads a real pointer, whose @s are delimiters", () => {
     const husband = only("1 HUSB @I1@");
 

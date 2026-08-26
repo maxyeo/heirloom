@@ -282,6 +282,13 @@ function readValues(node: GedcomNode): void {
  * `POINTER` cannot match an escaped `@` — its body excludes `@` — so a value
  * of `@@I1@@` is read as text and not as a pointer, which is the whole point
  * of asking before unescaping.
+ *
+ * The trim is why the padded form has a test of its own (`YEO-110`). A real
+ * pointer somebody's writer padded is still a pointer, so whitespace is never
+ * what makes a value not one — which leaves `" @@F1@@ "` resting entirely on
+ * the question being asked here, before `unescapeValue` runs, rather than on
+ * the padding. The value keeps its spaces either way: trimming a value
+ * belongs where the tag's meaning is known, a layer up.
  */
 function readPointer(value: string): string | null {
   const match = POINTER.exec(value.trim());
