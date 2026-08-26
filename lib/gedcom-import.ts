@@ -93,7 +93,7 @@ import { rowsFromMapping } from "@/lib/import-rows";
  * The refusal above had no override, which made it a one-way door: a reader
  * who imported a file, decided the result was wrong and deleted the rows was
  * left with a digest nothing in the product could release. {@link
- * ImportOptions.releasePrior} is the way back out, and three things about its
+ * ImportOptions.release} is the way back out, and three things about its
  * shape are decisions rather than convenience.
  *
  * **It releases rather than deletes.** The prior ledger row is marked
@@ -230,11 +230,12 @@ export type ImportProvenance = {
 /**
  * What to do about a prior import of these same bytes (`YEO-95`).
  *
- * An options object with one field rather than a bare boolean parameter, so
- * that the call site reads `{ releasePrior: true }` instead of a `true`
- * floating after the provenance with nothing on it to say what it means. The
- * shape also leaves room for a second decision about a prior import without
- * changing the arity of {@link importGedcom} again.
+ * An options object with one field rather than a bare third parameter, so
+ * that the call site reads `{ release: priorImportId }` instead of a uuid
+ * floating after the provenance with nothing on it to say which of the
+ * several ids in scope it is. The shape also leaves room for a second
+ * decision about a prior import without changing the arity of {@link
+ * importGedcom} again.
  */
 export type ImportOptions = {
   /**
