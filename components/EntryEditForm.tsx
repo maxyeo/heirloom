@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useId, useRef, useState, useTransition } from "react";
 
+import { CategoryPicker } from "@/components/CategoryPicker";
 import { EntryEditor } from "@/components/EntryEditor";
+import type { NamedCategory } from "@/lib/category-name";
 import type { TitledEntry } from "@/lib/page-index";
 import { savePageAction } from "@/app/wiki/actions";
 
@@ -66,6 +68,31 @@ export interface EntryEditFormProps {
    * section that has since been renamed degrades to.
    */
   initialHeadingIndex?: number | null;
+  /**
+   * What the entry is filed under right now (E11-T8, `YEO-78`), alphabetically
+   * as `readEntryCategories` returned it.
+   *
+   * **Required, unlike every other optional prop above, and deliberately so.**
+   * `SavePageEdit.categories` goes to real trouble to keep `undefined` ("no
+   * opinion") apart from `[]` ("un-file everything"), and a default of `[]`
+   * here would collapse exactly that distinction one layer up: a future route
+   * that mounted this form and forgot the prop would silently strip every
+   * category off the entry on its first save, with nothing to report it. A
+   * required prop makes that a compile error instead.
+   */
+  initialCategories: readonly NamedCategory[];
+  /**
+   * Every category that exists, for the picker to offer.
+   *
+   * Passed straight through, like `entries` above and for the same reason: the
+   * route that reads the database is on the other side of this component, and
+   * the picker is a Client Component that must not reach for `@/db` itself.
+   *
+   * Required for the same reason as `initialCategories` — though the failure
+   * here is milder and louder: a picker given no list offers nothing to choose
+   * from, which somebody notices immediately.
+   */
+  categories: readonly NamedCategory[];
 }
 
 export function EntryEditForm({
@@ -75,13 +102,26 @@ export function EntryEditForm({
   initialHatnote,
   entries,
   initialHeadingIndex,
+  initialCategories,
+  categories,
 }: EntryEditFormProps) {
   const router = useRouter();
   const titleId = useId();
   const hatnoteHintId = useId();
+  const categoryId = useId();
+  const categoryHintId = useId();
   const errorId = useId();
 
   const [title, setTitle] = useState(storedTitle);
+  /**
+   * The filing, in state rather than in a ref — the opposite of the two
+   * editors above, and for the opposite reason. A ref is right for them
+   * because they fire on every keystroke and the chips have to redraw when one
+   * is added, which is a handful of times per edit. `title` is already held
+   * this way for the same trade.
+   */
+  const [filedUnder, setFiledUnder] =
+    useState<readonly NamedCategory[]>(initialCategories);
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
 
@@ -108,6 +148,9 @@ export function EntryEditForm({
         title,
         bodyHtml: bodyHtml.current,
         hatnote: hatnote.current,
+        // Names, not rows: `savePage` resolves each to a category, creating
+        // the ones that do not exist yet. See `lib/categories.ts`.
+        categories: filedUnder.map((category) => category.name),
       });
 
       switch (result.status) {
@@ -186,6 +229,36 @@ export function EntryEditForm({
         onChange={onBodyChange}
         entries={entries}
         initialHeadingIndex={initialHeadingIndex}
+      />
+
+      {/*
+        The categories (E11-T8), below the body because that is where they
+        render — the bar sits at the foot of the article, and an author who
+        scrolls to the end of what they wrote finds the control in the place
+        its output appears.
+
+        Labelled in the author's words. "Category" is the one piece of
+        Wikipedia vocabulary this feature keeps, because it is the word on the
+        bar the reader sees; the hint says what filing an entry buys, which is
+        the part nobody would guess from a field.
+      */}
+      <label
+        htmlFor={categoryId}
+        className="mt-4 block text-caption text-ink-muted"
+      >
+        Categories (optional)
+      </label>
+      <p id={categoryHintId} className="mt-0.5 mb-1 text-note text-ink-muted">
+        Headings this entry belongs under, listed at the foot of the article.
+        Each one gets a page of its own listing everything filed there — a way
+        to gather people the family tree does not connect.
+      </p>
+      <CategoryPicker
+        value={filedUnder}
+        existing={categories}
+        onChange={setFiledUnder}
+        inputId={categoryId}
+        describedBy={categoryHintId}
       />
 
       {error === null ? null : (

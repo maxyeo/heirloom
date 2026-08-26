@@ -38,6 +38,11 @@ async function main() {
   }
 
   console.log("Clearing existing data...");
+  // Children before parents throughout, so no statement waits on a cascade to
+  // decide what it may delete. `page_categories` first of all (`YEO-78`): it
+  // references both of the tables that follow it here.
+  await db.delete(schema.pageCategories);
+  await db.delete(schema.categories);
   await db.delete(schema.unionChildren);
   await db.delete(schema.unions);
   await db.delete(schema.individuals);

@@ -25,7 +25,9 @@ const OVERRIDE = "SEED_ALLOW_DESTRUCTIVE";
  * only says "this is destructive" is one people learn to click past; one that
  * lists the tables is one they read.
  */
-const DAMAGE = "individuals, unions, unionChildren, revisions, and pages";
+const DAMAGE =
+  "pageCategories, categories, individuals, unions, unionChildren, " +
+  "revisions, and pages";
 
 export type SeedGuardResult =
   { allowed: true } | { allowed: false; message: string };

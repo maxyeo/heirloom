@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { ArticleCategories } from "@/components/ArticleCategories";
 import { ArticleContents } from "@/components/ArticleContents";
 import { ArticleHatnote } from "@/components/ArticleHatnote";
 import { ArticleHeading } from "@/components/ArticleHeading";
 import { PersonInfobox } from "@/components/PersonInfobox";
 import { readArticleOutline } from "@/lib/article-outline";
+import { readEntryCategories } from "@/lib/categories";
 import { readEntryInfobox } from "@/lib/entry-infobox";
 import { getEntryPerson } from "@/lib/entry-person";
 import { normaliseHatnote } from "@/lib/hatnote";
@@ -145,6 +147,17 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
    */
   const subject = await getEntryPerson(entry.id);
   const infobox = await readEntryInfobox(subject);
+
+  /**
+   * What this entry is filed under (E11-T8, `YEO-78`) — one join, keyed by
+   * `entry.id`, so like the infobox above there is nothing to start until the
+   * slug has resolved to a row.
+   *
+   * Read on every article view, and cheap enough to be: the join table's
+   * primary key leads on `page_id`, which is exactly this predicate. An entry
+   * with no categories gets an empty array and renders no bar at all.
+   */
+  const categories = await readEntryCategories(entry.id);
 
   /**
    * Who else in the tree is called this (E11-T9, `YEO-79`) — the automatic
@@ -316,6 +329,18 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
             This entry has no content yet.
           </p>
         )}
+
+        {/*
+          The category bar (E11-T8): "Categories: Whitfield family | Emigrated
+          to Canada". Last inside the article, under the prose, which is where
+          Wikipedia puts it and which is also the only place it makes sense —
+          it says what this entry belongs *with*, which is a question a reader
+          has after reading rather than before.
+
+          Renders nothing at all — no box, no margin — for an entry filed under
+          nothing, which is most of them in a young wiki.
+        */}
+        <ArticleCategories categories={categories} />
 
         {/* The pinned contents panel (E11-T3). It renders into the shell's
             sidebar rather than here — see `components/ArticleContents.tsx` —

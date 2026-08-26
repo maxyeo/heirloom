@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
@@ -24,6 +24,8 @@ const OTHER_PAGE = "00000000-0000-4000-8000-00000000e002";
 const SLUG = "save-page-fixture";
 const OTHER_SLUG = "save-page-fixture-untouched";
 const EDITOR = "editor@fixture.test";
+// A second author, for the assertions about who a save is attributed to.
+const OTHER_EDITOR = "other-editor@fixture.test";
 
 const ORIGINAL = { title: "Rose Fixture", bodyHtml: "<p>Before.</p>" } as const;
 
@@ -418,6 +420,180 @@ describe("savePage", () => {
       });
 
       expect((await readPage()).hatnote).toBe("");
+    });
+  });
+  describe("the categories (E11-T8)", () => {
+    /**
+     * `savePage` writes the filing inside its own transaction, so what is
+     * asserted here is the *interaction* with the rest of the save — the no-op
+     * rule, and which of `pages` and `revisions` a re-filing is allowed to
+     * touch. What filing an entry does to `page_categories` is asserted in
+     * `lib/categories.db.test.ts`, against `setEntryCategories` directly.
+     */
+    const CATEGORY = "Save Page Fixture Category";
+    const CATEGORY_SLUG = "save-page-fixture-category";
+    const OTHER_CATEGORY = "Save Page Fixture Second";
+
+    afterAll(async () => {
+      await db
+        .delete(schema.categories)
+        .where(like(schema.categories.slug, "save-page-fixture-%"));
+    });
+
+    async function categoryNames(pageId = PAGE) {
+      const rows = await db
+        .select({ name: schema.categories.name })
+        .from(schema.pageCategories)
+        .innerJoin(
+          schema.categories,
+          eq(schema.categories.id, schema.pageCategories.categoryId),
+        )
+        .where(eq(schema.pageCategories.pageId, pageId));
+      return rows.map((row) => row.name).sort();
+    }
+
+    it("files the entry as part of the same save", async () => {
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: "<p>Filed.</p>",
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+
+      expect(result).toMatchObject({ status: "saved" });
+      expect(await categoryNames()).toEqual([CATEGORY]);
+    });
+
+    it("counts a re-filing as a change, and writes no revision for it", async () => {
+      /**
+       * The decision `SavePageResult.revisionId` is nullable for. A revision
+       * records what the article *said*; a category is where it is *filed*, so
+       * a save that moved only the filing appends no history entry — but it
+       * did move something, so it is a save rather than a no-op and the entry
+       * climbs the recently-changed feed with the person who did it on it.
+       */
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+      const before = await readPage();
+      const revisionsBefore = await readRevisions();
+
+      await backdatePages(PAGE);
+
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY, OTHER_CATEGORY],
+        editedBy: OTHER_EDITOR,
+      });
+
+      expect(result).toMatchObject({ status: "saved", revisionId: null });
+      expect(await readRevisions()).toHaveLength(revisionsBefore.length);
+
+      const after = await readPage();
+      expect(after.updatedBy).toBe(OTHER_EDITOR);
+      expect(after.updatedAt.getTime()).toBeGreaterThan(
+        before.updatedAt.getTime(),
+      );
+      expect(await categoryNames()).toEqual([OTHER_CATEGORY, CATEGORY].sort());
+    });
+
+    it("carries a revision id when the article changed too", async () => {
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: "<p>Both moved.</p>",
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+
+      expect(result.status).toBe("saved");
+      if (result.status !== "saved") return;
+      expect(result.revisionId).not.toBeNull();
+    });
+
+    it("writes nothing at all when neither the article nor the filing moved", async () => {
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+      const before = await readPage();
+
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: OTHER_EDITOR,
+      });
+
+      // Not even an `updated_at` bump — an entry nobody edited must not climb
+      // the recently-changed feed (E8-T4).
+      expect(result).toEqual({ status: "unchanged", pageId: PAGE });
+      expect(await readPage()).toEqual(before);
+    });
+
+    it("leaves the filing alone for a caller that does not mention it", async () => {
+      /**
+       * The difference between `undefined` and `[]`, which is the whole reason
+       * the field is optional rather than defaulted. A direct POST written
+       * against the older shape of this action sends neither, and reading that
+       * as "file this entry under nothing" would silently strip the categories
+       * off every entry such a caller saved.
+       */
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: "<p>No opinion about categories.</p>",
+        editedBy: EDITOR,
+      });
+
+      expect(await categoryNames()).toEqual([CATEGORY]);
+    });
+
+    it("un-files the entry when the picker sends an empty list", async () => {
+      await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [CATEGORY],
+        editedBy: EDITOR,
+      });
+
+      const result = await savePage({
+        slug: SLUG,
+        title: ORIGINAL.title,
+        bodyHtml: ORIGINAL.bodyHtml,
+        categories: [],
+        editedBy: EDITOR,
+      });
+
+      expect(result).toMatchObject({ status: "saved", revisionId: null });
+      expect(await categoryNames()).toEqual([]);
+      // And the category itself survives being emptied — see
+      // `lib/categories.db.test.ts`.
+      const [category] = await db
+        .select()
+        .from(schema.categories)
+        .where(eq(schema.categories.slug, CATEGORY_SLUG));
+      expect(category).toBeDefined();
     });
   });
 });
