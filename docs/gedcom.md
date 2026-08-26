@@ -118,10 +118,10 @@ would reach.
 
 ### Every place an `@` is written unescaped
 
-Grepping for `emitPointer` looks like the way to enumerate them, and is not:
-it finds five call sites — `SUBM`, `FAMC`, `FAMS`, `CHIL`, and `HUSB`/`WIFE`
-through `writePartner` — and silently misses a line written somewhere else.
-Grep for the write instead:
+Following `emitPointer` to its call sites looks like the way to enumerate
+them, and is not: there are five — `SUBM`, `FAMC`, `FAMS`, `CHIL`, and
+`HUSB`/`WIFE` through `writePartner` — and a line written somewhere else is
+missed in silence. Grep for the write instead:
 
 ```bash
 grep -n 'lines\.push(' lib/gedcom-export.ts
@@ -134,7 +134,7 @@ exception:
 
 | Writer         | Writes            | Escaped                                     |
 | -------------- | ----------------- | ------------------------------------------- |
-| `emit` (twice) | `1 SURN O@@Brien` | yes — every value it is handed              |
+| `emit` (twice) | `2 SURN O@@Brien` | yes — every value it is handed              |
 | `emitPointer`  | `1 HUSB @I1@`     | no — those `@`s are the format's delimiters |
 | `record`       | `0 @I1@ INDI`     | no — and it does not need to be             |
 

@@ -975,8 +975,9 @@ function emitPointer(
  * `0 @I1@ INDI` — the line that opens a record.
  *
  * The other place this file writes an `@` unescaped, and the one a grep for
- * `emitPointer` misses: the pointer sits in the xref position here rather than the value
- * position, so it is written directly rather than through that helper. Safe
+ * `emitPointer` misses: the pointer sits in the xref position here rather
+ * than the value position, so it is written directly rather than through that
+ * helper. Safe
  * unescaped for the same reason `emitPointer` is, and one better — the xref
  * is minted here (`I1`, `F1`, `U1`) and cannot contain an `@` to escape.
  */
