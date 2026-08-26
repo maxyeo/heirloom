@@ -217,4 +217,14 @@ sentence stays true.
 
 ## Licence
 
-MIT.
+MIT, with one exception — and it is a test fixture rather than any of the code.
+
+`test/fixtures/gedcom/TGC55C.ged` is the published GEDCOM 5.5 Torture Test,
+committed unmodified so that a real third-party file, and not only ones written
+here, has to survive the GEDCOM round trip. Its authors permit use "for any
+non-commercial purpose", which is narrower than the licence above, so that one
+path is not covered by it. Nothing under `app/` or `lib/` imports the file, it
+is read only by `lib/gedcom-round-trip.test.ts`, and it is in no build output.
+`test/fixtures/gedcom/README.md` records where it came from, when, and on what
+terms; anybody building something commercial on this repository should delete
+it and the `describe` block that reads it.

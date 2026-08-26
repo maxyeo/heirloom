@@ -1057,13 +1057,16 @@ nowhere to put**, including six whole record types and a vendor extension from
 **What it found.** Three ANSEL letters `lib/ansel.ts` had never decoded. The
 file recites the upper half of the character set a byte at a time with a label
 on each, which is not a thing anybody would write a fixture to do, and three of
-those bytes came back as replacement characters:
+those bytes came back as replacement characters. ANSEL itself is a paid ANSI
+standard, so the assignments below were checked against the fixture's own table
+and against Eichmann's published ANSEL-to-Unicode mapping at
+`http://heiner-eichmann.de/gedcom/ansset.htm`, which agree:
 
-| Byte   | Character             | What happened                                                                                                                                                          |
-| ------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0xbc` | ơ — small o with hook | Added. Its capital (`0xac`) was already in the table, so the gap was an asymmetry rather than a decision, and a Vietnamese name written in lower case lost its vowels. |
-| `0xbd` | ư — small u with hook | Added, for the same reason (`0xad`).                                                                                                                                   |
-| `0xcf` | ß — es zet            | Added. One unambiguous Unicode code point, so mapping it is not the kind of guess `lib/ansel.ts` refuses.                                                              |
+| Byte   | Character | What happened                                                                                                                                                          |
+| ------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0xbc` | ơ U+01A1  | Added. Its capital (`0xac`) was already in the table, so the gap was an asymmetry rather than a decision, and a Vietnamese name written in lower case lost its vowels. |
+| `0xbd` | ư U+01B0  | Added, for the same reason (`0xad`).                                                                                                                                   |
+| `0xcf` | ß U+00DF  | Added. One unambiguous Unicode code point, so mapping it is not the kind of guess `lib/ansel.ts` refuses.                                                              |
 
 **What it narrows.** Four bytes stay unmapped, and the fixture labels them
 itself: `0xbe` empty box, `0xbf` black box, `0xcd` midline e, `0xce` midline o.

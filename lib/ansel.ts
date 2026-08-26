@@ -63,6 +63,10 @@
  * is ß, which the torture file lists without the "LDS extension" note it puts
  * on the four genuine extensions, and which has one unambiguous Unicode code
  * point — so mapping it is not the kind of guess the paragraph above refuses.
+ * ANSEL is a paid ANSI standard, so all three were checked against the
+ * fixture's own table and against Eichmann's published ANSEL-to-Unicode
+ * mapping (`http://heiner-eichmann.de/gedcom/ansset.htm`): U+01A1, U+01B0 and
+ * U+00DF respectively, and the two sources agree.
  *
  * Those four extensions — `0xbe` empty box, `0xbf` black box, `0xcd` midline
  * e, `0xce` midline o — are deliberately still unmapped. They are LDS
