@@ -487,6 +487,10 @@ describe("describeBlockKind", () => {
   it("names a photograph in the reader's word, not the tag's", () => {
     expect(describeBlockKind("image")).toBe("Photograph");
   });
+
+  it("names a category", () => {
+    expect(describeBlockKind("category")).toBe("Category");
+  });
 });
 
 /**
@@ -670,5 +674,122 @@ describe("contentBlockText", () => {
         source: "images/ab/x.jpg",
       }),
     ).toBe("Rose at Southwold");
+  });
+});
+
+/**
+ * The filing in the diff (`YEO-106`).
+ *
+ * A re-filing wrote no revision at all until this ticket, so there was nothing
+ * here for a diff to be wrong about. Now that it writes one, the failure mode
+ * is the one this module has already been bitten by twice — a revision whose
+ * summary reads "No change to the rendered content" when the only thing that
+ * revision recorded is the thing the diff cannot see. See `ContentBlockKind`.
+ */
+describe("categories", () => {
+  const BODY = "<p>Rose married Walter.</p>";
+
+  it("reports a category the entry gained", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: BODY, categories: ["Whitfield family"] },
+      {
+        bodyHtml: BODY,
+        categories: ["Emigrated to Canada", "Whitfield family"],
+      },
+    );
+
+    expect(rows).toContainEqual({
+      status: "added",
+      block: { kind: "category", text: "Emigrated to Canada" },
+    });
+    // And the one that stood still is still there, as context rather than as
+    // a removal and a re-addition.
+    expect(rows).toContainEqual({
+      status: "unchanged",
+      block: { kind: "category", text: "Whitfield family" },
+    });
+  });
+
+  it("reports a category the entry lost", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: BODY, categories: ["Whitfield family"] },
+      { bodyHtml: BODY, categories: [] },
+    );
+
+    expect(rows).toContainEqual({
+      status: "removed",
+      block: { kind: "category", text: "Whitfield family" },
+    });
+  });
+
+  it("says something changed when only the filing moved", () => {
+    // The whole point. Before `YEO-106` this comparison could not exist —
+    // there was no second revision — and with no `category` kind it would
+    // report "No change to the rendered content" about the only thing that
+    // revision holds.
+    const rows = diffEntryContent(
+      { bodyHtml: BODY, categories: [] },
+      { bodyHtml: BODY, categories: ["Whitfield family"] },
+    );
+
+    expect(hasContentChanges(rows)).toBe(true);
+    expect(describeContentDiffSummary(summariseContentDiff(rows))).toBe(
+      "1 addition.",
+    );
+  });
+
+  it("trails the body, because that is where the page reads it", () => {
+    const rows = diffEntryContent(
+      { bodyHtml: "<h2>Life</h2>", hatnote: "See also.", categories: ["Kin"] },
+      { bodyHtml: "<h2>Life</h2>", hatnote: "See also.", categories: ["Kin"] },
+    );
+
+    expect(rows.map((row) => row.block.kind)).toEqual([
+      "hatnote",
+      "heading2",
+      "category",
+    ]);
+  });
+
+  it("does not mistake a category for a paragraph saying the same words", () => {
+    // Two blocks are the same only when kind *and* text match, so filing an
+    // entry under a heading and typing that heading into the lead are
+    // different edits — the argument `hatnote` makes one column over.
+    const rows = diffEntryContent(
+      { bodyHtml: "", categories: ["Emigrated to Canada"] },
+      { bodyHtml: "<p>Emigrated to Canada</p>", categories: [] },
+    );
+
+    // Removal first: the tie in the subsequence walk goes to "what it said"
+    // before "what it says now", which is what every diff tool trains people
+    // to expect. See `diffByLongestCommonSubsequence`.
+    expect(rows.map((row) => [row.status, row.block.kind])).toEqual([
+      ["removed", "category"],
+      ["added", "paragraph"],
+    ]);
+  });
+
+  it("reads an absent filing as filed under nothing", () => {
+    // What `diffContent` means by omitting it, and what a caller comparing two
+    // bare bodies means too — so neither produces a phantom removal.
+    const rows = diffEntryContent({ bodyHtml: BODY }, { bodyHtml: BODY });
+
+    expect(rows.every((row) => row.block.kind !== "category")).toBe(true);
+  });
+
+  it("keeps a category out of the move detector", () => {
+    /**
+     * A filing is a set and has no arrangement, so there is no such thing as
+     * a category moving within one. The column is stored in slug order on both
+     * sides, so the subsequence diff never sees a re-ordering — and this is
+     * the assertion that the canonical order is doing that job rather than
+     * `markMovedBlocks` quietly papering over it.
+     */
+    const rows = diffEntryContent(
+      { bodyHtml: BODY, categories: ["Alpha", "Beta"] },
+      { bodyHtml: BODY, categories: ["Alpha", "Beta"] },
+    );
+
+    expect(rows.every((row) => row.status === "unchanged")).toBe(true);
   });
 });

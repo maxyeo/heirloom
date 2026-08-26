@@ -176,6 +176,12 @@ describe("getRevisionById", () => {
       title: "Rose Hale v2",
       bodyHtml: "<p>v2.</p>",
       hatnote: "",
+      // Empty, because this fixture row is written straight into `revisions`
+      // and files the entry under nothing (`YEO-106`). Asserted for the reason
+      // `restoredFromId` is below: the `toEqual` is exact, so a column added
+      // to the select without a decision about what it means to a reader fails
+      // here.
+      categories: [],
       createdAt: new Date("2024-06-01T00:00:00Z"),
       createdBy: AUTHOR,
       // Null, because this fixture row is an ordinary save rather than a

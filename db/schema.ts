@@ -390,6 +390,75 @@ export const revisions = pgTable(
       (): AnyPgColumn => revisions.id,
       { onDelete: "set null" },
     ),
+    /**
+     * What the entry was filed under at this revision (`YEO-106`), as category
+     * *names*, in slug order.
+     *
+     * ## Why the filing is in here at all
+     *
+     * E11-T8 (`YEO-78`) put categories in `page_categories` and nowhere else,
+     * which meant re-filing an entry moved `pages.updated_at` and appended no
+     * history — so the archive recorded that something had changed and could
+     * not say what. `YEO-106` is the decision that reversed it: a revision is
+     * the entry's whole state, filing included, and *every* save writes one.
+     * See docs/architecture.md for the argument, and for the two answers that
+     * were rejected.
+     *
+     * ## Why names, and not a `revision_categories` join table
+     *
+     * Because a join table would let history be rewritten by a delete. Both of
+     * `page_categories`'s foreign keys are `on delete cascade`, and the
+     * docblock below argues at length that this is right: retiring a category
+     * *detaches* it from the entries filed under it. Point that same cascade at
+     * a revision and retiring a category silently edits every past revision
+     * that mentioned it — the entry's history would then say it had never been
+     * filed there, which is the one thing an append-only table exists to make
+     * impossible. `restrict` is no better: it would make retiring a category
+     * conditional on nobody in the wiki's entire history having used it, which
+     * is to say never.
+     *
+     * The rest of this row is already values rather than references. `title`,
+     * `body_html` and `hatnote` are copies of what the entry said at that
+     * moment, not pointers to something that can move underneath them. A name
+     * is the same kind of thing, and it is the *only* part of a category that
+     * outlives the category's own row: the slug is derivable from it
+     * (`categorySlug`, `lib/category-name.ts`) and the id is not. So a restore
+     * can re-create a retired category out of a revision alone, which is what
+     * makes restore total rather than total-unless-somebody-tidied-up.
+     *
+     * ## Which names
+     *
+     * The names of the rows the entry was actually filed under —
+     * `categories.name` — rather than whatever the author typed into the
+     * picker. The two differ: typing "Whitfield Family" when "Whitfield family"
+     * already exists files under the existing row and deliberately does not
+     * rename it (see `setEntryCategories`), so the typed spelling was never the
+     * entry's filing, and storing it would make the very next save look like a
+     * change.
+     *
+     * ## Why slug order
+     *
+     * Because two snapshots have to be comparable as arrays, and the display
+     * order cannot do that job: alphabetical here means `Intl.Collator`
+     * (`compareCategoriesByName`), whose answers are a property of whichever
+     * ICU build the process happens to have. Code-point order on the slug is
+     * the same order on every machine for ever, which is what lets `savePage`'s
+     * no-op rule and the diff compare two filings by equality. Every surface
+     * that *renders* a filing still sorts it by name, exactly as before.
+     *
+     * `not null default '{}'` rather than nullable, on the same terms as
+     * `hatnote` above: "filed under nothing" and "no filing recorded" are the
+     * same state and deserve one representation. The default is what every row
+     * written before this column existed would otherwise read as, and for most
+     * of them that is true — but not for an entry filed in the `YEO-78` era, so
+     * the migration backfills the newest revision of each entry from
+     * `page_categories` rather than leaving the current filing invisible to
+     * history. See `drizzle/0012_revision_categories.sql`.
+     */
+    categories: text("categories")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
   },
   (t) => [index("revisions_page_id_created_at_idx").on(t.pageId, t.createdAt)],
 );

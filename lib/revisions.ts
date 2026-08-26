@@ -53,6 +53,21 @@ export type RevisionDetail = {
    * not the line above it would make restore quietly lossy.
    */
   hatnote: string;
+  /**
+   * What the entry was filed under at this revision (`YEO-106`), as stored:
+   * category names in slug order.
+   *
+   * Selected for both of this type's consumers, and for the same reason the
+   * hatnote is. A restore has to put the filing back — a restore that returned
+   * the words and left the entry filed wherever the last edit left it would be
+   * exactly the "restore is lossy" this column was added to end — and a diff
+   * has to be able to report that a re-filing happened, which before `YEO-106`
+   * it could not, because there was no revision to diff.
+   *
+   * Names rather than slugs or ids: a category can be retired, and the name is
+   * the only part of one that outlives its row. See `db/schema.ts`.
+   */
+  categories: string[];
   createdAt: Date;
   createdBy: string | null;
   /**
@@ -124,6 +139,7 @@ export async function getRevisionById(
       title: schema.revisions.title,
       bodyHtml: schema.revisions.bodyHtml,
       hatnote: schema.revisions.hatnote,
+      categories: schema.revisions.categories,
       createdAt: schema.revisions.createdAt,
       createdBy: schema.revisions.createdBy,
       restoredFromId: schema.revisions.restoredFromId,

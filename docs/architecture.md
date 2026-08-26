@@ -842,13 +842,101 @@ anything used it, and the _only_ row a deletion touches either way is the
 filing, which is exactly what "detach" means. `set null` is not available —
 both columns are part of the primary key.
 
-One consequence is deliberate rather than missing. A category is **not**
-recorded in `revisions`. A revision is what the article said; a category is
-where it is filed, and the two change for different reasons. So a save that
-only re-files an entry appends no history entry, and `savePage` returns a null
-`revisionId` to say so — which means `pages.updated_at` and the newest
-revision's `created_at`, which are otherwise the same instant, are equal only
-after a save that changed the article. See `lib/save-page.ts`.
+#### A category is part of a revision (`YEO-106`)
+
+`YEO-78` filed categories in `page_categories` and nowhere else, on the reading
+that a revision is what the article _said_ and a category is where it is
+_filed_. That reading is defensible — Wikipedia treats article text and
+category membership as different kinds of thing, and `YEO-78` flagged the cost
+rather than leaving it to be discovered.
+
+The cost was an invariant this codebase had held without exception. Every edit
+used to produce a revision, so a page and its newest revision always shared an
+instant: `pages.updated_at` equalled the newest `revisions.created_at`. A
+re-filing broke it. The page moved and history did not, which meant the archive
+recorded that something had changed and could not say what: the history view
+showed nothing, the diff had nothing to diff, a restore put the words back and
+left the filing wherever the last edit had put it, and the recently-changed
+feed — which reads `pages.updated_at` — surfaced an edit with no revision
+behind it to attribute.
+
+**The invariant now holds again, without exception:**
+
+> Every save that changes anything appends exactly one revision, and
+> `pages.updated_at` always equals the newest `revisions.created_at`.
+
+`lib/save-page.db.test.ts` asserts it for a save that changed the article and
+for a save that changed only the filing;
+`lib/restore-revision.db.test.ts` asserts it for a restore.
+
+Three answers were coherent, and this is the one that was chosen.
+
+1. **Categories are not revisioned, and `updated_at` does not move for them.**
+   History stays true by making a re-filing invisible: the feed never sees it,
+   because nothing it reads has moved. It requires separating "the entry
+   changed" from "the entry's filing changed" — a second timestamp, or a
+   second notion of what a change is — and it answers the ticket by deciding
+   that re-filing an entry is not an edit. It is: somebody did it, on purpose,
+   and an archive whose answer to "who filed this here" is "nobody knows" has
+   the same defect as the one this section is about, only quieter.
+2. **Categories are revisioned.** A revision records the filing alongside the
+   content. The invariant returns, restores become total, and the diff can show
+   a re-filing — at the cost of a wider revision row and a migration.
+3. **Categories are not revisioned, but re-filings get their own audit trail.**
+   A second history table, surfaced in the history view as a distinct kind of
+   row. It records who and when, which answers the attribution complaint — but
+   it does so by giving an entry two histories that have to be read together,
+   and it leaves restore incomplete: a trail of re-filings is not something a
+   restore can copy forward.
+
+**Two was chosen.** The repository's standing preference is to widen the model
+rather than approximate it, and here the wider model is also the simpler one to
+reason about: there is one history per entry, one rule about what a revision
+holds, and one relationship between a page and its newest revision. One and
+three both keep the narrow revision row and pay for it with a second mechanism
+— a second timestamp, or a second table — that every later reader of this code
+would have to learn about before they could answer "what changed".
+
+**How it is stored, and why not as a join table.** `revisions.categories` is a
+`text[]` of category _names_, in slug order. A `revision_categories` join table
+would be the normalised shape and it is the wrong one, because it would let
+history be rewritten by a delete: `page_categories`'s foreign keys are
+`on delete cascade` — deliberately, as the section above argues — and pointing
+that same cascade at a revision would mean retiring a category silently edits
+every past revision that mentioned it. `restrict` is worse: it makes retiring a
+category conditional on nobody in the wiki's entire history having used it.
+Names are also what the rest of the row already is. `title`, `body_html` and
+`hatnote` are copies of what the entry said at that moment rather than pointers
+to something that can move underneath them, and a name is the only part of a
+category that outlives the category's own row — the slug is derivable from it,
+the id is not.
+
+The order is the slug's, by code point (`compareCategoriesBySlug`), because two
+snapshots are compared by equality and an order that depends on the host's ICU
+data is not an order. Every surface that _renders_ a filing still sorts it by
+name, which is a question about language and is answered in one place.
+
+**What follows for the three surfaces the ticket names.**
+
+- **Restore is total.** `restoreRevision` puts the filing back along with the
+  title, body and hatnote, and a filing-only difference is enough to make a
+  restore something other than a no-op. A category the revision names but that
+  has since been retired is re-created by the ordinary find-or-create — which
+  is the payoff for storing names, and the alternative is a restore that
+  silently drops a heading.
+- **The diff shows a re-filing.** `ContentBlockKind` has a `category` member,
+  so a revision whose only change was the filing does not render as "No change
+  to the rendered content" — the failure `hatnote` and `image` were each added
+  to prevent.
+- **The feed can attribute everything it shows.**
+  `listRecentlyChangedEntries` still reads only `pages.updated_at` and
+  `pages.updated_by`, and still joins nothing; what changed is that those two
+  columns now always have a revision standing behind them at the same instant,
+  by the same author.
+
+`savePage`'s `revisionId` is a `string` again rather than a `string | null`.
+Nothing replaces the `null`: there is no save that changes something and
+appends no revision.
 
 ### Ordering
 

@@ -3,6 +3,7 @@ import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import {
   compareCategoriesByName,
+  compareCategoriesBySlug,
   type NamedCategory,
   normaliseEntryCategories,
 } from "@/lib/category-name";
@@ -186,23 +187,32 @@ export async function listEntriesInCategory(
  * every writer takes those locks in the same sequence, which is the standard
  * way to make that deadlock unreachable rather than merely rare.
  *
+ * ## Why it hands back the stored name and not only the id
+ *
+ * Because the stored name is the one the entry is actually filed under, and
+ * `YEO-106` put that name in `revisions.categories`. They differ whenever the
+ * category already exists under a different spelling: "Whitfield Family" typed
+ * into the picker resolves to the "Whitfield family" row and deliberately does
+ * not rename it (see {@link setEntryCategories}), so a revision that recorded
+ * the typed spelling would record a filing the entry has never had — and the
+ * next save, comparing against the real one, would look like a change.
+ *
  * @param tx the transaction the caller's other writes are in
  * @param wanted the categories to resolve, already normalised and de-duplicated
- * @returns the id of each, keyed by slug
+ * @returns the id and stored name of each, keyed by slug
  */
 async function resolveCategories(
   tx: Transaction,
   wanted: readonly { name: string; slug: string }[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, { id: string; name: string }>> {
   if (wanted.length === 0) return new Map();
 
-  // A *consistent* comparator, returning 0 for equal slugs rather than 1.
-  // `normaliseEntryCategories` has already made them unique, so the tie never
-  // arises — but an inconsistent comparator is a poor foundation for a line
-  // whose entire job is a deterministic lock order.
-  const ordered = [...wanted].sort((a, b) =>
-    a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0,
-  );
+  // `compareCategoriesBySlug` rather than a comparator written here: it is
+  // already the order `revisions.categories` is stored in (`YEO-106`), and it
+  // is *consistent* — 0 for equal slugs rather than 1 —which an inconsistent
+  // comparator would not be, and which is a poor foundation for a line whose
+  // entire job is a deterministic lock order.
+  const ordered = [...wanted].sort(compareCategoriesBySlug);
 
   await tx
     .insert(schema.categories)
@@ -210,7 +220,11 @@ async function resolveCategories(
     .onConflictDoNothing({ target: schema.categories.slug });
 
   const rows = await tx
-    .select({ id: schema.categories.id, slug: schema.categories.slug })
+    .select({
+      id: schema.categories.id,
+      slug: schema.categories.slug,
+      name: schema.categories.name,
+    })
     .from(schema.categories)
     .where(
       inArray(
@@ -219,7 +233,67 @@ async function resolveCategories(
       ),
     );
 
-  return new Map(rows.map((row) => [row.slug, row.id]));
+  return new Map(rows.map((row) => [row.slug, { id: row.id, name: row.name }]));
+}
+
+/**
+ * An entry's filing after a write, and whether that write moved anything.
+ *
+ * Two facts rather than one because `lib/save-page.ts` needs both and can
+ * compute neither: `changed` decides whether the save is a no-op, and `names`
+ * is what goes into `revisions.categories` (`YEO-106`). Reading the filing
+ * back with a second query to learn the second fact would be a second query
+ * inside the save transaction for something {@link setEntryCategories} had in
+ * hand and threw away.
+ */
+export type EntryFiling = {
+  /**
+   * The category names the entry is now filed under, in slug order — the
+   * canonical form `revisions.categories` stores. See
+   * `compareCategoriesBySlug` for why the order is not the display order.
+   */
+  names: string[];
+  /** Whether any `page_categories` row was added or removed. */
+  changed: boolean;
+};
+
+/**
+ * What an entry is filed under, inside a transaction the caller already has,
+ * as the canonical snapshot a revision records (`YEO-106`).
+ *
+ * Not {@link readEntryCategories} above, and the differences are all the
+ * reasons this exists. That one runs on the pool, returns `NamedCategory` for
+ * a bar the reader looks at, and sorts by name. This one runs on the caller's
+ * transaction — so it sees the filing that transaction has just written and
+ * not the one committed before it — returns bare names, and sorts by slug.
+ *
+ * It has exactly one caller and one reason to be called: a save whose
+ * `categories` field is `undefined`, meaning the caller has no opinion about
+ * the filing. The entry's filing does not move, but the revision still has to
+ * record it, because a revision is the entry's whole state and a snapshot
+ * missing the filing would make the next restore quietly un-file the entry.
+ *
+ * @param tx the transaction the caller's other reads and writes are in
+ * @param pageId the entry
+ * @returns its category names in slug order; empty when it has none
+ */
+export async function readEntryFiling(
+  tx: Transaction,
+  pageId: string,
+): Promise<string[]> {
+  const rows = await tx
+    .select({
+      slug: schema.categories.slug,
+      name: schema.categories.name,
+    })
+    .from(schema.pageCategories)
+    .innerJoin(
+      schema.categories,
+      eq(schema.categories.id, schema.pageCategories.categoryId),
+    )
+    .where(eq(schema.pageCategories.pageId, pageId));
+
+  return rows.sort(compareCategoriesBySlug).map(({ name }) => name);
 }
 
 /**
@@ -231,14 +305,19 @@ async function resolveCategories(
  * filing land separately — a crash between them leaving the bar at the foot of
  * the article describing a version of it that was never saved.
  *
- * ## Why it returns whether anything moved
+ * ## Why it returns the filing and not just a boolean
  *
- * Because `savePage`'s no-op rule needs it. An author who opens the editor and
- * presses Save without touching anything must write nothing at all — not even
- * an `updated_at` bump, or the entry climbs the recently-changed feed for an
- * edit nobody made (E8-T4). The categories are part of "anything", and only
- * this function is in a position to know: it is the code that reads what is
- * already there.
+ * The boolean came first, and `savePage`'s no-op rule is still what needs it.
+ * An author who opens the editor and presses Save without touching anything
+ * must write nothing at all — not even an `updated_at` bump, or the entry
+ * climbs the recently-changed feed for an edit nobody made (E8-T4). The
+ * categories are part of "anything", and only this function is in a position
+ * to know: it is the code that reads what is already there.
+ *
+ * `YEO-106` added the other half. A revision now records the filing alongside
+ * the title, the body and the hatnote, so the save that writes it needs the
+ * names the entry ended up filed under — which is again something only this
+ * function holds, and holds already. See {@link EntryFiling}.
  *
  * The comparison is against the rows that would actually be written, after
  * normalisation — so re-saving `"Whitfield  family"` as `"Whitfield family"`
@@ -254,32 +333,52 @@ async function resolveCategories(
  * a change nobody could see coming. There is no rename in this ticket; when
  * there is one it should be its own action, on its own surface.
  *
+ * It is also why {@link EntryFiling}'s `names` are the *stored* names rather
+ * than the submitted ones: the entry is filed under the row, so the row's name
+ * is what a revision has to record.
+ *
  * @param tx the transaction the caller's other writes are in
  * @param pageId the entry being filed
  * @param names the category names as submitted, in the author's order
- * @returns whether any `page_categories` row was added or removed
+ * @returns the resulting filing, and whether a row moved
  */
 export async function setEntryCategories(
   tx: Transaction,
   pageId: string,
   names: readonly string[],
-): Promise<boolean> {
+): Promise<EntryFiling> {
   const wanted = normaliseEntryCategories(names);
-  const ids = await resolveCategories(tx, wanted);
+  const rows = await resolveCategories(tx, wanted);
 
   /**
-   * Every slug resolved above has a row, so a missing id would mean the
+   * Every slug resolved above has a row, so a missing entry would mean the
    * `insert` and the `select` disagreed — which cannot happen inside one
    * transaction, but is worth failing loudly on rather than filing the entry
    * under a silently shorter list. Not a `!`: this is a real check.
+   *
+   * Sorted by slug on the way out, which serves two purposes at once. It is
+   * the canonical order `revisions.categories` is stored in, and — because the
+   * `insert` below walks this same list — it is also a deterministic lock
+   * order, the property `resolveCategories` sorts its own values to get. The
+   * author's order is not lost by it: `normaliseEntryCategories` has already
+   * used that order to decide whose spelling of a duplicate survives, which is
+   * the only thing it decides.
    */
-  const wantedIds = wanted.map(({ slug }) => {
-    const id = ids.get(slug);
-    if (id === undefined) {
-      throw new Error(`Category "${slug}" was neither found nor created.`);
-    }
-    return id;
-  });
+  const filing = wanted
+    .map(({ slug }) => {
+      const row = rows.get(slug);
+      if (row === undefined) {
+        throw new Error(`Category "${slug}" was neither found nor created.`);
+      }
+      // The resolved row's name rather than the submitted one — the entry is
+      // filed under that row, so that row's spelling is the filing, whatever
+      // the author typed. See `resolveCategories`.
+      return { id: row.id, name: row.name, slug };
+    })
+    .sort(compareCategoriesBySlug);
+
+  const wantedIds = filing.map(({ id }) => id);
+  const wantedNames = filing.map(({ name }) => name);
 
   const current = await tx
     .select({ categoryId: schema.pageCategories.categoryId })
@@ -300,7 +399,7 @@ export async function setEntryCategories(
         .delete(schema.pageCategories)
         .where(eq(schema.pageCategories.pageId, pageId));
     }
-    return current.length > 0;
+    return { names: [], changed: current.length > 0 };
   }
 
   if (removed.length > 0) {
@@ -326,18 +425,14 @@ export async function setEntryCategories(
        * that does not hold that lock, and a primary-key violation on a link
        * that already says what we wanted it to say is not an error worth
        * raising.
-       *
-       * Note that these values are in the *author's* order rather than sorted
-       * the way `resolveCategories` sorts its own, and that asymmetry is the
-       * row lock rather than an oversight: two writers can only reach this
-       * statement for one entry one at a time, so there is no pair of
-       * concurrent inserts here to take locks in opposite orders. Remove that
-       * lock and this would need the same ordering treatment.
        */
       .onConflictDoNothing();
   }
 
-  return added.length > 0 || removed.length > 0;
+  return {
+    names: wantedNames,
+    changed: added.length > 0 || removed.length > 0,
+  };
 }
 
 /**

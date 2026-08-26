@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
-import { setEntryCategories } from "@/lib/categories";
+import { readEntryFiling, setEntryCategories } from "@/lib/categories";
 import { normaliseHatnote } from "@/lib/hatnote";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 
@@ -37,17 +37,31 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
  * reconstruction from an offset chain. It also means every state the page has
  * ever been in has a row of its own, including the current one.
  *
- * ## What a revision is not
+ * ## What a revision holds, and the invariant that follows (`YEO-106`)
  *
- * E11-T8 (`YEO-78`) added a third thing a save can move — which categories the
- * entry is filed under — and deliberately did *not* put it in `revisions`.
- * A revision is what the article said; a category is where it is filed, and
- * the two change for different reasons and are read by different people. So a
- * save that only re-files an entry writes no revision at all, and
- * {@link SavePageResult} carries a null `revisionId` to say so. The filing
- * still lands inside this transaction, under the same row lock, because an
- * entry whose text and whose footer bar came from different saves is exactly
- * the inconsistency the paragraph above exists to prevent.
+ * Everything about the entry that an author can change: its title, its body,
+ * its hatnote, and — since `YEO-106` — which categories it is filed under.
+ *
+ * E11-T8 (`YEO-78`) had put the filing in `page_categories` and nowhere else,
+ * on the reading that a revision is what the article *said* and a category is
+ * where it is *filed*. That reading is defensible and Wikipedia's own model is
+ * not far from it, but it cost an invariant this codebase had held without
+ * exception: a save that only re-filed an entry moved `pages.updated_at` and
+ * appended nothing, so the archive recorded that something had changed and
+ * could not say what. `YEO-106` chose the other answer — widen the revision —
+ * and docs/architecture.md argues it against the two alternatives.
+ *
+ * What it buys, stated as the rule the rest of this module keeps:
+ *
+ * > **Every save that changes anything appends exactly one revision, and
+ * > `pages.updated_at` always equals the newest `revisions.created_at`.**
+ *
+ * Without exception, and with no "unless" attached. Three consequences worth
+ * naming: `SavePageResult`'s `revisionId` is a `string` rather than a
+ * `string | null`; the recently-changed feed, which reads `pages.updated_at`,
+ * can no longer surface a change with no revision behind it to attribute it
+ * to; and a restore is total, because the revision it copies forward holds the
+ * whole of the entry rather than most of it.
  */
 
 /**
@@ -93,6 +107,21 @@ export async function writeRevision(
      * passes `""` explicitly, because a new entry genuinely has none.
      */
     hatnote: string;
+    /**
+     * What the entry is filed under at this revision (`YEO-106`), as the
+     * stored category names in slug order — the canonical form
+     * `lib/categories.ts` produces, from `setEntryCategories` or
+     * `readEntryFiling`.
+     *
+     * Required rather than optional, for the reason `hatnote` above is
+     * required and with more at stake: an optional filing would ship green and
+     * quietly write `{}` on every save that forgot it, and a restore of that
+     * revision would then un-file the entry — a change to the wiki that
+     * nobody asked for, made by the one operation whose whole promise is that
+     * it puts things back. `lib/create-page.ts` passes `[]` explicitly,
+     * because a brand-new entry genuinely is filed under nothing.
+     */
+    categories: readonly string[];
     editedBy: string;
     /**
      * The revision this content was copied forward from, when the caller is
@@ -114,6 +143,11 @@ export async function writeRevision(
       title: entry.title,
       bodyHtml: entry.bodyHtml,
       hatnote: entry.hatnote,
+      // Spread into a fresh array because Drizzle's value type is mutable and
+      // the caller's is `readonly` — copying is what keeps the parameter
+      // honest about not being written to, and the arrays here hold a handful
+      // of strings.
+      categories: [...entry.categories],
       createdBy: entry.editedBy,
       restoredFromId: entry.restoredFrom ?? null,
     })
@@ -176,25 +210,22 @@ export type SavePageResult =
       status: "saved";
       pageId: string;
       /**
-       * The revision this save appended, or `null` when it appended none
-       * (E11-T8, `YEO-78`).
+       * The revision this save appended. Always one, and never `null`.
        *
-       * `null` has exactly one cause: the only thing the save changed was
-       * which categories the entry is filed under. A revision records what the
-       * article *said* — title, body, hatnote — and a category is where it is
-       * *filed*, so re-filing an entry writes no revision, and a history that
-       * showed one would be showing a version whose text is identical to the
-       * one above it.
+       * It *was* `string | null` between E11-T8 (`YEO-78`) and `YEO-106`, and
+       * the removal of that `null` is half of what `YEO-106` is. The one cause
+       * of it was a save that changed only which categories the entry was
+       * filed under, which appended no revision at all; now the filing is part
+       * of a revision, so there is no such save. A `saved` result and an
+       * appended revision are the same event.
        *
-       * Nullable rather than absent so the compiler makes every consumer say
-       * which it means. The alternative — a fourth status, `refiled` — was
-       * considered and rejected: every caller that switches on the status
-       * wants to treat it exactly as `saved` (revalidate, then show the
-       * entry), so a new member would be a new case for each of them to
-       * forget, in exchange for a distinction only history-adjacent code
-       * cares about.
+       * Nothing replaces it. There is no fourth status for a re-filing either
+       * — that was considered when the `null` was introduced and rejected
+       * because every caller that switches on the status treats it exactly as
+       * `saved`, and the argument only got stronger once a re-filing became an
+       * ordinary edit with a revision of its own.
        */
-      revisionId: string | null;
+      revisionId: string;
     }
   | { status: "unchanged"; pageId: string }
   | { status: "empty-title" }
@@ -280,47 +311,67 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
      * `undefined` is skipped rather than read as an empty list: see
      * `SavePageEdit.categories` for why absent and `[]` have to stay different
      * requests. `setEntryCategories` reports whether it actually moved a row,
-     * which is what lets the no-op rule below cover categories too.
+     * which is what lets the no-op rule below cover categories too, and hands
+     * back the resulting filing for the revision to record (`YEO-106`).
      */
-    const categoriesChanged =
+    const filing =
       input.categories === undefined
-        ? false
+        ? undefined
         : await setEntryCategories(tx, page.id, input.categories);
 
     /**
-     * Comparison is against the values that would actually be written, after
-     * trimming and sanitising, so "no actual change" means "the row would not
-     * change" rather than "the author typed the same thing". Two consequences
-     * worth stating: pressing save on an untouched page writes nothing at all,
-     * not even an `updated_at` bump — a page that nobody edited must not climb
-     * the recently-changed feed (E8-T4). And an existing row whose stored HTML
-     * predates the sanitiser (a seed, a manual `UPDATE`) does count as changed,
-     * because saving it genuinely rewrites it.
+     * The no-op rule: an author who opens the editor and presses Save without
+     * touching anything writes nothing at all, not even an `updated_at` bump —
+     * a page that nobody edited must not climb the recently-changed feed
+     * (E8-T4). It reads `contentChanged` above, which compares the values that
+     * would actually be written rather than the ones that were typed.
      *
-     * Re-filing an entry counts as a change for the same reason: somebody did
-     * edit it, and a reader looking at what changed recently should find it.
-     * That the category write above has already happened by the time this
-     * returns `unchanged` is not a leak — it returns `unchanged` only when
-     * that write moved nothing.
+     * Re-filing an entry counts as a change for the same reason a rewritten
+     * paragraph does: somebody did edit it, and a reader looking at what
+     * changed recently should find it. That the category write above has
+     * already happened by the time this returns `unchanged` is not a leak — it
+     * returns `unchanged` only when that write moved nothing.
+     *
+     * `filing?.changed` rather than a separate boolean, so the two states
+     * `undefined` carries — "no opinion", and therefore "nothing moved" —
+     * stay one value the compiler checks rather than two that can drift.
      */
-    if (!contentChanged && !categoriesChanged) {
+    if (!contentChanged && !filing?.changed) {
       return { status: "unchanged", pageId: page.id };
     }
 
     /**
-     * A revision records what the article *said*, so a save that only re-filed
-     * the entry appends none — see `SavePageResult`'s `revisionId` for the
-     * argument, and for why that is a `null` rather than a fourth status.
+     * The filing this revision records (`YEO-106`).
+     *
+     * `setEntryCategories` already knows it when the caller had an opinion.
+     * When the caller had none — `input.categories === undefined`, an editor
+     * saving text and saying nothing about the bar at the foot of the article
+     * — the entry's filing has not moved, but the revision still has to record
+     * it: a revision is the entry's whole state, and one that recorded an
+     * empty filing because nobody mentioned it would un-file the entry the
+     * next time anybody restored it.
+     *
+     * Read *here* rather than beside the write above so that the no-op path
+     * costs no extra query. A save that changes nothing is the commonest way
+     * to reach this function by accident (the Save button, pressed twice), and
+     * it now returns before this line.
      */
-    const revisionId = contentChanged
-      ? await writeRevision(tx, {
-          pageId: page.id,
-          title,
-          bodyHtml,
-          hatnote,
-          editedBy: input.editedBy,
-        })
-      : null;
+    const categories = filing?.names ?? (await readEntryFiling(tx, page.id));
+
+    /**
+     * The revision, on every save that changed anything — text, filing, or
+     * both. See this module's header for the invariant that makes this write
+     * unconditional, and `SavePageResult`'s `revisionId` for what used to be
+     * `null` here and no longer can be.
+     */
+    const revisionId = await writeRevision(tx, {
+      pageId: page.id,
+      title,
+      bodyHtml,
+      hatnote,
+      categories,
+      editedBy: input.editedBy,
+    });
 
     /**
      * `now()` rather than a JavaScript `Date`, because `revisions.created_at`
@@ -329,15 +380,14 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
      * the same timestamp, so history can be ordered against the page without
      * a millisecond of skew deciding which came first.
      *
-     * **That equality is now conditional, and E11-T8 (`YEO-78`) is what made
-     * it so.** It holds whenever this save wrote a revision, which is every
-     * save that changed the article. It does *not* hold after a save that only
-     * re-filed the entry: `updated_at` moves and no revision is appended, so
-     * the newest revision is older than the page. Nothing reads the equality —
-     * what the history view depends on is the weaker and still-unconditional
-     * claim that the newest revision's *content* is byte-identical to the
-     * page's, which a category has no part in. Stated rather than left to be
-     * discovered, because the paragraph above reads like a promise.
+     * **That equality holds without exception, and `YEO-106` is what put it
+     * back.** E11-T8 (`YEO-78`) had made it conditional: a save that only
+     * re-filed an entry moved `updated_at` and appended no revision, so the
+     * page ran ahead of its own history. Every save that reaches this line now
+     * appends a revision a few statements above, so there is no save after
+     * which the two timestamps disagree — see this module's header, and
+     * `lib/save-page.db.test.ts`, which asserts the equality rather than
+     * trusting this comment.
      *
      * The title, body and hatnote are written even when only the filing moved.
      * They are the values already in the row in that case, so the statement is

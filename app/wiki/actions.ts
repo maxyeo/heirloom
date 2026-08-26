@@ -315,7 +315,7 @@ export async function restoreRevisionAction(
    * Everything this write moved, revalidated before the `redirect` below,
    * because `redirect` throws. Named routes rather than `"layout"`, matching
    * `savePageAction`: the layout form would additionally discard every other
-   * entry's cached payload. The first four are bare paths, one route each; the
+   * entry's cached payload. The first five are bare paths, one route each; the
    * last is a *pattern*, for the reason its own note gives — this action
    * cannot name which category listings an entry appears on.
    *
@@ -334,14 +334,22 @@ export async function restoreRevisionAction(
   // changed — a restore can move both.
   revalidatePath("/wiki");
   /**
-   * And every category listing (E11-T8, `YEO-78`). Not because a restore
-   * re-files anything — it cannot, since categories are not recorded in
-   * `revisions` — but because a restore can change an entry's *title*, and a
-   * category listing renders titles and sorts on them
+   * And every category listing (E11-T8, `YEO-78`), for two reasons now. A
+   * restore re-files the entry (`YEO-106`), so it can add the entry to a
+   * listing and take it off another in one action; and it can change the
+   * entry's *title*, and a category listing renders titles and sorts on them
    * (`listEntriesInCategory` orders by `compareEntriesByTitle`). Without this,
    * restoring a rename leaves the entry listed under its old name, in its old
    * position, on every category page it appears on.
    */
+  /**
+   * And the index of every category, which a restore can genuinely add a row
+   * to (`YEO-106`): the filing it copies forward may name a heading that has
+   * since been retired, and `setEntryCategories` re-creates it rather than
+   * dropping it — see `lib/restore-revision.ts` for why that is the right
+   * outcome. The same argument as `/wiki` above.
+   */
+  revalidatePath("/wiki/category");
   revalidatePath("/wiki/category/[slug]", "page");
 
   /**
