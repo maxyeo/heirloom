@@ -59,6 +59,39 @@ tested changes shape, so each module's test can be written in the terms that
 module actually works in: byte sequences for ANSEL, four-line strings for the
 grammar, whole files for the parser.
 
+## The `@` escape, in both directions
+
+`@` is the format's only metacharacter. It delimits a cross-reference — `0
+@I1@ INDI`, `1 HUSB @I1@` — and 5.5.1 spells a _literal_ `@` inside a value by
+doubling it. A surname written `O@@Brien` in a file is the name `O@Brien`.
+
+`lib/gedcom-lines.ts` undoes the doubling on the way in and
+`lib/gedcom-export.ts` puts it back on the way out. Neither may be changed
+without the other, and until `YEO-105` neither existed at all: the doubled
+spelling went into the database, rendered to the reader, and was written back
+out doubled.
+
+Two orderings are load-bearing, and both are the kind that typecheck either way
+round:
+
+- **The escape belongs to a value, and is undone after the line's structure has
+  been taken off it.** Unescaping first would turn `@@I1@@` — which is the text
+  `@I1@` — into a cross-reference the file never contained. That is why whether
+  a value _is_ a pointer is decided from the value exactly as the file wrote it
+  and kept on the node as `GedcomNode.pointer`, rather than recomputed later
+  from a value that no longer tells the two apart. The export side is the same
+  rule from the other end: `emit` escapes every value it writes, and
+  `emitPointer` writes the five pointer lines that must not be escaped.
+- **The escape belongs to an _assembled_ value, and is undone after `CONT` and
+  `CONC` have been folded in.** `@@` is two characters, and a writer breaking
+  at a fixed column may break between them — legal, and something this export
+  still does rather than avoids. A replacement applied per physical line would
+  see two lone `@`s and undo neither.
+
+A lone `@` on the way in is left exactly as it is rather than reported. No
+conforming writer emits one and real files are full of them, unescaped email
+addresses most of all.
+
 ## The one thing that must stay true
 
 **Nothing here reaches the database.** No `@/db`, no React, no `next/*`, no
@@ -770,6 +803,30 @@ reads differently shows up on the second pass, which is precisely the defect
 class this catches and the reason a test that only checked "the rows survived"
 would not.
 
+### What a fixed point cannot see
+
+It sees a defect in **one** half of the pipeline. It is blind to a _pair_ of
+defects that cancel, and `YEO-105` was exactly that pair: the parser did not
+unescape `@@`, the export did not re-escape `@`, and so `O@@Brien` parsed to
+`O@@Brien` and exported back as `O@@Brien`. The file was byte-identical after a
+full cycle, every assertion above passed, and the name in the database was
+wrong the whole time.
+
+The generated trees were blind to it for a sharper reason, and it is the more
+general one: their values reach the file through the same encoder the trip
+reads them back with, so whatever the encoder leaves out the generator leaves
+out too, and the trip agrees with itself about the omission. A round trip
+proves **self-consistency**. That is a weaker claim than "the value in the
+middle is the value that went in", and the gap between the two is where this
+defect lived.
+
+Which is why `lib/gedcom-round-trip.test.ts` now asserts a parsed _value_ as
+well as the bytes — "a value with an `@` in it" — and why `TGC55C.ged`, which
+escapes an `@` in four places and then states in prose what it expects a reader
+to do about it, is read back and asserted against directly. Neither test can be
+generated. Both had to be written by somebody who knew what to look for, which
+is the honest cost of this defect class.
+
 ### The middle of the trip is the real import
 
 `lib/gedcom-import.ts` opens a transaction, so a test cannot call it without a
@@ -1083,6 +1140,17 @@ and against Eichmann's published ANSEL-to-Unicode mapping at
 | `0xbc` | ơ U+01A1  | Added. Its capital (`0xac`) was already in the table, so the gap was an asymmetry rather than a decision, and a Vietnamese name written in lower case lost its vowels. |
 | `0xbd` | ư U+01B0  | Added, for the same reason (`0xad`).                                                                                                                                   |
 | `0xcf` | ß U+00DF  | Added. One unambiguous Unicode code point, so mapping it is not the kind of guess `lib/ansel.ts` refuses.                                                              |
+
+**And what it found after that.** `YEO-105`: the parser had never undone the
+`@@` escape, and the export had never applied it. The file escapes an `@` in
+four places — both authors' email addresses, and a paragraph about the escape
+itself — and then says outright what it expects: _"If all 'at' signs above
+appear above as 2 or 4 at signs, that GEDCOM software is not converting double
+at signs to single at signs."_ This repository was that software. Nothing here
+caught it, because both halves were missing and the two absences cancelled;
+see [What a fixed point cannot see](#what-a-fixed-point-cannot-see). It is
+reported as a finding of this fixture rather than of `YEO-92` because the
+fixture was right and the parser was wrong.
 
 **What it narrows.** Four bytes stay unmapped, and the fixture labels them
 itself: `0xbe` empty box, `0xbf` black box, `0xcd` midline e, `0xce` midline o.

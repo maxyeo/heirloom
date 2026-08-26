@@ -870,6 +870,101 @@ describe("values written as the parser will read them", () => {
   });
 });
 
+/**
+ * The `@` escape (`YEO-105`).
+ *
+ * 5.5.1 writes a literal `@` inside a value doubled, and the pointers are the
+ * one place an `@` is punctuation rather than content. Both directions are
+ * asserted here, and separately: this module never escaped and
+ * `lib/gedcom-lines.ts` never unescaped, and the two absences cancelled so
+ * exactly that no round trip could see either of them. A test that only
+ * round-tripped would have passed on the day the bug shipped.
+ */
+describe("the @ escape", () => {
+  it("doubles an @ in a name", () => {
+    const text = writeGedcom({
+      individuals: [person({ givenName: "Ada", surname: "O@Brien" })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("1 NAME Ada /O@@Brien/\r\n");
+    expect(text).toContain("2 SURN O@@Brien\r\n");
+  });
+
+  it("doubles an @ in a place, because it is every value and not the names", () => {
+    const text = writeGedcom({
+      individuals: [person({ birthPlace: "St @ Mary" })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("2 PLAC St @@ Mary\r\n");
+  });
+
+  it("reads the name back as the name rather than as its spelling", () => {
+    // The assertion the byte comparison cannot make. Both halves missing
+    // produced `O@@Brien` in the column and `O@@Brien` in the file — stable,
+    // and wrong about somebody's name the whole time.
+    const { input } = roundTrip({
+      individuals: [person({ givenName: "@home", surname: "O@Brien" })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(input.individuals).toHaveLength(1);
+    expect(input.individuals[0].givenName).toBe("@home");
+    expect(input.individuals[0].surname).toBe("O@Brien");
+  });
+
+  it("leaves a pointer's delimiters single, so the family still connects", () => {
+    const husband = person({ id: id(1), givenName: "John", surname: "Smith" });
+    const wife = person({ id: id(2), givenName: "Mary", surname: "Byrne" });
+    const child = person({ id: id(3), givenName: "Edward", surname: "Smith" });
+
+    const tree: GedcomExportInput = {
+      individuals: [husband, wife, child],
+      unions: [
+        union({ id: id(4), partnerAId: husband.id, partnerBId: wife.id }),
+      ],
+      unionChildren: [
+        { unionId: id(4), childId: child.id, relation: "biological" },
+      ],
+    };
+
+    const { text, input } = roundTrip(tree);
+
+    // Doubled, every one of these would spell out a *name* that looks like a
+    // pointer, and every relationship in the file would come apart.
+    expect(text).not.toContain("@@");
+    expect(text).toMatch(/1 HUSB @I\d+@\r\n/);
+    expect(text).toContain("1 SUBM @U1@\r\n");
+    expect(input.unionChildren).toHaveLength(1);
+    expect(input.unions[0].partnerAId).not.toBeNull();
+    expect(input.unions[0].partnerBId).not.toBeNull();
+  });
+
+  it("survives an escape that CONC splits down the middle", () => {
+    // 199 characters and then the `@`, so the doubling puts the pair either
+    // side of the 200-character break — a real file's shape, since a writer
+    // folding at a fixed column has no reason to avoid it. Asserted against
+    // the parser, which is the layer that rejoins the line and then undoes
+    // the escape, in that order.
+    const surname = `${"R".repeat(199)}@`;
+
+    const text = writeGedcom({
+      individuals: [person({ id: id(1), surname })],
+      unions: [],
+      unionChildren: [],
+    });
+
+    expect(text).toContain("@\r\n3 CONC @");
+
+    const [reread] = parseGedcomText(text).individuals;
+    expect(reread.names[0].surname).toBe(surname);
+  });
+});
+
 describe("rows that could only have been written around the validators", () => {
   const alive = person({ id: id(1), givenName: "John", surname: "Smith" });
   const kid = person({ id: id(2), givenName: "Edward", surname: "Smith" });
