@@ -1,9 +1,6 @@
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
-
 import ts from "typescript";
 
-import { read, repoRoot } from "@/test/route-inventory";
+import { read } from "@/test/route-inventory";
 
 /**
  * Every `dangerouslySetInnerHTML` in the source tree, as a list of call sites
@@ -36,15 +33,26 @@ import { read, repoRoot } from "@/test/route-inventory";
  * string literal is neither, which is the whole reason for reading a tree
  * rather than the text.
  *
- * ## What it still cannot see
+ * ## What it still cannot see (`YEO-100`)
  *
  * It is a tripwire, not a proof, and the limits are worth stating rather than
- * implying. A computed or assembled key — `{ ["dangerously" + rest]: v }` —
- * walks past it. So does any file outside the directories the test hands to
- * `sourceFiles`, or carrying an extension outside `SOURCE_EXTENSIONS`. That
- * footprint is deliberately `test/route-inventory.ts`'s, so the two tripwires
- * cover the same ground, and it is the guard's pre-existing shape rather than
- * anything `YEO-96` narrowed.
+ * implying. `YEO-96` stated them; `YEO-100` was filed because stating a limit
+ * is not the same as deciding about it, and a docblock full of conceded
+ * weaknesses is the same "sentence as the weakest possible enforcement"
+ * argument that `YEO-96` itself was filed on, one level up. Each of the four
+ * now ends somewhere a reader can find the conclusion:
+ *
+ * - **An assembled key** — `{ ["dangerously" + rest]: v }` — still walks past,
+ *   now as a declined proposal with the reasoning at `isInnerHtmlSink`. A
+ *   computed key that is spelled out in full no longer does.
+ * - **A key that is not a sink at all** — the price of matching every object
+ *   literal — has an answer at `isInnerHtmlSink` for when it first bites.
+ * - **The extension footprint** is no longer a list to be trusted:
+ *   `test/route-inventory.ts` refuses to enumerate a directory holding a file
+ *   it cannot parse, so the blind spot cannot open quietly.
+ * - **The directory footprint** is `SOURCE_DIRS` in `test/route-inventory.ts`,
+ *   imported rather than copied, so this tripwire and the auth boundary cover
+ *   the same ground by construction rather than by both being remembered.
  *
  * What it does not do is pass quietly over something it half-understands: a
  * marker comment it cannot parse throws, naming the file and line. A tripwire
@@ -101,17 +109,6 @@ export type InnerHtmlCallSite = {
   /** The exemption this call site claims, or `null` for the ordinary case. */
   marker: string | null;
 };
-
-const SOURCE_EXTENSIONS = [".ts", ".tsx"];
-
-/** Every source file under `dirs`, repo-relative. */
-export function sourceFiles(dirs: readonly string[]): string[] {
-  return dirs.flatMap((dir) =>
-    readdirSync(join(repoRoot, dir), { recursive: true, encoding: "utf8" })
-      .filter((entry) => SOURCE_EXTENSIONS.some((ext) => entry.endsWith(ext)))
-      .map((entry) => join(dir, entry)),
-  );
-}
 
 /** Every `dangerouslySetInnerHTML` in `files`, in file and source order. */
 export function innerHtmlCallSites(
@@ -179,6 +176,84 @@ type InnerHtmlSink =
  * `{ "dangerouslySetInnerHTML": … }` renders exactly what the unquoted spelling
  * does, and a guard that could be stepped around with a pair of quotes would
  * not be worth reading a syntax tree for.
+ *
+ * ## An object literal that never reaches React (`YEO-100`)
+ *
+ * Nothing here asks whether the object could reach React, so
+ * `const featureCounters = { dangerouslySetInnerHTML: 0 };` in a module that
+ * renders nothing is a call site, and would demand a marker comment and a
+ * registered id — with a written justification — for an integer.
+ *
+ * That is the deliberate price of matching every object literal rather than a
+ * defect in it. Narrowing to "the shapes we are sure reach React" is exactly
+ * what the `YEO-96` review caught as a false green, and the failure being
+ * guarded is stored XSS, which is the wrong side on which to economise. What
+ * `YEO-100` settles is not the matcher but what happens the first time this
+ * bites something real, because deciding that under pressure in a pull request
+ * about something else is how a whole-file exemption gets reinvented.
+ *
+ * **It takes the ordinary marker.** `sanitize-html-exempt: some-id`, in
+ * `lib/sanitize-html.call-sites.test.ts`'s register like any other, with "this
+ * object is not props, it is a counter" as the reason. There is deliberately
+ * no second `sanitize-html-not-a-sink` vocabulary.
+ *
+ * Partly because a counter-marker would be a second register at the same cost
+ * as the first, and a reader at a call site would have to know which of two
+ * words applied to them. But mainly because of what the two words ask for. A
+ * `not-a-sink` marker is a claim that the *matcher* is wrong, and the mistake
+ * it invites — labelling something that is props as not-props — fails open,
+ * and fails open silently, since the register would then hold an entry saying
+ * the guard need not apply and no assertion could contradict it. The mistake
+ * `sanitize-html-exempt` invites is a reviewer disagreeing with a written
+ * safety argument, which is a conversation rather than a hole. Both cost one
+ * line; only one of them asks the writer to justify safety rather than
+ * classification, and safety is what the register is read for.
+ *
+ * It is also already partly self-correcting: the register asserts each id
+ * matches exactly one call site, so an entry left behind when the counter is
+ * deleted fails loudly rather than quietly widening to cover whatever is added
+ * next to it.
+ *
+ * ## Computed keys (`YEO-100`)
+ *
+ * A computed key that is spelled out in full — `{ ["dangerouslySetInnerHTML"]:
+ * … }`, or the same thing in a template literal with nothing substituted into
+ * it — **is** a call site. It is the quoted key with two more characters
+ * around it: the compiler folds it to the same property name before anything
+ * else sees it, React reads it identically, and the argument about the pair of
+ * quotes applies unchanged to a pair of brackets. That half is closed.
+ *
+ * An **assembled** key — `{ ["dangerously" + rest]: v }` — walks past, and
+ * after `YEO-100` it does so as a decision. It is undecidable in general
+ * without evaluating the expression, so the only implementable version is a
+ * proxy: fail on any computed key in an object that also looks like props.
+ * That is declined, for three reasons.
+ *
+ * First, "looks like props" is the same guess this file refuses to make above,
+ * pointed the other way — and here it would be guessing in order to *raise* a
+ * failure rather than to suppress one, on `{ [kind]: … }` in every lookup
+ * table and reducer under `lib/`.
+ *
+ * Second, and worse, of the two ways to quiet such a failure neither is any
+ * good. Rewriting the key rearranges working code to satisfy a scanner. A
+ * marker means a register entry whose justification is "this expression does
+ * not evaluate to that string" — a claim no reviewer can check by reading the
+ * call site, unlike "this HTML has already been through the allowlist" or
+ * "this script is a constant", which are the entries there now. A register of
+ * verifiable arguments is worth reading; one diluted with unverifiable ones
+ * gets skimmed, and then the verifiable ones stop being read either.
+ *
+ * Third, the threat model does not support the cost. This guards against a
+ * contributor rendering a database string because it was already a string —
+ * nobody assembles this key by accident. Somebody deliberately hiding a sink
+ * from a syntax-tree scanner has cheaper routes that no per-node matcher
+ * reaches at all: `Object.assign`, a key held in a variable, a `ref.current
+ * .innerHTML =`. Closing the spelled-out spelling above removes an accident;
+ * chasing the rest would be a proof, and this is a tripwire.
+ *
+ * What would reopen it: an assembled key appearing in this repository for any
+ * legitimate reason. That would be evidence the shape is idiomatic here, and
+ * the trade above is the only thing holding the answer in place.
  */
 function isInnerHtmlSink(node: ts.Node): node is InnerHtmlSink {
   if (ts.isJsxAttribute(node)) {
@@ -192,13 +267,33 @@ function isInnerHtmlSink(node: ts.Node): node is InnerHtmlSink {
   }
 
   if (ts.isPropertyAssignment(node)) {
-    return (
-      (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
-      node.name.text === INNER_HTML_ATTRIBUTE
-    );
+    return staticKeyOf(node.name) === INNER_HTML_ATTRIBUTE;
   }
 
   return false;
+}
+
+/**
+ * The property name a key is known to be, or `null` when it takes running the
+ * program to find out.
+ *
+ * Every spelling the compiler folds to a string on its own is one it can be
+ * matched by; everything else — a numeric key, a private name, an expression
+ * with a variable anywhere in it — is `null`, which is a "no" this file
+ * declines to guess at rather than a "no" it has established. See the note on
+ * computed keys above for why that is where the line sits.
+ */
+function staticKeyOf(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+
+  if (ts.isComputedPropertyName(name)) {
+    const key = name.expression;
+    return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)
+      ? key.text
+      : null;
+  }
+
+  return null;
 }
 
 /**
