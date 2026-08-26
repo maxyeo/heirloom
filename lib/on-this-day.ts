@@ -132,6 +132,14 @@ export async function listOnThisDay(
  * entire discipline is not to move a date the archive actually holds. They
  * come round every four years, which is what a leap-day birthday does.
  *
+ * Run rather than argued, since `YEO-109`: `lib/on-this-day.db.test.ts`'s
+ * `29 February` block puts a leap-day birth, death and union through this
+ * predicate on 29 February 2028 and on both of its neighbours in a common
+ * year, and names the three tidy-ups it would not survive — a day-of-year, a
+ * year interval, and the kindness itself. Two of the three are invisible to
+ * every other test in the repository, which is the argument for the fixtures
+ * existing rather than the paragraph above standing alone.
+ *
  * @param date the `date` column
  * @param qualifier its `date_qualifier` sibling
  * @param precision its `date_precision` sibling
