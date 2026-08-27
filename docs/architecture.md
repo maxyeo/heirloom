@@ -931,7 +931,14 @@ name, which is a question about language and is answered in one place.
   restore something other than a no-op. A category the revision names but that
   has since been retired is re-created by the ordinary find-or-create — which
   is the payoff for storing names, and the alternative is a restore that
-  silently drops a heading.
+  silently drops a heading. The confirmation page asks the same question ahead
+  of the write, in `lib/restore-preview.ts`, and `YEO-117` made it ask in the
+  same terms: both sides of that comparison are canonicalised to _slugs_,
+  because `setEntryCategories` resolves recorded names to `categories` rows
+  before it compares ids, and `categories.slug` is unique while
+  `categories.name` deliberately is not. That canonicalises for a comparison
+  and nothing more — what a revision _stores_ is still names, for the cascade
+  reason above.
 - **The diff shows a re-filing.** `ContentBlockKind` has a `category` member,
   so a revision whose only change was the filing does not render as "No change
   to the rendered content" — the failure `hatnote` and `image` were each added

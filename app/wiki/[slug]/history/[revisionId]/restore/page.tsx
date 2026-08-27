@@ -6,7 +6,11 @@ import { cache } from "react";
 import { RestoreRevisionForm } from "@/components/RestoreRevisionForm";
 import { readEntryCategories } from "@/lib/categories";
 import { getPageBySlug } from "@/lib/pages";
-import { filingOf, restoreWouldChangeNothing } from "@/lib/restore-preview";
+import {
+  filingOf,
+  recordedFilingOf,
+  restoreWouldChangeNothing,
+} from "@/lib/restore-preview";
 import {
   formatRevisionAuthor,
   formatRevisionTimestamp,
@@ -113,6 +117,13 @@ export default async function RestoreRevisionPage({
    * inline title-and-body comparison that used to sit here — that one silently
    * answered "nothing to restore" for a revision whose filing or hatnote
    * differed, hiding the form for a restore that would have worked.
+   *
+   * Both sides are written out field by field rather than the revision being
+   * passed whole, so that a fifth revisioned column is a missing property at
+   * *both* ends rather than only at the entry's. The two filings reach the
+   * comparison through their own adapters (`YEO-117`): the entry's rows carry
+   * their slugs already, while the revision holds names, which
+   * `recordedFilingOf` resolves the same way the restore itself will.
    */
   const alreadyCurrent = restoreWouldChangeNothing(
     {
@@ -121,7 +132,12 @@ export default async function RestoreRevisionPage({
       hatnote: page.hatnote,
       categories: filingOf(filing),
     },
-    revision,
+    {
+      title: revision.title,
+      bodyHtml: revision.bodyHtml,
+      hatnote: revision.hatnote,
+      categories: recordedFilingOf(revision.categories),
+    },
   );
 
   return (

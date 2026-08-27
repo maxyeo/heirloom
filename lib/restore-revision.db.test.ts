@@ -2,7 +2,16 @@ import { asc, eq, inArray, like } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
-import { deleteCategory, getCategoryBySlug } from "@/lib/categories";
+import {
+  deleteCategory,
+  getCategoryBySlug,
+  readEntryCategories,
+} from "@/lib/categories";
+import {
+  filingOf,
+  recordedFilingOf,
+  restoreWouldChangeNothing,
+} from "@/lib/restore-preview";
 import { restoreRevision } from "@/lib/restore-revision";
 import { savePage } from "@/lib/save-page";
 import { raceWriters } from "@/test/db-concurrency";
@@ -512,6 +521,11 @@ describe("restoreRevision", () => {
     const FILED = "Restore Fixture Filed";
     const REFILED = "Restore Fixture Refiled";
     const FILED_SLUG = "restore-fixture-filed";
+    /**
+     * A slug {@link FILED} would never generate, for the row the `YEO-117`
+     * test at the foot of this block inserts by hand.
+     */
+    const BY_HAND_SLUG = "restore-fixture-filed-by-hand";
 
     beforeEach(async () => {
       await db
@@ -663,6 +677,94 @@ describe("restoreRevision", () => {
       });
 
       expect(await filing()).toEqual([FILED]);
+      expect(await getCategoryBySlug(FILED_SLUG)).toBeDefined();
+    });
+
+    it("moves a row the confirmation page can only see by slug", async () => {
+      /**
+       * The `YEO-117` claim, asserted rather than stated in a docblock: the
+       * courtesy check on the confirmation page and this engine give the same
+       * answer, including for the one case where comparing category *names*
+       * would not.
+       *
+       * `restoreWouldChangeNothing` is deliberately run here — a database test
+       * for a function that needs no database — because the claim is about the
+       * two agreeing, and a unit test can only assert one of them. This is the
+       * only place both are reachable at once.
+       */
+      await savePage({
+        slug: SLUG,
+        ...V2,
+        categories: [FILED],
+        editedBy: AUTHOR,
+      });
+
+      const target = await revisionFiledUnder(FILED);
+
+      /** The question, asked exactly as the confirmation route asks it. */
+      const previewSaysNothingToRestore = async () => {
+        const page = await readPage();
+        return restoreWouldChangeNothing(
+          {
+            title: page.title,
+            bodyHtml: page.bodyHtml,
+            hatnote: page.hatnote,
+            categories: filingOf(await readEntryCategories(PAGE)),
+          },
+          {
+            title: target.title,
+            bodyHtml: target.bodyHtml,
+            hatnote: target.hatnote,
+            categories: recordedFilingOf(target.categories),
+          },
+        );
+      };
+
+      // The control: the page is exactly what the revision says, and both
+      // answers agree that there is nothing to do.
+      expect(await previewSaysNothingToRestore()).toBe(true);
+      await expect(
+        restoreRevision({
+          slug: SLUG,
+          revisionId: target.id,
+          restoredBy: RESTORER,
+        }),
+      ).resolves.toMatchObject({ status: "unchanged" });
+
+      /**
+       * The divergence, which nothing in the application can reach: a second
+       * category carrying the same display name under a slug its name would
+       * not generate, with the entry re-filed onto it — the shape a data fix
+       * in a SQL console leaves behind. `categories.slug` is unique and
+       * `categories.name` is deliberately not (`db/schema.ts`), so this is a
+       * legal row.
+       */
+      const [byHand] = await db
+        .insert(schema.categories)
+        .values({ name: FILED, slug: BY_HAND_SLUG })
+        .returning({ id: schema.categories.id });
+      await db
+        .delete(schema.pageCategories)
+        .where(eq(schema.pageCategories.pageId, PAGE));
+      await db
+        .insert(schema.pageCategories)
+        .values({ pageId: PAGE, categoryId: byHand.id });
+
+      // The names still agree exactly — which is why comparing them answered
+      // "nothing to restore" and hid the form.
+      expect(await filing()).toEqual([FILED]);
+
+      // The rows do not, so the restore is real: it files the entry back under
+      // the row `FILED` resolves to, and both answers say so.
+      expect(await previewSaysNothingToRestore()).toBe(false);
+      await expect(
+        restoreRevision({
+          slug: SLUG,
+          revisionId: target.id,
+          restoredBy: RESTORER,
+        }),
+      ).resolves.toMatchObject({ status: "restored" });
+
       expect(await getCategoryBySlug(FILED_SLUG)).toBeDefined();
     });
 
