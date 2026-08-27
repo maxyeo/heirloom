@@ -53,17 +53,20 @@ export function revisionTimestampIso(when: Date): string {
  * no `.notNull()` — which is not a hole in the save path so much as an
  * honest acknowledgement that not every row goes through it. Every insert
  * this repository makes does attribute one: `writeRevision`
- * (`lib/save-page.ts`) takes `editedBy: string`, not an optional one, and it
- * is the single insert `lib/create-page.ts` and `lib/restore-revision.ts`
- * both write through; `db/seed.ts` writes its one revision, in the same
- * transaction as the page, with a seed address on it. The null is for the rows written around those paths: a
- * revision typed into a SQL console as a data fix, or one a migration writes,
- * neither of which has a signed-in author to attribute.
+ * (`lib/save-page.ts`) takes `editedBy: string`, not an optional one, and
+ * every path that appends a revision writes through it — `savePage` beside
+ * it, `lib/create-page.ts`, `lib/restore-revision.ts`. `db/seed.ts` inserts
+ * directly rather than through it, in the same transaction as the page, and
+ * puts a seed address on the row.
+ *
+ * The null is for the rows written around those paths: a revision typed
+ * into a SQL console as a data fix, or one a migration writes, neither of
+ * which has a signed-in author to attribute.
  * `drizzle/0012_revision_categories.sql` is how near that comes: it reaches
- * into `revisions` directly, and only misses the case because it updates
- * existing rows rather than inserting new ones. Rendering an empty string
- * for the rows that do arrive that way would read as a rendering bug rather
- * than as the true state of the data.
+ * into `revisions` directly, outside the save path, and only misses the
+ * case because it updates existing rows rather than inserting new ones.
+ * Rendering an empty string for the rows that do arrive that way would read
+ * as a rendering bug rather than as the true state of the data.
  */
 export function formatRevisionAuthor(email: string | null): string {
   return email ?? "Unknown";
