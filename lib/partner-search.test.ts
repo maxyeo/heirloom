@@ -174,58 +174,80 @@ describe("searchPartners", () => {
 });
 
 /**
- * The rank tie-break's sort key stopped reading `localeCompare` (`YEO-116`).
- * This is the one converted site whose output a reader does see, so it gets
- * the most scrutiny: a paired guard for the general ambient-locale risk
- * `lib/compare-ids.ts` describes, and a second, sharper one for a live bug
- * this conversion fixes outright — the `\0` separator between the folded name
- * and the id was silently invisible to ICU.
+ * The rank tie-break split into two independent fields (`YEO-116`): the
+ * folded name, which a reader does see, stays on `localeCompare`; only the
+ * id underneath it — never read — moved to `compareIds`. An earlier version
+ * of this ticket moved *both* halves to `compareIds`, on the mistaken claim
+ * that `foldName` already makes code-unit order match reading order. It does
+ * not: folding lowercases and strips combining marks, but a Latin letter
+ * that does not canonically decompose (Æ, Ø, Ł, Þ, Œ, and non-Latin scripts
+ * generally) survives folding and then sits above `z` in code units. The
+ * first test below pins that case directly, through the empty-query browse
+ * path where every candidate ties on rank and this tie-break is the whole
+ * visible order. The second pins the id half the other way, on code units,
+ * with the paired locale guard `lib/compare-ids.ts` calls for.
  */
-describe("the rank tie-break does not move with the runtime's locale", () => {
-  /** Two people ranked identically by "amy", distinguished only by id. */
-  function sameRank(): GraphPerson[] {
-    return [
+describe("the rank tie-break: name by collation, id by code unit", () => {
+  it("orders a name whose folded form sits above 'z' in code units the way a reader expects, not the way code units do", () => {
+    const people = [
+      person({ id: "zorro", givenName: "Zorro", surname: "Doyle" }),
+      person({ id: "aesa", givenName: "Æsa", surname: "Doyle" }),
+      person({ id: "anna", givenName: "Anna", surname: "Doyle" }),
+    ];
+
+    // Guard: without this, the test below would pass under either rule and
+    // prove nothing. Folding does not make "æsa" sort before "zorro" by code
+    // unit — it sorts after, because Æ does not canonically decompose.
+    expect(foldName("Æsa") > foldName("Zorro")).toBe(true);
+    // `localeCompare` — with no locale pinned, deliberately, since this half
+    // of the tie-break exists to read the way *this* reader's locale does —
+    // disagrees, at least under `en-US`, which is what this suite runs
+    // under. (Not every locale has to agree here the way `compareIds`'s
+    // callers must: sv-SE genuinely collates Æ after Z, because Swedish
+    // alphabetises it there — that is a real reader expectation too, not an
+    // ambient-locale bug, which is exactly why this half of the tie-break is
+    // supposed to move with the locale and the id half is not.)
+    expect("Æsa".localeCompare("Zorro")).toBeLessThan(0);
+
+    // Every candidate ties on rank with an empty query, so this tie-break
+    // decides the whole browse order the picker opens with.
+    expect(ids(people, "")).toEqual(["aesa", "anna", "zorro"]);
+  });
+
+  it("orders two candidates who share a name by id, by code unit, not by collation", () => {
+    const sameRank: GraphPerson[] = [
       person({ id: "apple-person", givenName: "Amy" }),
       person({ id: "Zeta-person", givenName: "Amy" }),
     ];
-  }
 
-  it("uses ids that collation really does order the other way", () => {
-    // Guards the fixture below: if ICU ever stopped disagreeing with code
-    // units here, the pinning test would keep passing while testing nothing.
+    // Guard: if ICU ever stopped disagreeing with code units here, the
+    // pinning test below would keep passing while testing nothing.
     for (const locale of ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"]) {
       expect(
-        new Intl.Collator(locale).compare(
-          "amy\0Zeta-person",
-          "amy\0apple-person",
-        ),
+        new Intl.Collator(locale).compare("Zeta-person", "apple-person"),
       ).toBeGreaterThan(0);
     }
-  });
 
-  it("orders two equally-ranked candidates by code unit, not by collation", () => {
     // `Zeta-person` first is the code-unit answer. Every locale above would
     // put `apple-person` first instead.
-    expect(ids(sameRank(), "amy")).toEqual(["Zeta-person", "apple-person"]);
+    expect(ids(sameRank, "amy")).toEqual(["Zeta-person", "apple-person"]);
   });
 
   /**
-   * The `\0` separator exists so that "Mary Anne" + id cannot sort against
-   * "Mary" + " Anne…" — see the comment on `sort` in `lib/partner-search.ts`.
-   * `localeCompare` silently defeated it: ICU treats U+0000 as completely
-   * ignorable, so the two halves of the sort key collated as if nothing sat
-   * between them at all, which is exactly the ambiguity the separator was
-   * added to rule out. This is the most concrete evidence in the whole
-   * change, so it is pinned directly against `Intl.Collator` rather than only
-   * against `searchPartners`.
+   * The composite `\0`-joined sort key this ticket removed doesn't need a
+   * replacement test of its own — comparing the name and id as two separate
+   * terms rules out the "Mary Anne" + id vs "Mary" + " Anne…" ambiguity the
+   * separator existed for structurally, with no separator to get wrong. What
+   * is still worth pinning is *why* patching the separator was never the
+   * right fix: ICU treats U+0000 as completely ignorable, so under
+   * `localeCompare` a joined key with a `\0` in it and one without compared
+   * equal — the separator was a no-op under the very comparator this module
+   * used to run.
    */
-  it("shows the collator that used to run here treating the separator as absent", () => {
+  it("shows why the old \\0-joined key could not have been patched: ICU ignores U+0000 entirely", () => {
     const withSeparator = `${foldName("Mary")}\0`;
     const withoutSeparator = foldName("Mary");
 
-    // A separator that did its job would never compare equal to no
-    // separator at all — and yet, under the collator this module used to
-    // sort with, it does.
     expect(
       new Intl.Collator("en-US", { sensitivity: "variant" }).compare(
         withSeparator,

@@ -11,9 +11,11 @@
  * because something else already decided the order a reader sees and this is
  * only breaking a tie underneath it — this is the right one. `YEO-111` used
  * it for the tab order's tie-break on a person id; by `YEO-116` the callers
- * include a union id, a GEDCOM tag path, a composite search sort key and a
- * storage key, none of which is a person id and all of which fit the same
- * rule: the value is *compared*, never *read* as sorted text.
+ * include a union id, a GEDCOM tag path, a partner search's final id
+ * tie-break and a storage key. All of them fit the same rule: the value is
+ * *compared*, never *read* as sorted text — `lib/partner-search.ts`'s call
+ * sits underneath a `localeCompare` on the folded name precisely because
+ * that name, unlike the id below it, is read.
  *
  * ## Why not `localeCompare`
  *

@@ -1201,15 +1201,19 @@ cursor to keep in step with anything.
   reads them as sorted text. `YEO-116` put the same comparator on four more
   tie-breaks that were also `localeCompare` for the same ambient-locale
   reason — a union id and a person id in `lib/person-detail.ts`, a GEDCOM tag
-  path in `lib/gedcom-report.ts`, a composite search sort key in
-  `lib/partner-search.ts`, and a storage key in `lib/image-sweep.ts` — none of
-  them rendered, all of them only needing to answer the same way twice. Two
+  path in `lib/gedcom-report.ts`, a person id underneath `lib/partner-search.ts`'s
+  name tie-break, and a storage key in `lib/image-sweep.ts` — none of them
+  rendered, all of them only needing to answer the same way twice. Three
   comparisons keep `localeCompare` on purpose, because their output _is_ read:
-  `lib/parent-options.ts`'s family-picker labels, and the formatted name
-  inside `lib/person-detail.ts`'s `compareByBirth` (the id half of that same
+  `lib/parent-options.ts`'s family-picker labels, the formatted name inside
+  `lib/person-detail.ts`'s `compareByBirth` (the id half of that same
   function's tie-break is `compareIds`, once the name has already tied — one
-  function, two different things being compared). Same rule, and the same
-  reason, as [GEDCOM export's byte comparison](gedcom.md).
+  function, two different things being compared), and the folded name in
+  `lib/partner-search.ts`'s own tie-break, for the same reason: `foldName`
+  makes it case- and accent-insensitive but does not make it sort in code-unit
+  order the way a reader expects, so only the id underneath it — never read —
+  switched to `compareIds`. Same rule, and the same reason, as [GEDCOM
+  export's byte comparison](gedcom.md).
 - **Edges are out of the tab order and out of the accessibility tree.**
   `edgesFocusable` defaults to true and edges render _before_ nodes, so the
   default order on a canvas of two hundred people is a couple of hundred

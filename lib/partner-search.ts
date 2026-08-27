@@ -95,8 +95,12 @@ export function searchPartners(
 
   const terms = foldName(query).split(/\s+/).filter(Boolean);
 
-  const scored: { candidate: PartnerCandidate; rank: number; sort: string }[] =
-    [];
+  const scored: {
+    candidate: PartnerCandidate;
+    rank: number;
+    sortName: string;
+    sortId: string;
+  }[] = [];
 
   for (const person of people) {
     if (excluded.has(person.id)) continue;
@@ -138,35 +142,46 @@ export function searchPartners(
       /**
        * Ties break on name and then on id, so the list is stable rather
        * than dependent on the order the rows happened to arrive from
-       * Postgres. `foldName` already lowercases and strips accents, so
-       * comparing the folded name by code unit still lands in the order a
-       * reader expects — the rank above is this list's real order, and the
-       * name here is only breaking a tie underneath it, the one part of this
-       * change whose output a reader does see.
+       * Postgres. The rank above is this list's real order; these two
+       * fields only break a tie underneath it — and with an empty query
+       * every candidate ties on rank, so for that browse case this pair
+       * *is* the visible order (`searchPartners`'s own doc comment above).
        *
-       * `\0` separates the two halves rather than a space, because a
-       * space is a character a name can contain: "Mary Anne" + id would
-       * otherwise sort against "Mary" + " Anne..." and the tie-break
-       * would depend on the id of an unrelated person. Written as the
-       * escape, never as a literal byte — a raw NUL makes git treat the
-       * whole file as binary and `gh pr diff` refuse to show it.
+       * The name half stays on `localeCompare` on purpose (`YEO-116`,
+       * ticket AC5): `foldName` lowercases and strips accents, but it does
+       * not make every string sort in code-unit order the way a reader
+       * expects — a Latin letter that does not canonically decompose (Æ,
+       * Ø, Ł, Þ, Œ, and letters in other scripts generally) survives
+       * folding and then sits above `z` in code units, so "Æsa" would sort
+       * after "Zorro" by code unit while ICU correctly puts it first. Only
+       * `compareIds` below, on the id — a value nobody reads — switches to
+       * code units, which is what guarantees this comparator never returns
+       * 0 for two distinct people and keeps the list stable against
+       * Postgres row order.
        *
-       * That separator used to be silently defeated (`YEO-116`): ICU treats
-       * U+0000 as completely ignorable — `new Intl.Collator("en-US", {
-       * sensitivity: "variant" }).compare("mary\0", "mary") === 0` — so under
-       * `localeCompare` the two halves collated as if nothing sat between
-       * them, exactly the ambiguity `\0` exists to rule out. `compareIds`
-       * below compares code units, where `\0` (0x00) sorts below every
-       * printable character and is a real, present character rather than one
-       * ICU discards, so the separator now does the job it was written for.
+       * The two fields are compared independently rather than joined into
+       * one string, so there is no separator to get right: the old `\0`
+       * -joined key existed only to stop "Mary Anne" + id from sorting
+       * against "Mary" + " Anne..." + id, and comparing the name and id as
+       * separate terms rules that out structurally instead of by choice of
+       * separator. (That join was also silently defeated: ICU treats
+       * U+0000 as completely ignorable —
+       * `new Intl.Collator("en-US", { sensitivity: "variant" }).compare("mary\0", "mary") === 0`
+       * — so under `localeCompare` the two halves of the old key collated
+       * as if nothing sat between them. Splitting the fields removes the
+       * separator rather than finding a working one.)
        */
-      sort: `${foldName(name)}\0${person.id}`,
+      sortName: foldName(name),
+      sortId: person.id,
     });
   }
 
-  scored.sort((a, b) =>
-    a.rank !== b.rank ? a.rank - b.rank : compareIds(a.sort, b.sort),
-  );
+  scored.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    const byName = a.sortName.localeCompare(b.sortName);
+    if (byName !== 0) return byName;
+    return compareIds(a.sortId, b.sortId);
+  });
 
   return scored.slice(0, limit).map((entry) => entry.candidate);
 }
