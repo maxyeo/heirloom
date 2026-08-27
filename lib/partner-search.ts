@@ -152,8 +152,9 @@ export function searchPartners(
        * not make every string sort in code-unit order the way a reader
        * expects — a Latin letter that does not canonically decompose (Æ,
        * Ø, Ł, Þ, Œ, and letters in other scripts generally) survives
-       * folding and then sits above `z` in code units, so "Æsa" would sort
-       * after "Zorro" by code unit while ICU correctly puts it first. Only
+       * folding and then sits above `z` in code units, so "Łukasz" would
+       * sort after "Zorro" by code unit while every collation puts it
+       * first, where a reader looking for it would go. Only
        * `compareIds` below, on the id — a value nobody reads — switches to
        * code units, which is what guarantees this comparator never returns
        * 0 for two distinct people and keeps the list stable against

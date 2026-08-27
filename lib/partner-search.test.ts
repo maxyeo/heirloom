@@ -180,38 +180,77 @@ describe("searchPartners", () => {
  * of this ticket moved *both* halves to `compareIds`, on the mistaken claim
  * that `foldName` already makes code-unit order match reading order. It does
  * not: folding lowercases and strips combining marks, but a Latin letter
- * that does not canonically decompose (Æ, Ø, Ł, Þ, Œ, and non-Latin scripts
- * generally) survives folding and then sits above `z` in code units. The
- * first test below pins that case directly, through the empty-query browse
- * path where every candidate ties on rank and this tie-break is the whole
- * visible order. The second pins the id half the other way, on code units,
- * with the paired locale guard `lib/compare-ids.ts` calls for.
+ * that does not canonically decompose survives folding and then sits above
+ * `z` in code units. The first test below pins that case through the
+ * empty-query browse path, where every candidate ties on rank and this
+ * tie-break is the whole visible order. The second pins the id half the
+ * other way, on code units, with the paired locale guard
+ * `lib/compare-ids.ts` calls for.
+ *
+ * ## Why the fixture is `Ł` and not `Æ`
+ *
+ * `Æ` is the obvious choice and the wrong one. It survives folding, so code
+ * units do sort it after `z` — but Swedish, Danish, Norwegian and Icelandic
+ * all genuinely alphabetise `Æ` *after* `Z`, so under those locales
+ * collation and code units agree and the fixture stops telling the two rules
+ * apart. A test written on `Æ` therefore asserts an `en-US` answer while
+ * looking like it asserts a general one: it passes on CI because the runner
+ * happens to resolve to `en-US`, and fails under `LC_ALL=sv_SE.UTF-8`.
+ *
+ * That is not a reason to pin the locale. `searchPartners` runs in the
+ * reader's browser — `components/PartnerPicker.tsx` is a client component
+ * and calls it from a `useMemo` — so the unpinned `localeCompare` in the
+ * comparator is reading the *reader's* own collation, which is the whole
+ * point of keeping that half off code units. Pinning a locale in the test
+ * environment would make the suite deterministic for a reason production
+ * does not share, and deriving the expected order from `localeCompare` at
+ * runtime would restate the implementation instead of checking it.
+ *
+ * `Ł` is the fixture that makes the property itself locale-invariant. It
+ * survives folding exactly as `Æ` does — `foldName("Łukasz")` is `"łukasz"`,
+ * and `ł` (U+0142) is above `z` (U+007A) — but no locale alphabetises it
+ * after `Z`: it is a Polish letter, and even `pl-PL` files it immediately
+ * after `l`. So "collation puts Łukasz before Zorro, code units put it
+ * after" is true *everywhere*, and the assertion below can be checked
+ * against the same four locales the id half uses rather than against one.
  */
 describe("the rank tie-break: name by collation, id by code unit", () => {
+  /**
+   * The same four locales the id tie-break is guarded against, and the same
+   * ones `lib/family-components.test.ts` picked: `en` is the default most
+   * developers run under, `sv` reorders letters at the end of its alphabet,
+   * `tr` has its own rules for dotted and dotless `i`, and
+   * `de-DE-u-co-phonebk` is a non-default collation of a locale that also
+   * has a default one.
+   */
+  const locales = ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"];
+
   it("orders a name whose folded form sits above 'z' in code units the way a reader expects, not the way code units do", () => {
     const people = [
       person({ id: "zorro", givenName: "Zorro", surname: "Doyle" }),
-      person({ id: "aesa", givenName: "Æsa", surname: "Doyle" }),
+      person({ id: "lukasz", givenName: "Łukasz", surname: "Doyle" }),
       person({ id: "anna", givenName: "Anna", surname: "Doyle" }),
     ];
 
-    // Guard: without this, the test below would pass under either rule and
-    // prove nothing. Folding does not make "æsa" sort before "zorro" by code
-    // unit — it sorts after, because Æ does not canonically decompose.
-    expect(foldName("Æsa") > foldName("Zorro")).toBe(true);
-    // `localeCompare` — with no locale pinned, deliberately, since this half
-    // of the tie-break exists to read the way *this* reader's locale does —
-    // disagrees, at least under `en-US`, which is what this suite runs
-    // under. (Not every locale has to agree here the way `compareIds`'s
-    // callers must: sv-SE genuinely collates Æ after Z, because Swedish
-    // alphabetises it there — that is a real reader expectation too, not an
-    // ambient-locale bug, which is exactly why this half of the tie-break is
-    // supposed to move with the locale and the id half is not.)
-    expect("Æsa".localeCompare("Zorro")).toBeLessThan(0);
+    // Guards the fixture rather than the module, in both directions, so that
+    // this cannot quietly stop discriminating. Code units put the folded
+    // "łukasz" after "zorro"...
+    expect(foldName("Łukasz") > foldName("Zorro")).toBe(true);
+    // ...while every locale puts it before — which is what makes the
+    // assertion below a statement about which of the two rules is in force
+    // rather than about the machine the suite happens to run on. Unlike a
+    // fixture built on `Æ`, this holds under all of them, so the test does
+    // not depend on an ambient locale it does not control.
+    for (const locale of locales) {
+      expect(
+        foldName("Łukasz").localeCompare(foldName("Zorro"), locale),
+      ).toBeLessThan(0);
+    }
 
     // Every candidate ties on rank with an empty query, so this tie-break
-    // decides the whole browse order the picker opens with.
-    expect(ids(people, "")).toEqual(["aesa", "anna", "zorro"]);
+    // decides the whole browse order the picker opens with. Code units would
+    // have given ["anna", "zorro", "lukasz"], dumping Łukasz after Zorro.
+    expect(ids(people, "")).toEqual(["anna", "lukasz", "zorro"]);
   });
 
   it("orders two candidates who share a name by id, by code unit, not by collation", () => {
@@ -222,7 +261,7 @@ describe("the rank tie-break: name by collation, id by code unit", () => {
 
     // Guard: if ICU ever stopped disagreeing with code units here, the
     // pinning test below would keep passing while testing nothing.
-    for (const locale of ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"]) {
+    for (const locale of locales) {
       expect(
         new Intl.Collator(locale).compare("Zeta-person", "apple-person"),
       ).toBeGreaterThan(0);
