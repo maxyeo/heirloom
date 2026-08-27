@@ -72,6 +72,13 @@ const CONTROL = "dirty-third-party.ged";
  * GTK cannot find an icon theme with no display attached. None of them is
  * produced by reading GEDCOM, and leaving them in would bury the four lines
  * that are.
+ *
+ * This and `PROGRESS` below match **Gramps 6.0.1's wording**, so both are
+ * worth re-reading against the raw output when the image is bumped. They fail
+ * in the safe direction — a reworded line stops being filtered and shows up as
+ * clutter, rather than a real complaint being swallowed — but a filter that
+ * silently stopped doing its job would still be worth catching, and the
+ * version it was written against is recorded in `test/gramps/README.md`.
  */
 const CONTAINER_NOISE =
   /ICU not loaded|Locale not supported|fallback 'C' locale|Gtk-CRITICAL|Gtk-WARNING|^\s*$/;
@@ -150,6 +157,28 @@ function grampsScript(names: readonly string[]): string {
   return lines.join("\n");
 }
 
+/**
+ * The lines of Gramps' own export that decide the two documented departures.
+ *
+ * Quoted rather than summarised, and quoted from *Gramps'* file rather than
+ * ours. `docs/gedcom.md` claims that Gramps writes `CHAR UTF-8` itself and
+ * that it spells our `PEDI step` back as `PEDI stepchild`, and both claims are
+ * about bytes in a file. A transcript that reported only what `readBack`
+ * derived would leave a reader who trusts nothing but this transcript taking
+ * those two on the author's word — which is the exact shape of the problem
+ * `YEO-91` was raised to fix, one level down.
+ */
+function departureLines(path: string): string {
+  const said = new Set(
+    readFileSync(path, "utf8")
+      .split(/\r\n|[\n\r]/)
+      .map((line) => line.trim())
+      .filter((line) => /^1 CHAR |^2 PEDI /.test(line)),
+  );
+
+  return `Gramps wrote: ${[...said].sort().join(" | ")}`;
+}
+
 /** What this application reads back out of the file Gramps wrote. */
 function readBack(path: string): string {
   const mapping = mapGedcom(parseGedcom(readFileSync(path)));
@@ -158,6 +187,7 @@ function readBack(path: string): string {
   const relations = [...new Set(rows.unionChildren.map((one) => one.relation))];
 
   return [
+    departureLines(path),
     `${rows.individuals.length} individuals, ${rows.unions.length} unions, ${rows.unionChildren.length} child links`,
     `relations: ${relations.sort().join(", ")}`,
     mapping.issues.length === 0

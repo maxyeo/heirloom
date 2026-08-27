@@ -133,18 +133,22 @@ referenced by note N0002.
 Cleaning up.
 === read back into this application ===
 --- seed-family.from-gramps.ged ---
+Gramps wrote: 1 CHAR UTF-8 | 2 PEDI adopted | 2 PEDI birth
 16 individuals, 4 unions, 12 child links
 relations: adopted, biological
 issues: none
 --- every-form.from-gramps.ged ---
+Gramps wrote: 1 CHAR UTF-8 | 2 PEDI adopted | 2 PEDI birth | 2 PEDI foster | 2 PEDI stepchild
 8 individuals, 3 unions, 4 child links
 relations: adopted, biological, foster, step
 issues: none
 --- torture-round-trip.from-gramps.ged ---
+Gramps wrote: 1 CHAR UTF-8 | 2 PEDI adopted | 2 PEDI birth
 15 individuals, 7 unions, 10 child links
 relations: adopted, biological
 issues: none
 --- dirty-round-trip.from-gramps.ged ---
+Gramps wrote: 1 CHAR UTF-8 | 2 PEDI adopted | 2 PEDI birth
 6 individuals, 2 unions, 2 child links
 relations: adopted, biological
 issues: none
@@ -154,6 +158,14 @@ The last block is the out-and-back leg, and it is the half a bare import
 cannot show: a reader can accept a file and still lose what is in it. Every
 person, union and child link comes home, `every-form` brings `step` back with
 it since the fix, and this application reports no issue on any of the four.
+
+Its `Gramps wrote:` lines are quoted out of Gramps' own export rather than
+summarised, because the two claims this page makes about the departures are
+claims about bytes in a file — `1 CHAR UTF-8` written by Gramps unprompted,
+and our `PEDI step` handed back as `2 PEDI stepchild`. Reporting only what
+this application derived from those files would leave a reader who trusts
+nothing but this transcript taking both on the author's word, which is the
+shape of the problem this ticket exists to fix.
 
 ## When to run it again
 
