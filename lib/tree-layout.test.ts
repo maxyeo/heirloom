@@ -864,3 +864,150 @@ describe("tab order under a different collation", () => {
     );
   });
 });
+
+/**
+ * Which partner a reader meets first.
+ *
+ * Dagre orders a rank to minimise crossings and has no opinion about couples,
+ * so before this the side a parent landed on was a by-product of the rest of
+ * the tree and moved when the rest of the tree did. These assert the opinion,
+ * and — just as much — the two cases where the layout declines to have one.
+ *
+ * The fixtures here are their own, rather than `sampleGraph`'s: every couple
+ * in that one contains somebody married twice, which is precisely the case
+ * this feature leaves alone, so it can say nothing about the ordinary one.
+ */
+describe("partner lead", () => {
+  /** One couple, one child, and nobody married twice. */
+  function couple(
+    overrides: {
+      motherSex?: FamilyGraph["people"][number]["sex"];
+      fatherSex?: FamilyGraph["people"][number]["sex"];
+    } = {},
+  ): FamilyGraph {
+    return {
+      people: [
+        /*
+         * Listed father-first, and the union names him first too, because
+         * that is the arrangement dagre left to itself lays out *mother*
+         * first — verified by running the fixture under `neither`. So the
+         * default below has real work to do, and "the father is on the left"
+         * cannot pass by accident as the input order surviving unexamined.
+         * Dagre's untouched order is not intuitive and not stable across its
+         * versions, which is the entire reason this feature exists; if a
+         * dagre upgrade makes the assertion vacuous rather than failing, the
+         * paired test after it is the one that still bites.
+         */
+        person({
+          id: "father",
+          givenName: "Frank",
+          sex: overrides.fatherSex ?? "male",
+        }),
+        person({
+          id: "mother",
+          givenName: "Maud",
+          sex: overrides.motherSex ?? "female",
+        }),
+        person({ id: "child", givenName: "Cass" }),
+      ],
+      unions: [
+        { ...union({ id: "u1" }), partnerAId: "father", partnerBId: "mother" },
+      ],
+      childLinks: [{ unionId: "u1", childId: "child", relation: "biological" }],
+    };
+  }
+
+  /** Every person's x, which is the only thing a lead can move. */
+  function xById(nodes: Node[]): Record<string, number> {
+    return Object.fromEntries(
+      nodes
+        .filter((node) => node.type === "person")
+        .map((node) => [node.id, node.position.x]),
+    );
+  }
+
+  it("puts the father left of the mother by default", () => {
+    const x = xById(layoutFamilyGraph(couple()).nodes);
+
+    expect(x.father).toBeLessThan(x.mother);
+  });
+
+  it("orders the couple by the lead, not by dagre's own tie-break", () => {
+    /*
+     * The assertion that cannot go vacuous. Either side on its own is only
+     * ever one dagre tie-break away from passing for the wrong reason — the
+     * test above passes untouched under some fixtures and some dagre versions
+     * — but a layout that ignores the lead entirely returns the *same*
+     * arrangement for both, and no arrangement satisfies both lines below.
+     */
+    const withFather = xById(
+      layoutFamilyGraph(couple(), { partnerLead: "father" }).nodes,
+    );
+    const withMother = xById(
+      layoutFamilyGraph(couple(), { partnerLead: "mother" }).nodes,
+    );
+
+    expect(withFather.father).toBeLessThan(withFather.mother);
+    expect(withMother.mother).toBeLessThan(withMother.father);
+  });
+
+  it("keeps them on one rank either way", () => {
+    // The couple is ordered by exchanging places within a generation, never
+    // by moving one of them to another. A lead that re-ranked a parent would
+    // satisfy both assertions above and draw a nonsense tree.
+    for (const lead of ["father", "mother", "neither"] as const) {
+      const { nodes } = layoutFamilyGraph(couple(), { partnerLead: lead });
+      const y = (id: string) => nodeById(nodes, id).position.y;
+
+      expect(y("father")).toBe(y("mother"));
+      expect(y("child")).toBeGreaterThan(y("mother"));
+    }
+  });
+
+  it("leaves a same-sex couple where dagre put them", () => {
+    // Asserted as "the setting makes no difference", which is the honest
+    // shape of the claim: there is no father and mother to order, so leading
+    // with either must be indistinguishable. Asserting a side would be
+    // asserting dagre's tie-break, which is not this feature's to promise.
+    const twoMothers = couple({ fatherSex: "female" });
+
+    expect(xById(layoutFamilyGraph(twoMothers).nodes)).toEqual(
+      xById(layoutFamilyGraph(twoMothers, { partnerLead: "mother" }).nodes),
+    );
+  });
+
+  it("leaves a couple whose second partner is still unknown", () => {
+    // The half-entered couple, which is most of them while somebody is typing
+    // a tree in. Same shape of assertion, same reason.
+    const halfKnown = couple({ motherSex: "unknown" });
+
+    expect(xById(layoutFamilyGraph(halfKnown).nodes)).toEqual(
+      xById(layoutFamilyGraph(halfKnown, { partnerLead: "mother" }).nodes),
+    );
+  });
+
+  it("declines to lead, rather than laying out differently, when told neither", () => {
+    // `neither` has to be dagre untouched. A graph nobody can order — every
+    // sex unknown — is dagre untouched by construction whatever the setting
+    // is, so the two agreeing is what says the option turns the constraints
+    // off rather than merely changing them.
+    const unorderable = couple({ motherSex: "unknown", fatherSex: "unknown" });
+
+    expect(
+      xById(layoutFamilyGraph(unorderable, { partnerLead: "neither" }).nodes),
+    ).toEqual(xById(layoutFamilyGraph(unorderable).nodes));
+  });
+
+  it("leaves a twice-married person between their two unions", () => {
+    // The documented trade-off, and the reason `sampleGraph` gets no
+    // constraints at all: Thomas is a partner in u1 and u2, and sitting
+    // between them is what makes one node serve both marriages — the whole
+    // point of unions being nodes. Leading him would pull him to the outside
+    // of one wife and drag that marriage's edge back across the canvas.
+    const { nodes } = layoutFamilyGraph(sampleGraph());
+    const x = (id: string) => nodeById(nodes, id).position.x;
+
+    expect(x("thomas")).toBeGreaterThan(Math.min(x("u1"), x("u2")));
+    expect(x("thomas")).toBeLessThan(Math.max(x("u1"), x("u2")));
+  });
+});

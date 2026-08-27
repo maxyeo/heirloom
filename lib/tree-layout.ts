@@ -1,4 +1,5 @@
 import dagre from "@dagrejs/dagre";
+import type { OrderConstraint } from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
 
 import { compareIds } from "./compare-ids";
@@ -151,6 +152,120 @@ export const NON_BIOLOGICAL_DASH = "2 3";
 const EDGE_A11Y = { domAttributes: { "aria-hidden": true } } as const;
 
 /**
+ * Which partner a reader should meet first, when the tree can tell them apart.
+ *
+ * Dagre has no notion of a couple. Left to itself it orders a rank to
+ * minimise edge crossings, so which parent lands on the left is a by-product
+ * of how the rest of the tree happened to fall — and it flips when a sibling,
+ * a remarriage, or a child somewhere else entirely is added. That is fine as
+ * a graph and wrong as a family tree, where "father on the left" is what most
+ * Western charts have trained a reader to expect.
+ *
+ * The setting is *lead*, not *left*, on purpose. Father-on-the-left is the
+ * Western convention; a traditional Chinese 族譜 is written in vertical
+ * columns read right to left and puts the husband on the reader's right, so
+ * the portable rule is "the leading partner comes first in reading order"
+ * rather than "the father goes left". While this canvas is `rankdir: "TB"`
+ * and left-to-right, first *is* leftmost, which is the one thing
+ * {@link partnerOrderConstraints} would have to reverse for an RTL canvas.
+ *
+ * `neither` produces no constraints at all, which is what the tree did before
+ * this existed.
+ */
+export type PartnerLead = "father" | "mother" | "neither";
+
+/** Western convention, and what the tree did not previously guarantee. */
+const DEFAULT_PARTNER_LEAD: PartnerLead = "father";
+
+/**
+ * Ask dagre to order each couple, as constraints for its ordering phase.
+ *
+ * Dagre takes `constraints` — `{ left, right }` pairs meaning *left sorts
+ * before right within a rank* — and feeds them to the same constraint graph
+ * that holds its own subgraph constraints, so they are honoured *by* crossing
+ * minimisation rather than imposed on top of it. That is the whole reason to
+ * express this as a constraint instead of swapping two x values after
+ * `dagre.layout` returns: a swap silently discards the arrangement dagre
+ * chose, while a constraint lets it find the best arrangement that satisfies
+ * the couples. Everything else — ranks, routing, the position pass — is left
+ * to dagre exactly as before.
+ *
+ * The pairs cannot contradict each other. Every constraint returned here puts
+ * the leading sex on the left and the other on the right, so a cycle would
+ * need some constraint pointing the other way, and none does.
+ *
+ * ## What it declines to order
+ *
+ * **Couples the tree cannot tell apart.** One partner has to be `male` and
+ * the other `female` for there to be a father and a mother to order.
+ * Same-sex unions, and the very common half-entered couple whose second
+ * partner is still `unknown`, get no constraint and keep dagre's own order.
+ * Guessing would be worse than declining: it would be arbitrary, and a guess
+ * that gets corrected later would move somebody who never needed to move.
+ *
+ * **Anybody partnered more than once.** A twice-married person sits *between*
+ * their two unions — the reason unions are nodes at all, and the case
+ * `lib/tree-layout.seed.test.ts` exists to guard. Constraining them to lead
+ * both spouses would force them to the outside of the pair instead, dragging
+ * one marriage's edge back across the canvas. Between two unions beats
+ * father-left, so the couples in a remarriage keep dagre's order and only
+ * partners who married once are led. In a typical tree that is nearly all of
+ * them.
+ *
+ * Both exclusions are silent by design: there is nothing a reader could do
+ * about either, and an unled couple is not an error, just an unled couple.
+ */
+function partnerOrderConstraints(
+  graph: FamilyGraph,
+  lead: PartnerLead,
+): OrderConstraint[] {
+  if (lead === "neither") return [];
+
+  const leadingSex = lead === "father" ? "male" : "female";
+
+  /**
+   * How many unions each person partners in, so the second exclusion above
+   * costs a lookup per union rather than a rescan of `graph.unions` per
+   * partner.
+   */
+  const partnerships = new Map<string, number>();
+  for (const union of graph.unions) {
+    for (const id of [union.partnerAId, union.partnerBId]) {
+      if (!id) continue;
+      partnerships.set(id, (partnerships.get(id) ?? 0) + 1);
+    }
+  }
+
+  const sexes = new Map(graph.people.map((person) => [person.id, person.sex]));
+  const constraints: OrderConstraint[] = [];
+
+  for (const union of graph.unions) {
+    const { partnerAId, partnerBId } = union;
+    if (!partnerAId || !partnerBId) continue;
+    if (partnerships.get(partnerAId) !== 1) continue;
+    if (partnerships.get(partnerBId) !== 1) continue;
+
+    const sexA = sexes.get(partnerAId);
+    const sexB = sexes.get(partnerBId);
+    // A father and a mother, in some order, or no opinion. A same-sex union
+    // fails the first line; `other` and `unknown` fail the other two.
+    if (sexA === sexB) continue;
+    if (sexA !== "male" && sexA !== "female") continue;
+    if (sexB !== "male" && sexB !== "female") continue;
+
+    const leads = sexA === leadingSex;
+    // `left` is first in the rank's order, which is leftmost while the canvas
+    // is LTR — the one line an RTL canvas would swap.
+    constraints.push({
+      left: leads ? partnerAId : partnerBId,
+      right: leads ? partnerBId : partnerAId,
+    });
+  }
+
+  return constraints;
+}
+
+/**
  * Family trees are layered DAGs, not trees: a person can be a partner in more
  * than one union, so they have more than one downward path. `d3-tree` assumes
  * a single parent slot per node and cannot represent that. Dagre lays out
@@ -158,8 +273,17 @@ const EDGE_A11Y = { domAttributes: { "aria-hidden": true } } as const;
  *
  * Unions are rendered as their own small nodes. That is what lets a twice-
  * married person sit between both of their unions instead of being duplicated.
+ *
+ * What dagre will not decide is which partner of a couple goes on which side,
+ * so {@link partnerOrderConstraints} tells it.
+ *
+ * @param options.partnerLead which partner a reader meets first, defaulting
+ *   to {@link DEFAULT_PARTNER_LEAD}. See {@link PartnerLead}.
  */
-export function layoutFamilyGraph(graph: FamilyGraph): {
+export function layoutFamilyGraph(
+  graph: FamilyGraph,
+  options: { partnerLead?: PartnerLead } = {},
+): {
   nodes: Node[];
   edges: Edge[];
 } {
@@ -211,7 +335,12 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
     });
   }
 
-  dagre.layout(g);
+  dagre.layout(g, {
+    constraints: partnerOrderConstraints(
+      graph,
+      options.partnerLead ?? DEFAULT_PARTNER_LEAD,
+    ),
+  });
 
   const nodes: Node[] = [];
 
