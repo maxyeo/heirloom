@@ -12,10 +12,13 @@
  * only breaking a tie underneath it — this is the right one. `YEO-111` used
  * it for the tab order's tie-break on a person id; by `YEO-116` the callers
  * include a union id, a GEDCOM tag path, a partner search's final id
- * tie-break and a storage key. All of them fit the same rule: the value is
+ * tie-break and a storage key, and `YEO-121` added `/search`'s own final id
+ * tie-break, which had been writing the same two lines out by hand since
+ * before this module existed. All of them fit the same rule: the value is
  * *compared*, never *read* as sorted text — `lib/partner-search.ts`'s call
- * sits underneath a `localeCompare` on the folded name precisely because
- * that name, unlike the id below it, is read.
+ * and `lib/people-search.ts`'s both sit underneath a collation comparison on
+ * the folded name precisely because that name, unlike the id below it, is
+ * read.
  *
  * ## Why not `localeCompare`
  *

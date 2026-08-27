@@ -171,6 +171,14 @@ export function searchPartners(
        * — so under `localeCompare` the two halves of the old key collated
        * as if nothing sat between them. Splitting the fields removes the
        * separator rather than finding a working one.)
+       *
+       * `lib/people-search.ts` argues the same thing about its own
+       * comparator, having never had the key to lose: a collator gives NUL
+       * no primary weight, so any separator handed to one is invisible to
+       * it, and the remedy is to need no separator rather than to find a
+       * better character. Two modules, one rule — if either comparator is
+       * ever tempted back towards a composite key, both docblocks are the
+       * argument against it.
        */
       sortName: foldName(name),
       sortId: person.id,
