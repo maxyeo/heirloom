@@ -23,6 +23,7 @@ import "@xyflow/react/dist/style.css";
 import { AddChildForm } from "@/components/AddChildForm";
 import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { AddSpouseForm } from "@/components/AddSpouseForm";
+import { DescentEdge } from "@/components/DescentEdge";
 import { EditPerson } from "@/components/EditPersonForm";
 import { PersonEntry } from "@/components/PersonEntry";
 import { PersonPanel } from "@/components/PersonPanel";
@@ -119,6 +120,13 @@ function UnionNode() {
 }
 
 const nodeTypes = { person: PersonNode, union: UnionNode };
+
+/**
+ * The one custom edge, and the only kind of line on this canvas that is not
+ * React Flow's own `smoothstep`. See `components/DescentEdge.tsx` for what it
+ * draws differently and why.
+ */
+const edgeTypes = { descent: DescentEdge };
 
 /**
  * Where "skip the family tree" lands (`YEO-108`).
@@ -654,6 +662,7 @@ function FamilyTreeCanvas({
         nodes={nodes}
         edges={layout.edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         // Capped at 1, and aimed at the deep-linked person when there is one.
         // Both are explained where the value is built, above.

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 // Imported through the `@/*` alias on purpose: this is the test that proves
 // Vitest resolves it the same way `tsc` and Next.js do.
 import {
+  DESCENT_STUB,
   PERSON_HEIGHT,
   PERSON_WIDTH,
   layoutFamilyGraph,
@@ -1447,77 +1448,107 @@ describe("sibling order", () => {
  * exactly. Nothing here reaches for `Math.random`, which would make a red run
  * unreproducible — the one thing worse than no test.
  */
-describe("partner lead over generated trees", () => {
-  /** A linear congruential generator, so a failing seed replays exactly. */
-  function rng(seed: number): () => number {
-    let state = seed >>> 0;
-    return () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
-  }
+/** A linear congruential generator, so a failing seed replays exactly. */
+function rng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
+}
 
-  /**
-   * Three generations of couples, their children, and the spouses those
-   * children married.
-   *
-   * Birth years ascend within a sibship so the sibling constraints are real
-   * rather than all-ties, and a spouse is born a year after the sibling they
-   * marry so the two are never the same age. Roughly a third of the children
-   * marry nobody, which is what leaves the ranks ragged enough to be worth
-   * laying out.
-   */
-  function generatedTree(seed: number): FamilyGraph {
-    const random = rng(seed);
-    const people: FamilyGraph["people"] = [];
-    const unions: FamilyGraph["unions"] = [];
-    const childLinks: FamilyGraph["childLinks"] = [];
-    let count = 0;
+/**
+ * Three generations of couples, their children, and the spouses those
+ * children married.
+ *
+ * Birth years ascend within a sibship so the sibling constraints are real
+ * rather than all-ties, and a spouse is born a year after the sibling they
+ * marry so the two are never the same age. Roughly a third of the children
+ * marry nobody, which is what leaves the ranks ragged enough to be worth
+ * laying out.
+ *
+ * At module scope rather than inside the describe that first needed it, because
+ * two properties are now checked over the same 200 trees — where a father is
+ * drawn, and whether two sibships are ever drawn as one line. Both want ranks
+ * no author would think to write out, and neither should be reading a second
+ * generator's idea of a family.
+ *
+ * `spouseParents` is what the second one needs and the first one must not get.
+ * Without it every married-in spouse is a person with no recorded parents, so
+ * no rank ever carries two sibships and there is nothing for two bars to
+ * overlap over. With it, half of them are given a couple of their own on the
+ * rank above, which is the reported shape: a sibling's spouse standing between
+ * two siblings with her own parents drawn beside his. It is an option rather
+ * than a change because the option, left off, draws no random numbers — so the
+ * 200 trees the father-lead property was measured against are the same trees
+ * it still gets.
+ */
+function generatedTree(
+  seed: number,
+  options: { spouseParents?: boolean } = {},
+): FamilyGraph {
+  const random = rng(seed);
+  const people: FamilyGraph["people"] = [];
+  const unions: FamilyGraph["unions"] = [];
+  const childLinks: FamilyGraph["childLinks"] = [];
+  let count = 0;
 
-    const add = (sex: "male" | "female", year: number) => {
-      const id = `p${count++}`;
-      people.push(
-        person({ id, givenName: id, sex, birthDate: `${year}-01-01` }),
-      );
-      return id;
-    };
+  const add = (sex: "male" | "female", year: number) => {
+    const id = `p${count++}`;
+    people.push(person({ id, givenName: id, sex, birthDate: `${year}-01-01` }));
+    return id;
+  };
 
-    unions.push({
-      ...union({ id: "u0" }),
-      partnerAId: add("male", 1900),
-      partnerBId: add("female", 1902),
-    });
-    let parentUnions = ["u0"];
+  unions.push({
+    ...union({ id: "u0" }),
+    partnerAId: add("male", 1900),
+    partnerBId: add("female", 1902),
+  });
+  let parentUnions = ["u0"];
 
-    for (let generation = 1; generation <= 3; generation++) {
-      const nextUnions: string[] = [];
-      for (const parentUnion of parentUnions) {
-        const children = 2 + Math.floor(random() * 3);
-        for (let birth = 0; birth < children; birth++) {
-          const sex = random() < 0.5 ? "male" : "female";
-          const born = 1900 + generation * 25 + birth * 2;
-          const child = add(sex, born);
+  for (let generation = 1; generation <= 3; generation++) {
+    const nextUnions: string[] = [];
+    for (const parentUnion of parentUnions) {
+      const children = 2 + Math.floor(random() * 3);
+      for (let birth = 0; birth < children; birth++) {
+        const sex = random() < 0.5 ? "male" : "female";
+        const born = 1900 + generation * 25 + birth * 2;
+        const child = add(sex, born);
+        childLinks.push({
+          unionId: parentUnion,
+          childId: child,
+          relation: "biological",
+        });
+        if (generation === 3 || random() >= 0.7) continue;
+
+        const spouse = add(sex === "male" ? "female" : "male", born + 1);
+        if (options.spouseParents && random() < 0.5) {
+          const inLaws = `u-in-${unions.length}`;
+          unions.push({
+            ...union({ id: inLaws }),
+            partnerAId: add("male", born - 26),
+            partnerBId: add("female", born - 24),
+          });
           childLinks.push({
-            unionId: parentUnion,
-            childId: child,
+            unionId: inLaws,
+            childId: spouse,
             relation: "biological",
           });
-          if (generation === 3 || random() >= 0.7) continue;
-
-          const spouse = add(sex === "male" ? "female" : "male", born + 1);
-          const id = `u${unions.length}`;
-          unions.push({
-            ...union({ id }),
-            partnerAId: sex === "male" ? child : spouse,
-            partnerBId: sex === "male" ? spouse : child,
-          });
-          nextUnions.push(id);
         }
+        const id = `u${unions.length}`;
+        unions.push({
+          ...union({ id }),
+          partnerAId: sex === "male" ? child : spouse,
+          partnerBId: sex === "male" ? spouse : child,
+        });
+        nextUnions.push(id);
       }
-      parentUnions = nextUnions;
-      if (parentUnions.length === 0) break;
     }
-
-    return { people, unions, childLinks };
+    parentUnions = nextUnions;
+    if (parentUnions.length === 0) break;
   }
 
+  return { people, unions, childLinks };
+}
+
+describe("partner lead over generated trees", () => {
   it("never draws a father to the right of his wife", () => {
     const failures: string[] = [];
     let couples = 0;
@@ -1551,5 +1582,232 @@ describe("partner lead over generated trees", () => {
     // the equivalent set came out reversed before the blocks.
     expect(couples).toBeGreaterThan(1000);
     expect(failures).toEqual([]);
+  });
+});
+
+describe("descent bars", () => {
+  /**
+   * The family this was reported from, in the shape that matters.
+   *
+   * Three Yeo siblings; the middle one married a Kerk whose own parents are
+   * recorded, so she is drawn between her husband and his younger brother —
+   * where {@link siblingOrderConstraints} deliberately puts her — and her
+   * parents' union is on the same rank as his. The Yeo sibship's bar has to
+   * reach over her to reach David, and the Kerk bar runs underneath it. Two
+   * bars, one inside the other, on one rank.
+   *
+   * Before this the canvas drew both at the same height, so they merged into a
+   * single unbroken line with a drop under each of the four cards, and the
+   * picture said all four adults above were the parents of all four below.
+   */
+  function marriedMiddleChild(): FamilyGraph {
+    return {
+      people: [
+        person({ id: "yeo-father", givenName: "Beng Po", sex: "male" }),
+        person({ id: "yeo-mother", givenName: "Monica" }),
+        person({ id: "kerk-father", givenName: "Neng", sex: "male" }),
+        person({ id: "kerk-mother", givenName: "Toh Eng" }),
+        person({
+          id: "eldest",
+          givenName: "Marianne",
+          birthDate: "1954-01-01",
+        }),
+        person({
+          id: "middle",
+          givenName: "Gerard",
+          sex: "male",
+          birthDate: "1956-04-30",
+        }),
+        person({ id: "wife", givenName: "Siew Chu", birthDate: "1954-10-18" }),
+        person({
+          id: "youngest",
+          givenName: "David",
+          sex: "male",
+          birthDate: "1958-01-01",
+        }),
+      ],
+      unions: [
+        {
+          ...union({ id: "u-yeo" }),
+          partnerAId: "yeo-father",
+          partnerBId: "yeo-mother",
+        },
+        {
+          ...union({ id: "u-kerk" }),
+          partnerAId: "kerk-father",
+          partnerBId: "kerk-mother",
+        },
+        {
+          ...union({ id: "u-married" }),
+          partnerAId: "middle",
+          partnerBId: "wife",
+        },
+      ],
+      childLinks: [
+        { unionId: "u-yeo", childId: "eldest", relation: "biological" },
+        { unionId: "u-yeo", childId: "middle", relation: "biological" },
+        { unionId: "u-yeo", childId: "youngest", relation: "biological" },
+        { unionId: "u-kerk", childId: "wife", relation: "biological" },
+      ],
+    };
+  }
+
+  /**
+   * The horizontal run each union's children hang from, as the layout draws
+   * it: the height the edges bend at, and the two ends the line reaches
+   * between.
+   *
+   * Reconstructed from the edges rather than exported, because it is the edges
+   * a reader sees. A union whose descent is a single vertical drop is left out
+   * for the same reason the layout leaves it out — it draws no horizontal run,
+   * so there is no line of it to merge with anybody else's.
+   */
+  function bars(graph: FamilyGraph) {
+    const { nodes, edges } = layoutFamilyGraph(graph);
+    const centre = (id: string) => {
+      const node = nodeById(nodes, id);
+      const width = node.type === "person" ? PERSON_WIDTH : UNION_SIZE;
+      return { x: node.position.x + width / 2, y: node.position.y };
+    };
+
+    const runs = new Map<
+      string,
+      { y: number | undefined; left: number; right: number; rank: number }
+    >();
+    for (const edge of edges) {
+      if (!edge.id.startsWith("c-")) continue;
+      const marker = centre(edge.source);
+      const child = centre(edge.target);
+      const known = runs.get(edge.source);
+      const barY = (edge.data as { barY?: number } | undefined)?.barY;
+      if (known) {
+        known.left = Math.min(known.left, child.x);
+        known.right = Math.max(known.right, child.x);
+      } else {
+        runs.set(edge.source, {
+          y: barY,
+          left: Math.min(marker.x, child.x),
+          right: Math.max(marker.x, child.x),
+          rank: marker.y,
+        });
+      }
+    }
+
+    return [...runs.entries()]
+      .map(([unionId, run]) => ({ unionId, ...run }))
+      .filter((run) => run.right - run.left >= 1);
+  }
+
+  it("draws two overlapping sibships as two lines, not one", () => {
+    const drawn = new Map(
+      bars(marriedMiddleChild()).map((bar) => [bar.unionId, bar]),
+    );
+    const yeo = drawn.get("u-yeo");
+    const kerk = drawn.get("u-kerk");
+    if (!yeo || !kerk) throw new Error("both sibships should draw a bar");
+
+    // The overlap is the point of the fixture: if these ever stop crossing,
+    // the assertion below stops testing anything.
+    expect(yeo.rank).toBe(kerk.rank);
+    expect(yeo.left).toBeLessThan(kerk.right);
+    expect(kerk.left).toBeLessThan(yeo.right);
+
+    expect(yeo.y).not.toBe(kerk.y);
+  });
+
+  it("gives the sibship that spans the other the higher bar", () => {
+    const drawn = new Map(
+      bars(marriedMiddleChild()).map((bar) => [bar.unionId, bar]),
+    );
+    const yeo = drawn.get("u-yeo");
+    const kerk = drawn.get("u-kerk");
+    if (yeo?.y === undefined || kerk?.y === undefined) {
+      throw new Error("both sibships should draw a bar");
+    }
+
+    // Which is what keeps a child's line clean: the wife rises to the lower
+    // bar and stops under the Yeo bar rather than meeting it, and her
+    // brothers-in-law's drops reach past hers on both sides.
+    expect(yeo.y).toBeLessThan(kerk.y);
+  });
+
+  it("leaves a rank with one sibship exactly where it drew before", () => {
+    const alone: FamilyGraph = {
+      people: [
+        person({ id: "father", givenName: "Frank", sex: "male" }),
+        person({ id: "mother", givenName: "Maud" }),
+        person({ id: "eldest", givenName: "Edwin", birthDate: "1904-01-01" }),
+        person({
+          id: "youngest",
+          givenName: "Yvonne",
+          birthDate: "1912-02-02",
+        }),
+      ],
+      unions: [
+        { ...union({ id: "u1" }), partnerAId: "father", partnerBId: "mother" },
+      ],
+      childLinks: [
+        { unionId: "u1", childId: "eldest", relation: "biological" },
+        { unionId: "u1", childId: "youngest", relation: "biological" },
+      ],
+    };
+
+    const [only] = bars(alone);
+    const { nodes } = layoutFamilyGraph(alone);
+    const marker = nodeById(nodes, "u1").position.y + UNION_SIZE;
+    const childTop = nodeById(nodes, "eldest").position.y;
+    // The midpoint `smoothstep` bends at on its own. Nothing about a tree
+    // with one sibship per rank moves.
+    expect(only.y).toBe((marker + childTop) / 2);
+  });
+
+  it("never draws two sibships on one rank at the same height", () => {
+    const failures: string[] = [];
+    let overlaps = 0;
+
+    for (let seed = 1; seed <= 200; seed++) {
+      const drawn = bars(generatedTree(seed, { spouseParents: true }));
+      for (let a = 0; a < drawn.length; a++) {
+        for (let b = a + 1; b < drawn.length; b++) {
+          const [one, other] = [drawn[a], drawn[b]];
+          if (one.rank !== other.rank) continue;
+          if (one.right < other.left || other.right < one.left) continue;
+
+          overlaps++;
+          if (one.y === other.y) {
+            failures.push(`seed ${seed}, ${one.unionId} and ${other.unionId}`);
+          }
+        }
+      }
+    }
+
+    // The guard that keeps a green run meaningful, as in the property above:
+    // trees with no overlapping bars at all would pass by asserting nothing.
+    // The 200 seeds yield 311 overlapping pairs, and every one of them was
+    // drawn as a single line before this existed — checked by holding every
+    // bar at its midpoint again and watching all 311 come back.
+    expect(overlaps).toBeGreaterThan(200);
+    expect(failures).toEqual([]);
+  });
+
+  it("keeps every bar inside the gap between the two ranks", () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const graph = generatedTree(seed, { spouseParents: true });
+      const { nodes, edges } = layoutFamilyGraph(graph);
+      const at = new Map(nodes.map((node) => [node.id, node.position.y]));
+
+      for (const edge of edges) {
+        const barY = (edge.data as { barY?: number } | undefined)?.barY;
+        if (barY === undefined) continue;
+
+        const marker = (at.get(edge.source) ?? 0) + UNION_SIZE;
+        const childTop = at.get(edge.target) ?? 0;
+        // A bar nearer than the stub is drawn by overshooting past its own
+        // marker and coming back — see DESCENT_STUB. A bar past the child's
+        // card is drawn through it.
+        expect(barY).toBeGreaterThanOrEqual(marker + DESCENT_STUB);
+        expect(barY).toBeLessThanOrEqual(childTop - DESCENT_STUB);
+      }
+    }
   });
 });
