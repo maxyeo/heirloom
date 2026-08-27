@@ -41,7 +41,17 @@ export default async function TreePage() {
     <main className="flex h-[calc(100dvh-var(--header-height))] flex-col">
       {/* The h1 carries its own rule (globals.css), so the header needs no
           border of its own. */}
-      <header className="flex items-start justify-between gap-3 px-4 py-3">
+      {/*
+        The button sits beside the title rather than flush against the right
+        edge, because the right edge is no longer the page's to give: the
+        person panel is `fixed` from the site header down (see
+        `components/PersonPanel.tsx`), and a `justify-between` header put
+        "Add person" under it the moment anybody clicked a node. Grouped left
+        it collides with nothing, at any width, selected or not — which beats
+        reserving `w-80` of permanent empty paper for a panel that is usually
+        closed.
+      */}
+      <header className="flex items-start gap-3 px-4 py-3">
         <div className="min-w-0">
           <h1>Family tree</h1>
           <p className="text-caption text-ink-muted">

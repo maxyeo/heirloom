@@ -6,6 +6,7 @@ import {
   IndividualFieldset,
   emptyIndividualFormValues,
   individualFormValuesFrom,
+  isBlankIndividual,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import type {
@@ -444,5 +445,47 @@ describe("prefilling from a record", () => {
     expect((control(host, "surname") as HTMLInputElement).value).toBe("Hale");
     // Not the string "null", which is what a looser conversion would show.
     expect((control(host, "birthPlace") as HTMLInputElement).value).toBe("");
+  });
+});
+
+/**
+ * What `components/tree-panels.ts` asks before it discards a form: has the
+ * author started filling this in? The whole point is the field that does not
+ * start empty.
+ */
+describe("isBlankIndividual", () => {
+  it("calls an untouched form blank", () => {
+    expect(isBlankIndividual(emptyIndividualFormValues)).toBe(true);
+  });
+
+  it("notices a typed field", () => {
+    expect(
+      isBlankIndividual({ ...emptyIndividualFormValues, givenName: "Vera" }),
+    ).toBe(false);
+  });
+
+  it("does not mistake the default sex for something typed", () => {
+    // `sex` starts at "unknown", not at "". A blankness test written as "no
+    // truthy values" would call this form *not* blank and never discard it.
+    expect(isBlankIndividual({ ...emptyIndividualFormValues })).toBe(true);
+    expect(
+      isBlankIndividual({ ...emptyIndividualFormValues, sex: "female" }),
+    ).toBe(false);
+  });
+
+  it("looks at every field the form holds", () => {
+    // Derived from `emptyIndividualFormValues` rather than from a list of
+    // names, so a field added above is covered without anybody editing this.
+    for (const field of Object.keys(
+      emptyIndividualFormValues,
+    ) as (keyof IndividualFormValues)[]) {
+      expect(
+        isBlankIndividual({
+          ...emptyIndividualFormValues,
+          [field]: "something else",
+        }),
+        `${field} is not looked at`,
+      ).toBe(false);
+    }
   });
 });

@@ -6,6 +6,7 @@ import {
   isTopmost,
   nextTrapIndex,
   topmost,
+  withSurface,
   withoutSurface,
 } from "@/lib/surface-stack";
 
@@ -59,6 +60,11 @@ import {
  * in the *same* commit would register child before parent. No pair here does:
  * a dialogue is always opened by a press, which is a commit later than the
  * panel it opens over.
+ *
+ * The one place mount order is not the answer is `underneath`, and it is a
+ * position chosen once at registration rather than a re-ordering: a person's
+ * record can open *below* the add-person panel already covering it. See
+ * `withSurface` in `lib/surface-stack.ts`.
  */
 
 /**
@@ -79,6 +85,16 @@ export interface DismissableSurfaceOptions {
   modal?: boolean;
   /** The element Tab is confined to. Required when `modal` is true. */
   surfaceRef?: RefObject<HTMLElement | null>;
+  /**
+   * Whether this surface is drawn *below* anything already open, and so
+   * should not take the Escape aimed at it.
+   *
+   * The one caller is `components/PersonPanel.tsx`, whose record can open
+   * underneath the add-person panel covering it. See `withSurface` in
+   * `lib/surface-stack.ts` for why that pair is the exception and why
+   * "underneath everything" is the honest way to say it.
+   */
+  underneath?: boolean;
   /**
    * Where focus goes when this surface leaves — the node that opened the
    * panel, the button that opened the dialogue.
@@ -235,7 +251,17 @@ export function useDismissableSurface(
    */
   useEffect(() => {
     const id = nextSurfaceId++;
-    stack = [...stack, { id, options: optionsRef }];
+    /*
+      Read off the ref, which was assigned during this component's own render
+      and so is already the current one. It is read *once*, here: where a
+      surface sits is settled when it opens, and a surface that moved would be
+      the re-registration the note above forbids.
+    */
+    stack = withSurface(
+      stack,
+      { id, options: optionsRef },
+      optionsRef.current.underneath,
+    );
     if (stack.length === 1) {
       document.addEventListener("keydown", onDocumentKeyDown);
     }

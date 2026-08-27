@@ -674,7 +674,16 @@ describe("closing the panel", () => {
  * So this mounts them the way `app/tree/page.tsx` does, which is the smallest
  * arrangement in which the bug exists at all.
  */
-describe("the add-person panel over the detail panel", () => {
+/**
+ * The two panels that share the right-hand column, and which of them gives way.
+ *
+ * The rule and its one asymmetry live in `components/tree-panels.ts`; what is
+ * worth a canvas is that the registry is actually *reached* from both ends,
+ * because the two panels render in different subtrees and neither import nor
+ * prop joins them. A wiring that looks right and silently does nothing is
+ * exactly what this file exists for.
+ */
+describe("the add-person panel and a person's record", () => {
   /** The header and the canvas, as the tree page composes them. */
   function renderPage(): HTMLElement {
     return mount(
@@ -693,32 +702,87 @@ describe("the add-person panel over the detail panel", () => {
     return host.querySelector<HTMLElement>('aside[aria-label="Add a person"]');
   }
 
-  it("closes the add-person panel first and the record second", () => {
+  /** See the identical note in `AddPersonPanel.test.tsx`. */
+  function type(host: HTMLElement, name: string, value: string): void {
+    const element = host.querySelector<HTMLElement>(`[name="${name}"]`);
+    if (element === null) throw new Error(`no control named ${name}`);
+    const setter = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(element) as object,
+      "value",
+    )?.set;
+    setter?.call(element, value);
+    act(() => {
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("closes the record when the add-person panel opens", () => {
     const host = renderPage();
     open(host, "rose");
+    expect(detailPanel(host)).not.toBeNull();
+
     click(buttonLabelled(host, "Add person"));
 
-    expect(detailPanel(host)).not.toBeNull();
     expect(addPersonPanel(host)).not.toBeNull();
+    expect(detailPanel(host)).toBeNull();
+    /*
+      And focus is in the new panel's first field, which is where the fieldset
+      puts it — not back on the node the record was handing focus to as it
+      unmounted. The press claims focus for the button before that happens,
+      precisely so `restoreFocus`'s "nobody else wanted it" guard finds
+      somebody who did; jsdom, like Safari, focuses nothing on
+      `element.click()`, so without that line this reads the node.
+    */
+    expect(document.activeElement).toBe(
+      host.querySelector('[name="givenName"]'),
+    );
+  });
+
+  it("closes an untouched add-person panel when a person is selected", () => {
+    const host = renderPage();
+    click(buttonLabelled(host, "Add person"));
+    expect(addPersonPanel(host)).not.toBeNull();
+
+    open(host, "rose");
+
+    expect(addPersonPanel(host)).toBeNull();
+    expect(detailPanel(host)).not.toBeNull();
+  });
+
+  it("leaves a half-entered person alone when somebody is selected", () => {
+    const host = renderPage();
+    click(buttonLabelled(host, "Add person"));
+    type(host, "givenName", "Vera");
+
+    open(host, "rose");
+
+    // Closing that panel discards what is in it, and a click on a node
+    // elsewhere is not a discard. Both panels stand.
+    expect(addPersonPanel(host)).not.toBeNull();
+    expect(
+      (host.querySelector('[name="givenName"]') as HTMLInputElement).value,
+    ).toBe("Vera");
+    expect(detailPanel(host)).not.toBeNull();
+  });
+
+  it("still answers one Escape with one surface when both are open", () => {
+    const host = renderPage();
+    click(buttonLabelled(host, "Add person"));
+    type(host, "givenName", "Vera");
+    open(host, "rose");
+
+    expect(addPersonPanel(host)).not.toBeNull();
+    expect(detailPanel(host)).not.toBeNull();
 
     pressEscape();
 
-    // One keystroke, one surface. The record is still open behind it.
+    // `YEO-83`: the topmost surface, and only it. The record stands behind.
     expect(addPersonPanel(host)).toBeNull();
     expect(detailPanel(host)).not.toBeNull();
 
     pressEscape();
 
     expect(detailPanel(host)).toBeNull();
-    /*
-      And focus is left where the *first* Escape put it: on the button the
-      add-person panel came from. The canvas only rescues focus that the
-      browser dropped on `<body>` when the panel unmounted — a reader who is
-      demonstrably somewhere else is not dragged back to the node. That guard
-      is the hook's, and it is why closing two surfaces in a row does not end
-      in a fight over the cursor.
-    */
-    expect(document.activeElement).toBe(buttonLabelled(host, "Add person"));
   });
 });
 

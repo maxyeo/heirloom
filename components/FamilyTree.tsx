@@ -31,6 +31,7 @@ import { PersonRemoval } from "@/components/PersonRemoval";
 import { SetParentsForm } from "@/components/SetParentsForm";
 import { SkipLink } from "@/components/SkipLink";
 import { TreeLegend } from "@/components/TreeLegend";
+import { personSelectedOnCanvas } from "@/components/tree-panels";
 import { TreeEmptyState, TreeStartHint } from "@/components/TreeOnboarding";
 import { UnionMerge } from "@/components/UnionMerge";
 import { UnionOrder } from "@/components/UnionOrder";
@@ -497,6 +498,27 @@ function FamilyTreeCanvas({
     () => (selectedId === null ? null : nodeElement(selectedId)),
     [selectedId, nodeElement],
   );
+
+  /**
+   * Selecting somebody takes the add-person panel off the right-hand column.
+   *
+   * Hung off `selectedId` rather than off a click handler because there is no
+   * one click to hang it off: a node is selected by a press, by Enter on a
+   * focused node, and by a relative's link inside the record — the three
+   * routes `onNodesChange` exists to collapse into one piece of state. This is
+   * the same reasoning that put the URL mirror below on the state rather than
+   * on the events that change it.
+   *
+   * Only a selection, never a deselection: closing the record must not close a
+   * panel the author opened deliberately. And `personSelectedOnCanvas` decides
+   * on its own whether the add-person panel has anything in it worth keeping —
+   * see `components/tree-panels.ts`, which is also why this does not care that
+   * the effect re-runs for a deep link arriving with nothing open.
+   */
+  useEffect(() => {
+    if (selectedId === null) return;
+    personSelectedOnCanvas();
+  }, [selectedId]);
 
   /**
    * The selection and the URL, kept saying the same thing (E2-T4).

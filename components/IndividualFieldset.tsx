@@ -144,6 +144,29 @@ export const emptyIndividualFormValues: IndividualFormValues = Object.freeze({
 });
 
 /**
+ * Whether the author has typed nothing into a person form yet.
+ *
+ * Compared field by field against `emptyIndividualFormValues` rather than
+ * asking whether every value is the empty string, because one of them is not:
+ * `sex` starts at `"unknown"`, which is a real value in the column and the
+ * one a `<select>` has to be showing something for. A blankness test written
+ * as "no truthy values" would call a form blank only after somebody had
+ * changed the sex *back*, which is the wrong answer in both directions.
+ *
+ * Derived from the constant rather than restating its keys, so a field added
+ * above is covered here without anybody remembering to come back.
+ *
+ * `components/tree-panels.ts` is the caller: closing the add-person panel
+ * discards what is in it, so a click elsewhere on the tree is allowed to
+ * close it only while there is nothing to discard.
+ */
+export function isBlankIndividual(values: IndividualFormValues): boolean {
+  return Object.entries(emptyIndividualFormValues).every(
+    ([field, blank]) => values[field as IndividualFormField] === blank,
+  );
+}
+
+/**
  * A person who already exists, as a form can hold them (E3-T3, `YEO-31`).
  *
  * The other direction of the conversion described above, and the one the edit

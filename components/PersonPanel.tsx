@@ -4,6 +4,7 @@ import { useEffect, useRef, type Ref } from "react";
 
 import { PersonPortrait } from "@/components/PersonPortrait";
 import { useDismissableSurface } from "@/components/surface-stack";
+import { usePersonRecordPanel } from "@/components/tree-panels";
 import type {
   ChildLink,
   ParentLink,
@@ -138,7 +139,22 @@ export function PersonPanel({
   // the panel, or on a link inside it. The shared listener is on the document
   // for that reason; a handler on the panel would only catch the second. Not
   // `modal`: the panel is part of the page and is deliberately tabbable past.
-  useDismissableSurface({ onDismiss: onClose, returnFocus });
+  /*
+    `underneath` because this record can now open while the add-person panel
+    is up — that panel is `z-20` to this one's `z-10` and wider, so it covers
+    this completely, and an Escape over it must close it rather than something
+    invisible behind it. See `withSurface` in `lib/surface-stack.ts`.
+  */
+  useDismissableSurface({ onDismiss: onClose, returnFocus, underneath: true });
+
+  /**
+   * And the right-hand column, which the add-person panel wants too: opening
+   * that one closes this. Unconditionally, because this panel is a reading of
+   * a row rather than a draft — there is nothing here that is not still in the
+   * database, and one click on the node reopens it. See
+   * `components/tree-panels.ts`.
+   */
+  usePersonRecordPanel(onClose);
 
   // Move focus into the panel when it opens, and again when it swaps to a
   // different person. Without this a keyboard user selects a node and their
@@ -153,7 +169,28 @@ export function PersonPanel({
     <aside
       ref={ref}
       aria-label={`Details for ${detail.name}`}
-      className="absolute inset-x-0 bottom-0 z-10 flex max-h-[60%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
+      /*
+        `fixed`, not `absolute`. Absolute resolved against the canvas wrapper
+        in `FamilyTree`, and that wrapper starts below the tree page's own
+        header — so the record stopped an `<h1>`, two lines of counts and a
+        button short of the top of the screen, and left a band of empty paper
+        beside them. Nothing between here and the viewport establishes a
+        containing block (the shell transforms nothing), so `fixed` reaches
+        past that wrapper to the box that actually matters: the viewport, less
+        the sticky site header.
+
+        `top-(--header-height)` is the same number `app/tree/page.tsx`
+        subtracts to size its `main`, so the panel is exactly as tall as the
+        page it belongs to and no taller. The site header keeps `z-40` against
+        this `z-10`, so the panel passes under it rather than over it, and the
+        page header's own button is moved out of the way in `page.tsx`.
+
+        Below `sm` it stays the bottom sheet it always was. `max-h-[60%]` now
+        measures against the viewport rather than the canvas, which makes the
+        sheet a little taller on a phone — the right direction for a scrolling
+        record, and it still leaves the tree the greater share.
+      */
+      className="fixed inset-x-0 bottom-0 z-10 flex max-h-[60%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:top-(--header-height) sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
     >
       <div className="flex items-start justify-between gap-2 border-b border-rule px-4 py-3">
         {/*

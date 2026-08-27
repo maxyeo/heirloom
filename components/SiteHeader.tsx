@@ -39,13 +39,20 @@ export function SiteHeader({
 
       {/* Serif over sans, the way the masthead of a Wikipedia page is set. The
           hover underline that globals.css gives every link would run under both
-          lines of a stacked wordmark, so it is turned off here. */}
+          lines of a stacked wordmark, so it is turned off here.
+
+          The `leading-*` has to sit on each span rather than on the `Link`:
+          `text-h3` and `text-note` each carry their own 1.5 line-height from
+          the type scale, and a child's own line-height beats an inherited one,
+          so a `leading-tight` on the parent never reached either line. Set
+          where it lands, it closes the gap the two half-leadings opened
+          between the wordmark and the tagline. */}
       <Link
         href="/"
-        className="flex shrink-0 flex-col leading-tight text-ink hover:no-underline"
+        className="flex shrink-0 flex-col text-ink hover:no-underline"
       >
-        <span className="font-serif text-h3">{name}</span>
-        <span className="hidden text-note text-ink-muted sm:block">
+        <span className="font-serif text-h3 leading-none">{name}</span>
+        <span className="hidden text-note leading-tight text-ink-muted sm:block">
           the family wiki
         </span>
       </Link>
