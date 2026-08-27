@@ -51,11 +51,19 @@ export function revisionTimestampIso(when: Date): string {
  *
  * `revisions.created_by` is nullable in the schema — `text("created_by")`,
  * no `.notNull()` — which is not a hole in the save path so much as an
- * honest acknowledgement that not every row goes through it: `db/seed.ts`
- * inserts pages with no revisions at all, and a revision inserted by hand in
- * a SQL console (a data fix, a migration backfill) has no signed-in author to
- * attribute. Rendering an empty string for those would read as a rendering
- * bug rather than as the true state of the data.
+ * honest acknowledgement that not every row goes through it. Every insert
+ * this repository makes does attribute one: `writeRevision`
+ * (`lib/save-page.ts`) takes `editedBy: string`, not an optional one, and it
+ * is the single insert `lib/create-page.ts` and `lib/restore-revision.ts`
+ * both write through; `db/seed.ts` writes its one revision, in the same
+ * transaction as the page, with a seed address on it. The null is for the rows written around those paths: a
+ * revision typed into a SQL console as a data fix, or one a migration writes,
+ * neither of which has a signed-in author to attribute.
+ * `drizzle/0012_revision_categories.sql` is how near that comes: it reaches
+ * into `revisions` directly, and only misses the case because it updates
+ * existing rows rather than inserting new ones. Rendering an empty string
+ * for the rows that do arrive that way would read as a rendering bug rather
+ * than as the true state of the data.
  */
 export function formatRevisionAuthor(email: string | null): string {
   return email ?? "Unknown";
