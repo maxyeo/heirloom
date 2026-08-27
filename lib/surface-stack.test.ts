@@ -4,6 +4,7 @@ import {
   isTopmost,
   nextTrapIndex,
   topmost,
+  withSurface,
   withoutSurface,
 } from "@/lib/surface-stack";
 
@@ -33,6 +34,28 @@ describe("the stack", () => {
     expect(topmost([panel, dialogue])).toBe(dialogue);
     expect(isTopmost([panel, dialogue], dialogue.id)).toBe(true);
     expect(isTopmost([panel, dialogue], panel.id)).toBe(false);
+  });
+
+  it("puts a new surface on top", () => {
+    expect(withSurface([panel], dialogue)).toEqual([panel, dialogue]);
+    expect(topmost(withSurface([panel], dialogue))).toBe(dialogue);
+  });
+
+  it("puts an `underneath` surface below what is already open", () => {
+    // The tree's one pair where mount order and z-index disagree: a person's
+    // record opening below the add-person panel drawn over it. Escape has to
+    // reach the panel somebody can see.
+    const record = { id: 3 };
+    expect(withSurface([panel], record, true)).toEqual([record, panel]);
+    expect(topmost(withSurface([panel], record, true))).toBe(panel);
+  });
+
+  it("makes `underneath` the topmost surface when nothing else is open", () => {
+    // Which is the ordinary case for that record: it is the lowest thing the
+    // canvas draws, so "at the bottom" and "on top" are the same place until
+    // something else is up.
+    const record = { id: 3 };
+    expect(topmost(withSurface([], record, true))).toBe(record);
   });
 
   it("carries whatever else an entry holds", () => {

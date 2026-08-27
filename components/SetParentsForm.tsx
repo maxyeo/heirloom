@@ -152,7 +152,13 @@ export function SetParentsForm({
    * own heading. Naming somewhere here would be a second opinion about where
    * focus goes, arriving in the same commit as the first.
    */
-  useDismissableSurface({ onDismiss: onCancel });
+  /*
+    `underneath` for the reason `PersonPanel` gives: this form stands in the
+    record's slot at `z-10`, and the add-person panel is `z-20` and wider, so
+    when both are up this one is the invisible half. See `withSurface` in
+    `lib/surface-stack.ts`.
+  */
+  useDismissableSurface({ onDismiss: onCancel, underneath: true });
 
   /**
    * And focus moves into the form when it opens, the way the panel moves it
@@ -291,7 +297,15 @@ export function SetParentsForm({
   return (
     <aside
       aria-label={`Set parents for ${person.name}`}
-      className="absolute inset-x-0 bottom-0 z-10 flex max-h-[75%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
+      /*
+        `fixed` from the site header down, the same as every other panel in
+        this slot — see `components/PersonPanel.tsx`, which this one replaces
+        rather than covers. `absolute` resolved against `FamilyTree`'s canvas
+        wrapper, which starts below the tree page's own header, so the form was
+        short by an `<h1>` and two lines of counts and left a band of empty
+        paper beside them.
+      */
+      className="fixed inset-x-0 bottom-0 z-10 flex max-h-[75%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:top-(--header-height) sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
     >
       <div className="flex items-start justify-between gap-2 border-b border-rule px-4 py-3">
         {/*

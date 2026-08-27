@@ -97,7 +97,14 @@ export function UnionOrder({
   const last = spouses.length - 1;
 
   return (
-    <section className="border-t border-rule-soft pt-3">
+    <section
+      /*
+        `py-3` for the reason `components/EditPersonForm.tsx` gives at its own
+        `<section>`: the trailing padding is what keeps the next section's rule
+        off an inline-block button that hangs below its line box.
+      */
+      className="border-t border-rule-soft py-3"
+    >
       <h3 className="text-note text-ink-muted">Order of unions</h3>
       <p className="text-caption text-ink-muted">
         For when the dates are unknown but the order is not.

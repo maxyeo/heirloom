@@ -114,7 +114,14 @@ export function PersonRemoval({
   const returnFocus = () => triggerRef.current;
 
   return (
-    <section className="border-t border-rule-soft pt-3">
+    <section
+      /*
+        `py-3` for the reason `components/EditPersonForm.tsx` gives at its own
+        `<section>`: the trailing padding is what keeps the next section's rule
+        off an inline-block button that hangs below its line box.
+      */
+      className="border-t border-rule-soft py-3"
+    >
       <button
         ref={triggerRef}
         type="button"

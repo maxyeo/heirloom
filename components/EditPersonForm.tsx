@@ -144,7 +144,24 @@ export function EditPerson({ person, action }: EditPersonProps) {
   const returnFocus = useCallback(() => triggerRef.current, []);
 
   return (
-    <section className="border-t border-rule-soft pt-3">
+    <section
+      /*
+        `py-3`, not `pt-3`. The trailing padding is what keeps the *next*
+        section's rule off this button, and it is load-bearing rather than
+        taste: a button is an inline-block sitting on the line's baseline, and
+        this one reaches further below that baseline than the line box does —
+        its own `py-1`, its border and a `text-note` descender, against a line
+        box struck at the panel's body size. So it hung a couple of pixels past
+        the bottom of the box meant to contain it, and the `border-t` that the
+        section below draws immediately underneath was drawn *through* it.
+
+        The same three words are on the other three footer sections
+        (`PersonRemoval`, `UnionOrder`, `UnionMerge`), which end in the same
+        kind of button and had the same collision. This is the note for all
+        four.
+      */
+      className="border-t border-rule-soft py-3"
+    >
       <button
         ref={triggerRef}
         type="button"

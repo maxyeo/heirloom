@@ -72,6 +72,32 @@ export function isTopmost(
 }
 
 /**
+ * The stack with `surface` added, as a new array.
+ *
+ * `underneath` is for a surface that is *drawn* below one already open, and it
+ * exists because the tree grew a pair where mount order and z-index disagree.
+ * A person's record (`z-10`) can now open while the add-person panel (`z-20`)
+ * is still up, holding a half-entered person nobody wants discarded — see
+ * `components/tree-panels.ts`. Pushed on top in the ordinary way, the record
+ * would answer an Escape aimed at the panel completely covering it, and
+ * nothing on screen would change: the exact symptom `YEO-83` was written to
+ * remove, arriving from the other direction.
+ *
+ * "Underneath everything" rather than "underneath that one panel" because it
+ * is true of this surface in general. The record is the lowest thing this
+ * canvas draws — every dialogue it opens, it opens over itself — so a record
+ * that arrives while anything at all is up belongs at the bottom, and with an
+ * empty stack the two positions are the same place.
+ */
+export function withSurface<T extends StackedSurface>(
+  stack: readonly T[],
+  surface: T,
+  underneath = false,
+): T[] {
+  return underneath ? [surface, ...stack] : [...stack, surface];
+}
+
+/**
  * The stack with `id` gone, as a new array.
  *
  * By id rather than by position, because a surface does not necessarily leave

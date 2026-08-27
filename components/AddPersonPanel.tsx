@@ -12,10 +12,15 @@ import {
 import {
   IndividualFieldset,
   emptyIndividualFormValues,
+  isBlankIndividual,
   type IndividualFormField,
   type IndividualFormValues,
 } from "@/components/IndividualFieldset";
 import { useDismissableSurface } from "@/components/surface-stack";
+import {
+  addPersonPanelOpening,
+  useAddPersonPanel,
+} from "@/components/tree-panels";
 import {
   emptyIndividualFormState,
   type IndividualFormState,
@@ -115,7 +120,30 @@ export function AddPersonPanel({
       <button
         ref={openerRef}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          /*
+            The record panel and this one share the right-hand column, so
+            opening this one takes that one off it — see
+            `components/tree-panels.ts` for which way round that goes and why.
+            Called before `setOpen`, so the record is already on its way out in
+            the same commit this panel arrives in, rather than a frame of both.
+          */
+          addPersonPanelOpening();
+
+          /*
+            And focus this button, which pressing it does not reliably do:
+            jsdom moves no focus on `element.click()` and neither does Safari
+            (the note on `openerRef` below says the same thing about reading
+            focus rather than setting it). It matters here because the record
+            panel is unmounting on the line above, and `restoreFocus` in
+            `components/surface-stack.ts` hands focus back to its node only
+            when nothing else has claimed it. Claiming it is what stops a
+            press on this button from sending the keyboard to a person on the
+            canvas.
+          */
+          openerRef.current?.focus();
+          setOpen(true);
+        }}
         aria-expanded={open}
         aria-controls={panelId}
         className="shrink-0 rounded-panel border border-rule px-3 py-1.5 font-medium transition hover:bg-panel"
@@ -234,11 +262,36 @@ export function AddPersonForm({
     returnFocus: () => openerRef?.current ?? null,
   });
 
+  /**
+   * And the other half of sharing the right-hand column with a person's
+   * record: selecting somebody on the canvas closes this panel, but only
+   * while there is nothing in it to lose.
+   *
+   * `isBlank` is a getter rather than a boolean because the registry reads it
+   * at the moment of the click — the whole point is to notice a form that was
+   * blank when it opened and has since been typed into. `values` is the live
+   * answer: `saved` is deliberately left standing after a successful add and
+   * says nothing about what is in the fields now, which the line above it
+   * clears back to `emptyIndividualFormValues`.
+   */
+  useAddPersonPanel({
+    close: onClose,
+    isBlank: () => isBlankIndividual(values),
+  });
+
   return (
     <aside
       id={panelId}
       aria-label="Add a person"
-      className="fixed inset-x-0 bottom-0 z-20 flex max-h-[85%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-96 sm:border-t-0 sm:border-l"
+      /*
+        `sm:top-(--header-height)`, matching `components/PersonPanel.tsx`. It
+        was `sm:inset-y-0`, which is the viewport's top — and the shell's
+        sticky header is opaque and sits at `z-40`, so the first 3rem of this
+        panel, "Add a person" and its Close button included, was drawn behind
+        it. Starting where the header ends is what the two panels on this
+        canvas have to agree on, since either can be the one on screen.
+      */
+      className="fixed inset-x-0 bottom-0 z-20 flex max-h-[85%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:top-(--header-height) sm:right-0 sm:max-h-none sm:w-96 sm:border-t-0 sm:border-l"
     >
       <div className="flex items-start justify-between gap-2 border-b border-rule px-4 py-3">
         <h2 className="border-0 pb-0 text-h2">Add a person</h2>
