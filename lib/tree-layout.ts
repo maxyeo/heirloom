@@ -1,7 +1,8 @@
 import dagre from "@dagrejs/dagre";
 import type { Edge, Node } from "@xyflow/react";
 
-import { compareIds, connectedFamilies } from "./family-components";
+import { compareIds } from "./compare-ids";
+import { connectedFamilies } from "./family-components";
 import type { FamilyGraph } from "./family-graph";
 import { formatLifespan } from "./format-date";
 import { formatPersonName } from "./person-format";
@@ -332,11 +333,14 @@ export function layoutFamilyGraph(graph: FamilyGraph): {
    * than inheriting. `localeCompare` reads whatever collation data the
    * process was built with, so it can order two ids one way on a laptop and
    * the other way on CI; code units are fixed by the language. The argument
-   * in full — including why the display sorts elsewhere in the repository
-   * keep `localeCompare` on purpose — is on {@link compareIds}.
+   * in full — including the two specific comparisons elsewhere in the
+   * repository that keep `localeCompare` on purpose, and why those are
+   * different from this one — is on {@link compareIds} in
+   * `lib/compare-ids.ts`.
    *
-   * Sharing that comparator with `lib/family-components.ts` is the point
-   * rather than an economy. The family term above comes from
+   * Sharing that comparator with `lib/family-components.ts`, both importing
+   * it from `lib/compare-ids.ts` rather than each writing its own, is the
+   * point rather than an economy. The family term above comes from
    * {@link connectedFamilies}, which ranks families by their smallest member
    * id; if the two files disagreed about which of two ids is smaller, the
    * canvas would order families by one rule and their members by another.

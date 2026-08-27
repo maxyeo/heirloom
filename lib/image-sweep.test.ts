@@ -249,6 +249,45 @@ describe("the report", () => {
 
     expect(orphanKeys(result)).toEqual([key(1), key(2)]);
   });
+
+  /**
+   * The key tie-break does not move with the runtime's locale (`YEO-116`).
+   * `key(n)` above is lowercase ASCII throughout, which collation and code
+   * units agree on, so it cannot tell the two rules apart — these fixtures
+   * can.
+   */
+  describe("under a different collation", () => {
+    const locales = ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"];
+
+    it("uses keys that collation really does order the other way", () => {
+      // Guards the fixture below: if ICU ever stopped disagreeing with code
+      // units on these two keys, the pinning test would keep passing while
+      // testing nothing.
+      for (const locale of locales) {
+        expect(
+          new Intl.Collator(locale).compare(
+            "images/Zeta-shard/0000.jpg",
+            "images/apple-shard/0000.jpg",
+          ),
+        ).toBeGreaterThan(0);
+      }
+    });
+
+    it("orders two orphans of the same age by code unit, not by collation", () => {
+      const sameMoment = new Date(NOW.getTime() - 10 * DAY);
+      const result = plan([
+        listed("images/apple-shard/0000.jpg", { uploadedAt: sameMoment }),
+        listed("images/Zeta-shard/0000.jpg", { uploadedAt: sameMoment }),
+      ]);
+
+      // `Zeta-shard` first is the code-unit answer. Every locale above would
+      // put `apple-shard` first instead.
+      expect(orphanKeys(result)).toEqual([
+        "images/Zeta-shard/0000.jpg",
+        "images/apple-shard/0000.jpg",
+      ]);
+    });
+  });
 });
 
 describe("refusing to delete", () => {

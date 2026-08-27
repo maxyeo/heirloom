@@ -250,4 +250,44 @@ describe("how a family reads", () => {
     expect(labels).toEqual([...labels].sort((a, b) => a.localeCompare(b)));
     expect(labels[0]).toBe("Mary Ellis and an unrecorded partner");
   });
+
+  /**
+   * `localeCompare` here is deliberate, not an oversight `YEO-116` missed
+   * (ticket AC5; see `lib/compare-ids.ts`). These labels are the one thing
+   * this picker puts on screen for somebody to read and choose between, so
+   * an accented name has to sort where a reader expects it — the seed
+   * fixture's plain-ASCII names above cannot show that, because code units
+   * and collation agree on all of them; this fixture is chosen so they do
+   * not.
+   */
+  it("puts an accented label where a reader expects it, not after every unaccented one", () => {
+    const graph: FamilyGraph = {
+      people: [
+        person({ id: "elise", givenName: "Élise", surname: "Byrne" }),
+        person({ id: "zoe", givenName: "Zoe", surname: "Byrne" }),
+        person({ id: "kid", givenName: "Kid" }),
+      ],
+      unions: [
+        union({ id: "u-elise", partnerAId: "elise", partnerBId: null }),
+        union({ id: "u-zoe", partnerAId: "zoe", partnerBId: null }),
+      ],
+      childLinks: [],
+    };
+
+    const labels = parentOptions(graph, "kid").available.map(
+      (option) => option.label,
+    );
+
+    // Collation reads `É` as a variant of `E` and puts Élise first, the
+    // order a reader expects.
+    expect(labels).toEqual([
+      "Élise Byrne and an unrecorded partner",
+      "Zoe Byrne and an unrecorded partner",
+    ]);
+
+    // The guard: code units alone would have reversed this — `Z` (0x5a) sorts
+    // below `É` (0xc9) — which is exactly why this sort is `localeCompare`
+    // and not `compareIds`.
+    expect(labels[0] < labels[1]).toBe(false);
+  });
 });

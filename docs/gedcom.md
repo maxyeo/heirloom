@@ -740,7 +740,14 @@ texts to be identical. Three things follow.
   equivalent, so it is re-derived on the way in and would put the second export
   in a different order from the first.
 - **Strings compare by code unit, not by locale.** `localeCompare` depends on
-  whatever ICU data the process was built with.
+  whatever ICU data the process was built with. `lib/gedcom-report.ts`'s
+  unknown-tag summary follows the same rule for the same reason (`YEO-116`):
+  its tie-break is a tag path, a machine identifier rather than text read as
+  an alphabet, so it breaks the tie with `compareIds` (`lib/compare-ids.ts`)
+  rather than `localeCompare`. This module's own `stableSort` below predates
+  that shared comparator and compares a whole multi-field key rather than two
+  bare strings, so it keeps its own `<` rather than switching to it — the
+  rule is the same, the shape of what is being compared is not.
 
 The xrefs are then positional — `I1`, `F1` — which is what makes them stable
 without being derived from an id that is not.

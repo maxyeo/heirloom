@@ -1,3 +1,4 @@
+import { compareIds } from "./compare-ids";
 import type {
   FamilyGraph,
   GraphChildLink,
@@ -281,8 +282,10 @@ function appendTo<T>(map: Map<string, T[]>, key: string, value: T): void {
  * and `getFamilyGraph` queries by. In older generations the exact year of a
  * marriage is often lost while the *order* is remembered perfectly well ("she
  * remarried after he died"), so sorting on dates alone would scramble the
- * story every time a year is missing. Ties break on id so the list is stable
- * rather than dependent on how the rows happened to arrive.
+ * story every time a year is missing. Ties break on {@link compareIds} rather
+ * than `localeCompare` (`YEO-116`) — a union id is never shown, so all this
+ * has to do is give the same answer twice, which is exactly what code units
+ * guarantee and collation does not.
  *
  * Exported alongside `compareByBirth` for E11-T5's infobox, which walks one
  * hop further out — a spouse's *other* marriages — and has to put those
@@ -293,7 +296,7 @@ function appendTo<T>(map: Map<string, T[]>, key: string, value: T): void {
 export function compareUnions(a: GraphUnion, b: GraphUnion): number {
   if (a.sequence !== b.sequence) return a.sequence - b.sequence;
   const byDate = compareNullableDates(a.startDate, b.startDate);
-  return byDate !== 0 ? byDate : a.id.localeCompare(b.id);
+  return byDate !== 0 ? byDate : compareIds(a.id, b.id);
 }
 
 /**
@@ -303,6 +306,14 @@ export function compareUnions(a: GraphUnion, b: GraphUnion): number {
  * spouse's children from an earlier marriage — people this module never
  * reaches, sorted by the rule it already states. Two copies of "birth order,
  * then name, then id" is two places for a sibling list to drift.
+ *
+ * The two ties below are not the same kind of tie, deliberately. The name is
+ * `localeCompare`, on purpose (`YEO-116`): it is text a reader looks at, two
+ * siblings sharing a birth date read in the order their names read, and an
+ * accented name belongs where a reader expects it rather than after every
+ * unaccented one. The id underneath it is {@link compareIds}: it is reached
+ * only when both the date *and* the formatted name have already tied, nothing
+ * renders it, and all it has to do is settle the tie the same way twice.
  */
 export function compareByBirth(a: GraphPerson, b: GraphPerson): number {
   const byDate = compareNullableDates(a.birthDate, b.birthDate);
@@ -310,7 +321,7 @@ export function compareByBirth(a: GraphPerson, b: GraphPerson): number {
   const byName = formatPersonName(a.givenName, a.surname).localeCompare(
     formatPersonName(b.givenName, b.surname),
   );
-  return byName !== 0 ? byName : a.id.localeCompare(b.id);
+  return byName !== 0 ? byName : compareIds(a.id, b.id);
 }
 
 /**
