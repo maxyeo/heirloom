@@ -302,6 +302,50 @@ to appear for a frame on every page load. `lib/sidebar-preference.ts` has the
 long version, including why the stored preference is a wide-screen one that a
 phone ignores.
 
+## The stacking order
+
+Three `z-index` bands belong to the shell rather than to any one component, and
+they are enumerated here so that no component has to restate them:
+
+| Band | What is in it                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------- |
+| 50   | `.skip-link`, `ModalDialog`'s backdrop, `SearchBox`'s suggestions, `AccountMenu`'s menu                               |
+| 40   | the sticky header (`components/SiteHeader.tsx`), and the sidebar while it is a drawer (`.site-sidebar` below `55rem`) |
+| 30   | `.site-scrim`, the dim behind that drawer                                                                             |
+
+Everything else this application numbers — the tree's legend, its onboarding
+note, its detail and slide-up panels, the article tabs' collapsed menu — is
+local to the canvas or the positioned box that draws it, and none of it is
+above 20. Those numbers are deliberately **not** listed: a table nobody checks
+is a table that drifts, and the three bands above are the ones
+`app/globals.test.ts` holds.
+
+**The top band is a tie, and the tie is not in the skip link's favour.** At an
+equal `z-index` the painting order is document order, and `SkipLink` is the
+first element in `components/AppShell.tsx` — ahead of all three of its peers,
+none of which portals. So the link loses every one of those ties, and 50 is not
+by itself what keeps it visible.
+
+What keeps it visible lives in the peers. `ModalDialog` confines Tab to its own
+surface, so the backdrop — the only one of the three that covers the viewport —
+cannot paint over a link that cannot be focused while it is open. The search
+suggestions and the account menu are anchored to the controls that open them,
+below and to the right of the top-left corner the link occupies.
+
+That is an argument spread across four files, which is why it is asserted
+rather than only written down: `app/globals.test.ts` names the three peers,
+checks that `ModalDialog` is the only full-bleed one and that it still traps
+Tab, and holds 50 as the ceiling. A fourth overlay in this band fails a test
+instead of leaving a paragraph quietly wrong. `YEO-114` is where that was
+found; the long version of the reasoning is in `app/globals.css` beside
+`.skip-link`.
+
+**Do not break the tie by raising the link.** The band is deliberate — three
+unrelated overlays chose it independently — and a `z-51` skip link trades a
+documented tie for an undocumented race. The thing to check when adding an
+overlay is not its number but whether it can cover the top-left corner while
+the skip link is still reachable.
+
 ## The article tabs
 
 E11-T7 hung the Article / Read / Edit / View history row on the seam the shell
