@@ -635,11 +635,118 @@ describe("the skip link", () => {
     expect(rule(".skip-link:focus")).toMatch(/transform:\s*none/);
   });
 
-  it("clears the sticky header it is revealed over", () => {
+  /** A file this suite reasons about, read whole. Throws on a rename. */
+  function read(file: string): string {
+    return readFileSync(join(repoRoot, file), "utf8");
+  }
+
+  /**
+   * The three overlays that share the link's band (`YEO-114`).
+   *
+   * Sorted, because `filesUnder` walks directories rather than promising an
+   * order, and the assertion below is a set equality.
+   */
+  const TOP_BAND = [
+    join("components", "AccountMenu.tsx"),
+    join("components", "ModalDialog.tsx"),
+    join("components", "SearchBox.tsx"),
+  ];
+
+  /**
+   * This file names `z-50` in the regexes below, so it is its own offender —
+   * the same exemption, and for the same reason, that the colour scan grants
+   * `globals.css`.
+   */
+  const scanned = () =>
+    filesUnder(SOURCE_DIRS, [".ts", ".tsx"]).filter(
+      (file) => file !== join("app", "globals.test.ts"),
+    );
+
+  it("clears the sticky header and the drawer it is revealed over", () => {
     // The header and the sidebar drawer are both `z-index: 40`. A link that
     // appears behind the wordmark has not appeared.
     expect(rule(".skip-link")).toMatch(/z-index:\s*50/);
     expect(rule(".skip-link")).toMatch(/position:\s*fixed/);
+
+    // Named rather than assumed, so that "both of which are 40" cannot become
+    // false somewhere else while this suite stays green.
+    expect(read(join("components", "SiteHeader.tsx"))).toMatch(
+      /className="[^"]*\bsticky\b[^"]*\bz-40\b/,
+    );
+    expect(css).toMatch(/\.site-sidebar\s*\{[^}]*z-index:\s*40;/);
+  });
+
+  /**
+   * The half of the stacking argument that is not about clearing (`YEO-114`).
+   *
+   * `z-index: 50` clears the band below, and for one ticket the comment beside
+   * the declaration said only that. The survey stopped a band too early:
+   * three overlays are *also* 50, at an equal `z-index` the painting order is
+   * document order, and `SkipLink` is the first element in the shell — so it
+   * loses all three ties. What keeps that from mattering is a focus trap in
+   * `ModalDialog` and where the other two are anchored, none of which a reader
+   * of the stacking paragraph had any way to find.
+   *
+   * The paragraph names them now. These are what stop the naming going quietly
+   * out of date, which is the only way it can go for an element a keyboard
+   * user cannot watch fail: a fourth overlay in the band, a dialogue that
+   * stops confining Tab, or a dropdown that grows to full bleed each fails
+   * here.
+   */
+  it("shares the top band with exactly three overlays", () => {
+    const files = scanned();
+    // A scan that finds nothing passes for the wrong reason.
+    expect(files.length).toBeGreaterThan(5);
+
+    expect(files.filter((file) => /\bz-50\b/.test(read(file))).sort()).toEqual(
+      TOP_BAND,
+    );
+  });
+
+  it("is covered by only one of them, and that one confines Tab", () => {
+    // This link is fixed to the top-left corner, so a peer reaches it only by
+    // covering the viewport. `ModalDialog`'s backdrop is the one that does,
+    // and it is also the one that makes the shell's link unreachable while it
+    // is open: `modal: true` confines Tab to the dialogue's own surface, and
+    // an unfocused skip link is off the viewport.
+    const modal = read(join("components", "ModalDialog.tsx"));
+    expect(modal).toMatch(/className="[^"]*\binset-0\b[^"]*\bz-50\b/);
+    expect(modal).toMatch(/modal:\s*true/);
+
+    // The other two are anchored to the control that opens them, below and to
+    // the right of that corner. If either grows to cover the viewport it wins
+    // a tie against a link nobody can see it has taken.
+    for (const peer of TOP_BAND.filter(
+      (file) => file !== join("components", "ModalDialog.tsx"),
+    )) {
+      const banded = [
+        ...read(peer).matchAll(/className="([^"]*\bz-50\b[^"]*)"/g),
+      ].map((found) => found[1]);
+
+      expect(banded).toHaveLength(1);
+      expect(banded[0]).not.toMatch(/\binset-0\b/);
+    }
+  });
+
+  it("sits at the ceiling, so nothing is raised past it", () => {
+    // The tie is deliberate — three unrelated overlays chose 50 — and the
+    // repair for a new overlay that covers this corner is the focus trap or
+    // the anchoring, never a higher number. So the guard is on the ceiling
+    // rather than on the link: 50 is the top, in the stylesheet and in the
+    // utilities alike.
+    const utilities = scanned().flatMap((file) =>
+      [...read(file).matchAll(/\bz-(\d+)\b|\bz-\[(\d+)\]/g)].map((found) =>
+        Number(found[1] ?? found[2]),
+      ),
+    );
+    expect(utilities.length).toBeGreaterThan(5);
+    expect(Math.max(...utilities)).toBe(50);
+
+    const declared = [...css.matchAll(/z-index:\s*(\d+)/g)].map((found) =>
+      Number(found[1]),
+    );
+    expect(declared.length).toBeGreaterThan(0);
+    expect(Math.max(...declared)).toBe(50);
   });
 });
 

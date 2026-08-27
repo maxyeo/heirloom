@@ -743,8 +743,39 @@
    * order to be at the mercy of, and this is a link a keyboard user cannot see
    * failing. One property, moved and put back, cannot be ambiguous.
    *
-   * **`z-index: 50`** clears the sticky header and the sidebar drawer, both of
-   * which are 40. A skip link revealed behind the wordmark is not revealed.
+   * **`z-index: 50`** puts this in the top band of the shell's stacking order.
+   * The bands are enumerated once, in "The stacking order" in
+   * `docs/design-tokens.md`; what matters here is that 50 clears the sticky
+   * header and the sidebar drawer at 40, because a skip link revealed behind
+   * the wordmark is not revealed.
+   *
+   * It does not *win* that band, and a paragraph that named only what it
+   * clears implied that it did (`YEO-114`). Three overlays are 50 as well —
+   * `components/ModalDialog.tsx`'s backdrop, `components/SearchBox.tsx`'s
+   * suggestions, and `components/AccountMenu.tsx`'s menu — and at an equal
+   * `z-index` the painting order is document order. `SkipLink` is the first
+   * element in `components/AppShell.tsx`, ahead of all three, so it *loses*
+   * every one of those ties. The backdrop is `inset-0`: losing to that one
+   * would mean the link revealed underneath a dim, which is precisely the
+   * failure this paragraph exists to rule out.
+   *
+   * What rules it out is not the number, and it is not in this file:
+   *
+   *   - `ModalDialog` confines Tab to its own surface (`modal: true` on
+   *     `useDismissableSurface`), so while a backdrop is on screen the
+   *     shell's link cannot be focused — and this link is off the viewport
+   *     until it is.
+   *   - The other two are anchored to the control that opens them, the search
+   *     box and the account summary, both below and to the right of the
+   *     corner this link occupies. Neither covers the viewport.
+   *
+   * So 50 is right and 51 would be worse: it would trade a tie three
+   * unrelated overlays chose independently for an arms race, when the hazard
+   * is not the tie but an overlay that covers this corner *and* leaves the
+   * link reachable. `app/globals.test.ts` ("the skip link") asserts that set —
+   * the three peers by name, the trap on the only one that is full-bleed, and
+   * 50 as the ceiling — so a fourth overlay in this band fails a test instead
+   * of quietly outdating these two paragraphs.
    *
    * `:focus` rather than `:focus-visible`: the element is off-screen until it
    * is focused, so there is no pointer path to it and nothing to distinguish.
