@@ -1,3 +1,4 @@
+import { compareIds } from "@/lib/compare-ids";
 import type { ListedObject } from "@/lib/storage";
 import { isStoredImageKey } from "@/lib/storage-key";
 
@@ -223,10 +224,17 @@ export function planImageSweep(input: SweepInput): ImageSweepPlan {
     orphans.push(object);
   }
 
+  // Oldest first, so a person clearing the report by hand starts with the
+  // objects that have had the longest to prove themselves orphaned. Ties
+  // break on the storage key by code unit rather than by `localeCompare`
+  // (`YEO-116`): the key is `images/<shard>/<uuid>.<ext>`, nobody reads it as
+  // an alphabet, and all a tie needs is to report the same order on every run
+  // over the same listing rather than one that drifts with the runtime's ICU
+  // data.
   orphans.sort(
     (a, b) =>
       a.uploadedAt.getTime() - b.uploadedAt.getTime() ||
-      a.key.localeCompare(b.key),
+      compareIds(a.key, b.key),
   );
 
   const plan: ImageSweepPlan = {

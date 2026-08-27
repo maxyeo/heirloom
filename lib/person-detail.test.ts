@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { derivePersonDetail } from "@/lib/person-detail";
+import {
+  compareByBirth,
+  compareUnions,
+  derivePersonDetail,
+} from "@/lib/person-detail";
 import { portraitSrc } from "@/lib/portrait";
 // `import type` matters: lib/family-graph.ts imports @/db, and taking only the
 // type erases the import entirely, which is what keeps this file runnable with
@@ -430,5 +434,104 @@ describe("the chain of remarriages", () => {
     expect(
       derivePersonDetail(graph, "rose")?.spouses.map((s) => s.person?.name),
     ).toEqual(["Thomas Hale", "Walter Hale"]);
+  });
+});
+
+/**
+ * `compareUnions` and `compareByBirth`'s id tie-breaks do not move with the
+ * runtime's locale (`YEO-116`). Both used to be `localeCompare`, whose answer
+ * comes from the process's ICU data rather than from the ids themselves —
+ * `lib/compare-ids.ts` makes the full argument; this is that argument pinned
+ * against these two functions specifically, the way `lib/family-components.
+ * test.ts` and `lib/tree-layout.test.ts` already pin it for the tab order.
+ */
+describe("id tie-breaks under a different collation", () => {
+  /**
+   * Same four locales `lib/family-components.test.ts` picked, for the same
+   * reason: `en` is the default most developers run under, `sv` reorders
+   * letters at the end of its alphabet, `tr` has its own rules for dotted and
+   * dotless `i`, and `de-DE-u-co-phonebk` is a non-default collation of a
+   * locale that also has a default one.
+   */
+  const locales = ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"];
+
+  it("uses ids that collation really does order the other way", () => {
+    // Guards the two fixtures below rather than the module: if ICU ever
+    // stopped disagreeing with code units on these ids, the pinning tests
+    // would keep passing while testing nothing — this fails loudly instead.
+    for (const locale of locales) {
+      const collator = new Intl.Collator(locale);
+      expect(collator.compare("Zeta-union", "apple-union")).toBeGreaterThan(0);
+      expect(collator.compare("Zeta-child", "apple-child")).toBeGreaterThan(0);
+    }
+  });
+
+  it("breaks a tied sequence and start date on the union id, by code unit", () => {
+    const a = union({ id: "apple-union", partnerAId: "a", partnerBId: "b" });
+    const zeta = union({ id: "Zeta-union", partnerAId: "a", partnerBId: "b" });
+
+    // Same `sequence` (both default to 1) and both `startDate: null`, so
+    // nothing but the id decides — and `Zeta-union` first is the code-unit
+    // answer, which every locale above would reverse.
+    expect(compareUnions(zeta, a)).toBeLessThan(0);
+    expect(compareUnions(a, zeta)).toBeGreaterThan(0);
+  });
+
+  it("breaks a tied birth date and formatted name on the person id, by code unit", () => {
+    const a = person({
+      id: "apple-child",
+      givenName: "Sam",
+      surname: "Doyle",
+      birthDate: "1900-01-01",
+    });
+    const zeta = person({
+      id: "Zeta-child",
+      givenName: "Sam",
+      surname: "Doyle",
+      birthDate: "1900-01-01",
+    });
+
+    // Same birth date and the same formatted name ("Sam Doyle" both sides),
+    // so the name comparison above this one also ties and only the id is
+    // left. `Zeta-child` first is the code-unit answer.
+    expect(compareByBirth(zeta, a)).toBeLessThan(0);
+    expect(compareByBirth(a, zeta)).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * `compareByBirth`'s *name* comparison, unlike its id tie-break, keeps
+ * `localeCompare` on purpose (`YEO-116`, ticket AC5) — it is reached only
+ * once two siblings already share a birth date, and what it is comparing at
+ * that point is text a reader looks at, not an opaque id. `lib/
+ * compare-ids.ts` names this split explicitly; this is the regression the
+ * split exists to prevent.
+ */
+describe("the name inside a birth-date tie is read, not compared", () => {
+  it("puts an accented name where a reader expects it, not after every unaccented one", () => {
+    // Two siblings sharing a birth date, whose given names collation and code
+    // units disagree about: "Zoe" < "Élodie" by code unit (capital-and-plain
+    // Latin letters sort before `É`), while collation reads `É` as a variant
+    // of `E` and puts Élodie first, the way a reader would expect a family
+    // Bible's two entries to read.
+    const zoe = person({
+      id: "z",
+      givenName: "Zoe",
+      surname: "Doyle",
+      birthDate: "1900-01-01",
+    });
+    const elodie = person({
+      id: "e",
+      givenName: "Élodie",
+      surname: "Doyle",
+      birthDate: "1900-01-01",
+    });
+
+    expect(compareByBirth(elodie, zoe)).toBeLessThan(0);
+    expect(compareByBirth(zoe, elodie)).toBeGreaterThan(0);
+
+    // The guard: code units alone would have reversed this, which is exactly
+    // why this comparison is `localeCompare` and the id tie-break is not.
+    expect("Zoe" < "Élodie").toBe(true);
   });
 });

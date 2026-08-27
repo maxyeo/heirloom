@@ -1194,14 +1194,22 @@ cursor to keep in step with anything.
   families by their smallest member id, and the node ids underneath that, is
   what makes the tab order the _same_ order twice — and `localeCompare` cannot
   promise that, because its answer comes from the ICU data the process happens
-  to hold rather than from the two strings. `compareIds` in
-  `lib/family-components.ts` compares `<` and `>` instead, and
-  `lib/tree-layout.ts` shares that one function rather than a matching
-  convention. These ids are opaque and nobody reads them as sorted text; the
-  places that _are_ read as sorted text — `lib/parent-options.ts`,
-  `lib/person-detail.ts` — keep `localeCompare` on purpose, so that an
-  accented name lands where a reader expects. Same rule, and the same reason,
-  as [GEDCOM export's byte comparison](gedcom.md).
+  to hold rather than from the two strings. `compareIds`, in its own
+  zero-import module `lib/compare-ids.ts`, compares `<` and `>` instead, and
+  `lib/tree-layout.ts` and `lib/family-components.ts` both import it rather
+  than each keeping a matching convention. These ids are opaque and nobody
+  reads them as sorted text. `YEO-116` put the same comparator on four more
+  tie-breaks that were also `localeCompare` for the same ambient-locale
+  reason — a union id and a person id in `lib/person-detail.ts`, a GEDCOM tag
+  path in `lib/gedcom-report.ts`, a composite search sort key in
+  `lib/partner-search.ts`, and a storage key in `lib/image-sweep.ts` — none of
+  them rendered, all of them only needing to answer the same way twice. Two
+  comparisons keep `localeCompare` on purpose, because their output _is_ read:
+  `lib/parent-options.ts`'s family-picker labels, and the formatted name
+  inside `lib/person-detail.ts`'s `compareByBirth` (the id half of that same
+  function's tie-break is `compareIds`, once the name has already tied — one
+  function, two different things being compared). Same rule, and the same
+  reason, as [GEDCOM export's byte comparison](gedcom.md).
 - **Edges are out of the tab order and out of the accessibility tree.**
   `edgesFocusable` defaults to true and edges render _before_ nodes, so the
   default order on a canvas of two hundred people is a couple of hundred

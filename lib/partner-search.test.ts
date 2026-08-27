@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GraphPerson } from "@/lib/family-graph";
+import { foldName } from "@/lib/name-match";
 import { searchPartners, splitTypedName } from "@/lib/partner-search";
 
 /**
@@ -169,6 +170,68 @@ describe("searchPartners", () => {
 
   it("answers nothing rather than everything for a query nobody matches", () => {
     expect(ids(PEOPLE, "zzz")).toEqual([]);
+  });
+});
+
+/**
+ * The rank tie-break's sort key stopped reading `localeCompare` (`YEO-116`).
+ * This is the one converted site whose output a reader does see, so it gets
+ * the most scrutiny: a paired guard for the general ambient-locale risk
+ * `lib/compare-ids.ts` describes, and a second, sharper one for a live bug
+ * this conversion fixes outright — the `\0` separator between the folded name
+ * and the id was silently invisible to ICU.
+ */
+describe("the rank tie-break does not move with the runtime's locale", () => {
+  /** Two people ranked identically by "amy", distinguished only by id. */
+  function sameRank(): GraphPerson[] {
+    return [
+      person({ id: "apple-person", givenName: "Amy" }),
+      person({ id: "Zeta-person", givenName: "Amy" }),
+    ];
+  }
+
+  it("uses ids that collation really does order the other way", () => {
+    // Guards the fixture below: if ICU ever stopped disagreeing with code
+    // units here, the pinning test would keep passing while testing nothing.
+    for (const locale of ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"]) {
+      expect(
+        new Intl.Collator(locale).compare(
+          "amy\0Zeta-person",
+          "amy\0apple-person",
+        ),
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("orders two equally-ranked candidates by code unit, not by collation", () => {
+    // `Zeta-person` first is the code-unit answer. Every locale above would
+    // put `apple-person` first instead.
+    expect(ids(sameRank(), "amy")).toEqual(["Zeta-person", "apple-person"]);
+  });
+
+  /**
+   * The `\0` separator exists so that "Mary Anne" + id cannot sort against
+   * "Mary" + " Anne…" — see the comment on `sort` in `lib/partner-search.ts`.
+   * `localeCompare` silently defeated it: ICU treats U+0000 as completely
+   * ignorable, so the two halves of the sort key collated as if nothing sat
+   * between them at all, which is exactly the ambiguity the separator was
+   * added to rule out. This is the most concrete evidence in the whole
+   * change, so it is pinned directly against `Intl.Collator` rather than only
+   * against `searchPartners`.
+   */
+  it("shows the collator that used to run here treating the separator as absent", () => {
+    const withSeparator = `${foldName("Mary")}\0`;
+    const withoutSeparator = foldName("Mary");
+
+    // A separator that did its job would never compare equal to no
+    // separator at all — and yet, under the collator this module used to
+    // sort with, it does.
+    expect(
+      new Intl.Collator("en-US", { sensitivity: "variant" }).compare(
+        withSeparator,
+        withoutSeparator,
+      ),
+    ).toBe(0);
   });
 });
 

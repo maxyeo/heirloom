@@ -1,3 +1,5 @@
+import { compareIds } from "./compare-ids";
+
 /**
  * What the GEDCOM parser could not use, in the shape a person can read
  * (E6-T1, `YEO-46`).
@@ -206,7 +208,12 @@ export type GedcomSkip = {
  * the ones that describe most of what is being left behind. Ties break on the
  * path rather than on encounter order, because a stable order is what lets a
  * test assert the whole array and what stops a report reshuffling between two
- * runs over the same file.
+ * runs over the same file — and the path breaks that tie by code unit
+ * (`YEO-116`), not by `localeCompare`. It is a GEDCOM tag path (`INDI.SOUR`,
+ * `FAM.MARR.SOUR`), a machine identifier `components/GedcomImport.tsx` renders
+ * inside `<code>`, not text read as an alphabet — the same distinction
+ * `docs/gedcom.md` already draws for the exporter's own string comparisons,
+ * and the same rule reaching a second GEDCOM-pipeline module.
  */
 export function summariseUnknownTags(
   sightings: ReadonlyArray<{ path: string; line: number }>,
@@ -234,6 +241,6 @@ export function summariseUnknownTags(
   }
 
   return [...byPath.values()].sort(
-    (a, b) => b.count - a.count || a.path.localeCompare(b.path),
+    (a, b) => b.count - a.count || compareIds(a.path, b.path),
   );
 }

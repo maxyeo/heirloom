@@ -1,3 +1,4 @@
+import { compareIds } from "./compare-ids";
 import type { GraphPerson } from "./family-graph";
 import { formatLifespan } from "./format-date";
 import { foldName, literalTermRank } from "./name-match";
@@ -137,7 +138,11 @@ export function searchPartners(
       /**
        * Ties break on name and then on id, so the list is stable rather
        * than dependent on the order the rows happened to arrive from
-       * Postgres.
+       * Postgres. `foldName` already lowercases and strips accents, so
+       * comparing the folded name by code unit still lands in the order a
+       * reader expects — the rank above is this list's real order, and the
+       * name here is only breaking a tie underneath it, the one part of this
+       * change whose output a reader does see.
        *
        * `\0` separates the two halves rather than a space, because a
        * space is a character a name can contain: "Mary Anne" + id would
@@ -145,13 +150,22 @@ export function searchPartners(
        * would depend on the id of an unrelated person. Written as the
        * escape, never as a literal byte — a raw NUL makes git treat the
        * whole file as binary and `gh pr diff` refuse to show it.
+       *
+       * That separator used to be silently defeated (`YEO-116`): ICU treats
+       * U+0000 as completely ignorable — `new Intl.Collator("en-US", {
+       * sensitivity: "variant" }).compare("mary\0", "mary") === 0` — so under
+       * `localeCompare` the two halves collated as if nothing sat between
+       * them, exactly the ambiguity `\0` exists to rule out. `compareIds`
+       * below compares code units, where `\0` (0x00) sorts below every
+       * printable character and is a real, present character rather than one
+       * ICU discards, so the separator now does the job it was written for.
        */
       sort: `${foldName(name)}\0${person.id}`,
     });
   }
 
   scored.sort((a, b) =>
-    a.rank !== b.rank ? a.rank - b.rank : a.sort.localeCompare(b.sort),
+    a.rank !== b.rank ? a.rank - b.rank : compareIds(a.sort, b.sort),
   );
 
   return scored.slice(0, limit).map((entry) => entry.candidate);

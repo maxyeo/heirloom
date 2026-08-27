@@ -122,8 +122,11 @@ export function parentOptions(
    * asking — these are every family on the tree, and the only useful order for
    * that is the one somebody can scan.
    *
-   * `localeCompare` so that accented names sort where a reader expects rather
-   * than after Z, which is where a plain `<` puts them.
+   * `localeCompare` deliberately, not `compareIds` (`YEO-116`): a label is
+   * read, not merely compared, so an accented name has to sort where a
+   * reader expects rather than after every unaccented one, which is where
+   * code units put it. See `lib/compare-ids.ts` for the rule this is the
+   * exception to.
    */
   available.sort((a, b) => a.label.localeCompare(b.label));
 

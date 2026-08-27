@@ -103,6 +103,30 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * reachable from a text-file parser. That split exists because of this test;
  * see the docblock on `lib/portrait-image.ts`, which records it.
  */
+/**
+ * ## `lib/compare-ids.ts`, which joined every closure in `YEO-116`
+ *
+ * `lib/gedcom-report.ts` — already in every list below, since the unknown-tag
+ * report is built while the parser and mapper walk the file — started calling
+ * `a.path.localeCompare(b.path)` to break a tie between two tag paths with
+ * the same sighting count. `lib/family-components.ts` already had the
+ * comparator this needed (`compareIds`, `YEO-111`), and reusing it rather
+ * than writing a second one was the point: one file should not decide that
+ * two strings compare one way while another file decides the opposite. But
+ * `lib/family-components.ts` imports `@/lib/family-graph`, which imports
+ * `@/db` and `drizzle-orm` — reaching for it here would be exactly the defect
+ * this test exists to catch, arriving through a comparator instead of a
+ * feature.
+ *
+ * So `compareIds` moved to its own module, and that module is why joining
+ * the closure is a decision somebody has to write down and this one needed
+ * no debate: it is pure *by construction*, not by inspection. It imports
+ * nothing at all — not `@/db`, not a sibling `lib/` file, not a package — and
+ * does its one job, comparing two strings with `<` and `>`, entirely with
+ * language operators. There is no edge for a future change to arrive
+ * through, the way `lib/individual-input.ts` was the edge the portrait key
+ * arrived through above.
+ */
 const ENTRIES = {
   parser: join("lib", "gedcom.ts"),
   mapper: join("lib", "gedcom-map.ts"),
@@ -209,6 +233,7 @@ describe("the parser's import closure", () => {
     expect(files.sort()).toEqual(
       [
         join("lib", "ansel.ts"),
+        join("lib", "compare-ids.ts"),
         join("lib", "field-input.ts"),
         join("lib", "gedcom-encoding.ts"),
         join("lib", "gedcom-lines.ts"),
@@ -258,6 +283,7 @@ describe("the mapper's import closure", () => {
       [
         join("lib", "ansel.ts"),
         join("lib", "child-input.ts"),
+        join("lib", "compare-ids.ts"),
         join("lib", "field-input.ts"),
         join("lib", "gedcom-encoding.ts"),
         join("lib", "gedcom-lines.ts"),
@@ -313,6 +339,7 @@ describe("the preview's import closure", () => {
       [
         join("lib", "ansel.ts"),
         join("lib", "child-input.ts"),
+        join("lib", "compare-ids.ts"),
         join("lib", "field-input.ts"),
         join("lib", "gedcom-encoding.ts"),
         join("lib", "gedcom-lines.ts"),
@@ -367,6 +394,7 @@ describe("the import's row-building closure", () => {
       [
         join("lib", "ansel.ts"),
         join("lib", "child-input.ts"),
+        join("lib", "compare-ids.ts"),
         join("lib", "field-input.ts"),
         join("lib", "gedcom-encoding.ts"),
         join("lib", "gedcom-lines.ts"),
@@ -413,6 +441,7 @@ describe("the exporter's import closure", () => {
       [
         join("lib", "ansel.ts"),
         join("lib", "child-input.ts"),
+        join("lib", "compare-ids.ts"),
         join("lib", "field-input.ts"),
         join("lib", "gedcom-encoding.ts"),
         join("lib", "gedcom-export.ts"),
