@@ -830,12 +830,23 @@ Everything else is written back, including both bounds of a range and the
 `ASCII`. Every reader written this century takes UTF-8 — it is what 5.5.5 went
 on to require — and the alternative is writing ANSEL, which cannot represent
 most of the world's names and is the character set `lib/ansel.ts` exists to
-rescue people _from_.
+rescue people _from_. **Gramps accepts it without comment and writes it
+itself**, which is a stronger answer than the argument in the sentence before:
+its own 5.5.1 export carries `1 CHAR UTF-8` (`YEO-91`, and
+[Checked against Gramps](#checked-against-gramps-which-is-the-strict-reader)
+below).
 
 And `PEDI step`, which is not one of 5.5.1's four pedigree values. It is a
 member of `child_relation` and it is written by more than one program, so the
 import side already reads it; refusing to write it would throw away a fact on
-the way out that the same pipeline was happy to accept on the way in.
+the way out that the same pipeline was happy to accept on the way in. Gramps
+accepts this one too — and reading it is where `YEO-91` found the departure's
+one real cost. Gramps normalises the value to its own spelling and writes
+**`PEDI stepchild`** back out, which `PEDIGREES` in `lib/gedcom-map.ts` did
+not read, so a tree that went out to Gramps and came home again used to arrive
+with every step-child recorded as biological. The table reads `stepchild` as
+well now, listed after `step` so that `step` stays the spelling written and no
+existing export moves by a byte.
 
 The header is otherwise complete, including the `SUBM` pointer and the
 submitter record it names — both mandatory in 5.5.1, and both checked by the
@@ -945,6 +956,43 @@ because they are cheap. And 500 seeded generated trees, canonicalised through
 `validateIndividual` and `validateUnion` so the domain is every tree this
 application can actually hold — which is what found the `DIV`-without-`MARR`
 defect, a combination no hand-written fixture happened to contain.
+
+### Checked against Gramps, which is the strict reader
+
+A round trip is this application agreeing with itself. That is a real property
+and it is not the same as _somebody else can read the file_, which is the
+promise the export exists to keep.
+
+`YEO-51` named **Gramps** for that job, because it is free and it complains
+where other programs shrug — and then met the criterion by proxy. Gramps needs
+PyGObject and GTK, `pip install gramps` succeeds and dies on `import gi`, and
+two permissive third-party parsers were run instead. The substitution was
+written down rather than hidden, but permissive parsers agreeing is a weaker
+claim than a strict one accepting, and the strict one was the point.
+
+`YEO-91` ran the real program. Debian ships Gramps with the GTK stack already
+assembled, so the whole obstacle was four lines of `Dockerfile`;
+`npm run gramps:check` (`test/gramps/`) builds that image and imports four
+exports into **Gramps 6.0.1**, with no display attached. All four came back
+_"GEDCOM import report: No errors detected"_ — the seeded family with its
+remarriage chain, a tree carrying every sex, pedigree, qualifier and precision
+the exporter can write, and our exports of both the torture test and the dirty
+fixture.
+
+That result only means something because the same run hands Gramps
+`dirty-third-party.ged` itself, un-exported, and gets **six errors** back. A
+check that cannot fail is not evidence, and the control is what separates the
+four clean lines from a tautology.
+
+Two things came out of it beyond the tick. Both departures above were
+accepted, `CHAR UTF-8` emphatically so. And the return leg — Gramps
+re-exporting what it imported, read back here — found the `PEDI stepchild`
+defect, which no permissive parser could have surfaced because it takes a
+reader with an opinion of its own about how to spell a value back.
+
+`test/gramps/README.md` holds the transcript, the versions, and the date. It
+is deliberately not in `npm test`: CI's bare job has no Docker, and a 230 MB
+apt install does not belong in front of every push.
 
 ## Nothing is dropped in silence
 

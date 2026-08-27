@@ -8,6 +8,7 @@ import {
   type GedcomMapping,
   type MappedIndividual,
   type MappedUnion,
+  PEDIGREES,
   mapGedcom,
 } from "@/lib/gedcom-map";
 import type { GedcomIssue, GedcomSkip } from "@/lib/gedcom-report";
@@ -621,6 +622,14 @@ describe("PEDI", () => {
     expect(relationOf("step")).toBe("step");
   });
 
+  it("reads stepchild, which is the spelling Gramps writes", () => {
+    // `YEO-91` ran an export through Gramps and back. Gramps reads our `PEDI
+    // step` and normalises it to `PEDI stepchild` in its own 5.5.1 export, so
+    // a tree that went out to Gramps and came home again used to arrive with
+    // every step relation recorded as biological — reported, but lost.
+    expect(relationOf("stepchild")).toBe("step");
+  });
+
   it("is case-insensitive, because files are", () => {
     expect(relationOf("Adopted")).toBe("adopted");
   });
@@ -671,6 +680,29 @@ describe("PEDI", () => {
     expect(messages(mapping.issues, "value")).toEqual([
       expect.stringContaining("godparent"),
     ]);
+  });
+
+  it("offers the vocabulary it actually has, not a copy of it", () => {
+    // The sentence above names a closed set, and a hand-written copy of a
+    // closed set stops being true the day the set grows. `YEO-91` grew it,
+    // and the message went on offering four spellings while the table read
+    // five until this assertion existed.
+    const said = messages(
+      map(`0 @I1@ INDI
+1 NAME A /One/
+0 @I2@ INDI
+1 NAME B /Two/
+1 FAMC @F1@
+2 PEDI godparent
+0 @F1@ FAM
+1 HUSB @I1@
+1 CHIL @I2@`).issues,
+      "value",
+    )[0];
+
+    for (const spelling of Object.keys(PEDIGREES)) {
+      expect(said, spelling).toContain(spelling);
+    }
   });
 });
 

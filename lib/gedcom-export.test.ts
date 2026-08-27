@@ -590,6 +590,23 @@ describe("families", () => {
       expect(input.unionChildren[0].relation).toBe(relation);
     },
   );
+
+  it("writes step as `step`, though the table now reads two spellings", () => {
+    // `PEDIGREES` gained `stepchild` in `YEO-91`, because that is what Gramps
+    // writes. `invert` takes the *first* spelling of a member, so the export
+    // is unchanged — and that is a property worth an assertion rather than an
+    // ordering nobody is watching: reordering those two keys would silently
+    // rewrite every step-child line in every export and break the byte
+    // comparison in `lib/gedcom-round-trip.test.ts` for reasons a reader of
+    // that failure could not guess.
+    const { text } = roundTrip({
+      individuals: [husband, wife, child],
+      unions: [married],
+      unionChildren: [{ ...link, relation: "step" }],
+    });
+
+    expect(text).toContain("2 PEDI step\r\n");
+  });
 });
 
 describe("determinism", () => {
