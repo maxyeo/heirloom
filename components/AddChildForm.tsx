@@ -229,7 +229,7 @@ export function AddChildForm({
       aria-label={`Add a child for ${person.name}`}
       className="absolute inset-x-0 bottom-0 z-10 flex max-h-[75%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-80 sm:border-t-0 sm:border-l"
     >
-      <div className="flex items-start justify-between gap-2 border-b border-rule-soft px-4 py-3">
+      <div className="flex items-start justify-between gap-2 border-b border-rule px-4 py-3">
         {/*
           `tabIndex={-1}` rather than a heading that is naturally focusable:
           somewhere to put focus that reads out what this form is, not

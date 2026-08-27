@@ -94,15 +94,20 @@ make it ours to get wrong.
 contracts** rather than one border colour pushed down until its worst case
 passes:
 
-| Token               | Owes | What it draws                                                                                                            |
-| ------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------ |
-| `--color-rule`      | 3:1  | a button, a field, a menu, a panel, a table cell, a card on the tree canvas, the rule under an `h1` or `h2`, a tree edge |
-| `--color-rule-soft` | —    | one row of a list or of the infobox from the next, the frame of a thumbnail, the line the article tabs attach to         |
+| Token               | Owes | What it draws                                                                                                                                                             |
+| ------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--color-rule`      | 3:1  | a button, a field, a menu, a panel, a table cell, a card on the tree canvas, the rule under an `h1` or `h2`, a tree edge, the seam under a slide-up panel's pinned header |
+| `--color-rule-soft` | —    | one row of a list or of the infobox from the next, the frame of a thumbnail, the line the article tabs attach to                                                          |
 
 The test to apply at a call site is not "is this a border" but **"if this line
 were not drawn, would something stop being identifiable?"**. A field with no
-border is a piece of paper. A list with no row rules is still a list. The split
-is argued once at the tokens so that no component has to re-decide it.
+border is a piece of paper. A list with no row rules is still a list. A
+slide-up panel whose pinned header shares a fill with the body scrolling under
+it has nothing else to say where the one stops and the other starts. The split
+is argued once at the tokens so that no component has to re-decide it, and the
+rule of thumb that falls out of those three is that a hairline between two
+things of the **same kind** is decorative and a hairline between two things
+that **behave differently** is not.
 
 `--color-rule` was Vector 2022's `#a2a9b1`, which is 2.37:1 on paper — and the
 audience skews older, which is what makes a 2.37:1 line between one table row
@@ -114,9 +119,41 @@ so it clears the floor with room rather than by a rounding error.
 
 `--color-rule-soft` did not move. It is **named as exempt with its reason** in
 `app/globals.test.ts` rather than left as a token the guard happens not to ask
-about, and so are the two diff gutter rules — the compare view names every
-changed block in words as well, so their colour is the fastest way to read the
-page rather than the only way.
+about, and so are the two diff gutter rules.
+
+**On arguing an exemption from the right criterion.** `YEO-118` rewrote the
+diff gutter's reason, which had been a 1.4.1 one: _the compare view names every
+changed block in words, so colour is not the only carrier._ That is a true
+sentence and it answers the wrong question. 1.4.1 asks whether colour alone
+carries a meaning; 1.4.11 asks whether a **visual boundary** is needed to
+identify something. They come apart — a form field's border is the only thing
+that makes the field findable even though a visible label names it — so an
+exemption argued from the first has not been argued at all.
+
+Run 1.4.11's question on the gutter instead. A diff row is not a user interface
+component: nothing in it is operated and it holds no state, so only the
+graphical-object half of the criterion reaches it, and that half asks whether
+this part of the drawing is needed to understand it. Take the 4px rule away and
+the row is still filled and still marked `+` or `−` in the gutter the rule sat
+in; added against removed is two fills, and changed against moved is solid
+against dashed with the moved rows drawn in `--color-rule` above the floor. The
+coloured rule is the saturated edge of its own fill rather than the line that
+bounds the row — 1.41:1 against the blue it edges, 1.16:1 against the yellow —
+so it thickens a boundary the fill has already made instead of being one. Same
+conclusion, reached honestly.
+
+The five slide-up panel headers went the other way. `components/PersonPanel.tsx`,
+`AddPersonPanel.tsx`, `AddChildForm.tsx`, `AddSpouseForm.tsx` and
+`SetParentsForm.tsx` each drew the seam between the header and the scrolling
+body in `--color-rule-soft`, on the reading that the heading and the Close
+button identify the header by themselves. That borrows the list-row argument,
+and a panel header is not a list row: the `aside` carries `bg-panel` and the
+`overflow-y-auto` body declares no fill of its own, so once the body has
+scrolled, the line is the only thing left saying which half is pinned — and at
+1.53:1 it was not saying it. All five are `--color-rule` now, which is the
+colour the panel's own frame was already drawn in, so each panel has one border
+weight instead of two. `app/globals.test.ts` holds it, because five identical
+blocks of Tailwind are one careless copy away from drifting back.
 
 **A surface token is never a border.** `--color-paper`, `--color-panel` and
 `--color-wash` are within about 1.2:1 of each other by design, because they are

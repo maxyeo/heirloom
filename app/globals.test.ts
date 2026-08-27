@@ -301,11 +301,47 @@ describe("non-text contrast", () => {
    *
    *   `--color-rule`      buttons, fields, menus, panels, table cells, the
    *                       card on the tree canvas, the rule under an h1 or
-   *                       h2, and — through `--xy-edge-stroke` — every edge
-   *                       on the family tree.
+   *                       h2, the seam between a slide-up panel's pinned
+   *                       header and the body that scrolls under it, and —
+   *                       through `--xy-edge-stroke` — every edge on the
+   *                       family tree.
    *   `--color-link`      every focus indicator in the application, the
    *                       selected article tab, and a selected person's ring.
    *   `--color-link-new`  the frame around the sign-in error.
+   *
+   * ## The panel header seam, which was the close call (`YEO-118`)
+   *
+   * `YEO-107` left the five slide-up panels — `components/PersonPanel.tsx`,
+   * `AddPersonPanel.tsx`, `AddChildForm.tsx`, `AddSpouseForm.tsx`,
+   * `SetParentsForm.tsx` — drawing that seam in `--color-rule-soft`, on the
+   * reading that the heading and the Close button identify the header by
+   * themselves. That reading borrows the list-row argument, and a panel
+   * header is not a list row.
+   *
+   * Run 1.4.11's own test on it instead. A slide-up panel is a user
+   * interface component and its extent is information the reader needs,
+   * which is why its outer edge was made structural in the first place.
+   * Inside it, the header and the scrolling body are one fill: the `aside`
+   * carries `bg-panel` and the `overflow-y-auto` body declares no background
+   * of its own. So once the body has scrolled, the only thing left saying
+   * where the pinned half stops and the moving half starts is this line —
+   * and at 1.53:1 on `--color-panel` it was not saying it to anybody who
+   * needed telling. Take it away and a scrolled paragraph abuts the panel's
+   * title and reads as part of it.
+   *
+   * That is a different answer from the one every other `rule-soft` site
+   * gets, and the difference is the point. A row rule separates two things
+   * of the same kind, so deleting it costs nothing. This one separates two
+   * regions that move independently, and the answer to "would something
+   * stop being identifiable" is not a clean no. `--color-rule-soft` is for
+   * the lines whose removal costs nothing; a line whose removal costs
+   * something is the structural token's, whether or not 1.4.11 would have
+   * tolerated the softer one.
+   *
+   * It is also the cheaper end of the trade `YEO-107` warned about. Nothing
+   * here darkens a token so its worst case passes — the seam moves to a
+   * colour the panel's own frame is already drawn in, so the panel gets one
+   * border weight instead of two.
    */
   const NON_TEXT = ["--color-rule", "--color-link", "--color-link-new"];
 
@@ -318,16 +354,40 @@ describe("non-text contrast", () => {
       "the decorative hairline. It repeats a separation the layout has " +
       "already made — one row of a list or of the infobox from the next, " +
       "the frame of a thumbnail, the line the article tabs attach to. " +
-      "Remove it and nothing becomes unreadable and no control becomes " +
-      "unfindable, which is the test 1.4.11 applies.",
+      "Remove any of those and nothing becomes unreadable and no control " +
+      "becomes unfindable, which is the test 1.4.11 applies. What it is " +
+      "not for is a seam between two regions that move independently: " +
+      "`YEO-118` took the five slide-up panel headers off this token " +
+      "because a pinned header and the body scrolling under it share one " +
+      "fill, so that line is the only thing saying which half is pinned. " +
+      "The rule of thumb is that a hairline between two things of the " +
+      "same kind is decorative, and a hairline between two things that " +
+      "behave differently is not.",
     "--color-diff-added-rule":
-      "the gutter mark on a block a revision added. The compare view names " +
-      "every changed block in words as well, so the colour is the fastest " +
-      "way to read the page rather than the only way — the same argument " +
-      "the diff fills themselves are chosen on.",
+      "the gutter mark on a block a revision added, and exempt on " +
+      "1.4.11's own test rather than 1.4.1's (`YEO-118`; the reason this " +
+      "entry used to give — that the words say it too — is the " +
+      "use-of-colour question, which is a different criterion and was " +
+      "being answered in this one's place). A diff row is not a user " +
+      "interface component: nothing in it is operated and it carries no " +
+      "state. So the only half of 1.4.11 that reaches it is the " +
+      "graphical-object half, which asks whether this part of the drawing " +
+      "is needed to understand it. Take the 4px rule away and the row is " +
+      "still filled, and still marked `+` in the gutter the rule was " +
+      "sitting in. What a reader has to do here is tell one status from " +
+      "another, and the rule is not what lets them: added and removed are " +
+      "two different fills, changed and moved are solid against dashed, " +
+      "and the moved rows draw that border in `--color-rule`, above the " +
+      "floor. The coloured rule is the saturated edge of its own fill " +
+      "rather than the line that bounds the row — 1.41:1 against the fill " +
+      "it edges — so it thickens a boundary the fill has already made " +
+      "instead of being one.",
     "--color-diff-removed-rule":
-      "the gutter mark on a block a revision removed, exempt for the reason " +
-      "its counterpart above is.",
+      "the gutter mark on a block a revision removed, exempt on the " +
+      "argument its counterpart above sets out, and the clearer case of " +
+      "the two: at 1.16:1 against the fill it edges it is barely a " +
+      "separate colour, which is the strongest evidence there is that " +
+      "nothing is being identified by it.",
   };
 
   it.each(NON_TEXT)("draws %s above 3:1 on every surface", (colour) => {
@@ -673,5 +733,50 @@ describe("call sites", () => {
       );
 
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * A slide-up panel's header seam is structural (`YEO-118`).
+   *
+   * The argument is in "non-text contrast" above, next to the token it moved
+   * to. This is the half of it that rots: all five panels are the same three
+   * lines of Tailwind, the seam is one word away from the decorative token it
+   * used to be, and every other `border-b` in the application's lists really
+   * is `border-rule-soft` — so copying a neighbour, or reverting a line
+   * nobody reads twice, puts it back with nothing failing.
+   *
+   * Narrow on purpose. It says the seam under the header is structural; it
+   * does not say these files may never use the decorative token, because a
+   * list drawn *inside* one of these panels would be a row rule like any
+   * other and would take it correctly.
+   */
+  it("draws every slide-up panel's header seam in the structural rule", () => {
+    const panels = [
+      join("components", "PersonPanel.tsx"),
+      join("components", "AddPersonPanel.tsx"),
+      join("components", "AddChildForm.tsx"),
+      join("components", "AddSpouseForm.tsx"),
+      join("components", "SetParentsForm.tsx"),
+    ];
+
+    // `readFileSync` throws on a renamed panel rather than reporting a clean
+    // scan of four files, which is the same reason `token()` throws.
+    const sources = panels.map(
+      (file) => [file, readFileSync(join(repoRoot, file), "utf8")] as const,
+    );
+
+    // The negative is the one that catches a revert; the positive is what
+    // stops the negative passing because the seam was deleted or renamed.
+    expect(
+      sources
+        .filter(([, source]) => /border-b border-rule-soft/.test(source))
+        .map(([file]) => file),
+    ).toEqual([]);
+
+    expect(
+      sources
+        .filter(([, source]) => /border-b border-rule(?![\w-])/.test(source))
+        .map(([file]) => file),
+    ).toEqual(panels);
   });
 });

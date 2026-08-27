@@ -83,7 +83,9 @@
    *                        `app/globals.test.ts` computes rather than takes
    *                        on trust. Use it for a button, a field, a menu, a
    *                        panel, a table cell, a card on the tree canvas,
-   *                        and the rule under an h1 or h2.
+   *                        the rule under an h1 or h2, and the seam between
+   *                        a slide-up panel's pinned header and the body
+   *                        that scrolls under it (`YEO-118`).
    *
    *   `--color-rule-soft`  decorative. It repeats a separation the layout has
    *                        already made — one row of a list from the next,
@@ -95,12 +97,18 @@
    *                        below 3:1**. The exemption is named in
    *                        `app/globals.test.ts` with that reason rather than
    *                        left as a token the guard happens not to ask
-   *                        about.
+   *                        about. Note what it is *not* for: a hairline
+   *                        between two things of the same kind is
+   *                        decorative, a hairline between two things that
+   *                        behave differently is not.
    *
    * The test to apply at a call site is therefore not "is this a border" but
    * "if this line were not drawn, would something stop being identifiable?".
    * A field with no border is a piece of paper. A list with no row rules is
-   * still a list.
+   * still a list. A slide-up panel whose pinned header shares a fill with the
+   * body scrolling under it has nothing else to say where the one stops and
+   * the other starts, so that seam is structural too — which is the answer
+   * `YEO-118` reached for the five panels `YEO-107` had left soft.
    *
    * `--color-rule` was `#a2a9b1` — Vector 2022's border, and 2.37:1 on paper.
    * `#72777d` is the next step down WikimediaUI's own grey ramp and is what
@@ -134,8 +142,15 @@
    * to read the page rather than the only way. See
    * `app/wiki/[slug]/history/compare/page.tsx`.
    *
-   * Each fill has a matching rule, used as the block's left border: at 4px it
-   * is the one part of a row that survives a monochrome print.
+   * Each fill has a matching rule, used as the block's left border at 4px.
+   * It is a more saturated edge on the fill rather than a line bounding it —
+   * within about 1.4:1 of the fill it edges, and less than that for the
+   * yellow — so it is exempt under 1.4.11, and `app/globals.test.ts` is
+   * where that exemption is argued. Argued on 1.4.11's own question, note:
+   * whether anything stops being identifiable without the line. The
+   * paragraph above is the fills' argument and it is a 1.4.1 one — colour is
+   * not the only carrier — and the two are easy to answer in each other's
+   * place, which is exactly what `YEO-118` had to undo.
    */
   --color-diff-added: #eaf3ff;
   --color-diff-added-rule: #a3d3ff;
