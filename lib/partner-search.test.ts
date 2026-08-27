@@ -67,6 +67,39 @@ function ids(...args: Parameters<typeof searchPartners>): string[] {
   return searchPartners(...args).map((candidate) => candidate.id);
 }
 
+/**
+ * The collations every fixture in this file that claims to be
+ * locale-*invariant* is guarded against.
+ *
+ * The first four are `YEO-116`'s set, and `lib/tree-layout.test.ts` and
+ * `lib/family-components.test.ts` guard against the same four: `en-US` is the
+ * default most developers run under, `sv-SE` reorders letters at the end of
+ * its alphabet, `tr-TR` has its own rules for dotted and dotless `i`, and
+ * `de-DE-u-co-phonebk` is a non-default collation of a locale that also has a
+ * default one.
+ *
+ * `da-DK` and `nb-NO` are `YEO-120`'s addition, and they earned the place.
+ * Danish and Norwegian alphabetise `aa` as `å`, at the *end* of the alphabet
+ * — a disagreement none of the first four have, and one that a fixture in
+ * this very file was on the wrong side of. "treats a surname prefix as being
+ * as good as a given-name prefix" asserted that "Aaron Rose" sorts before
+ * "Rosalind", which is true in `en-US` and false in Danish, and it failed
+ * under `LC_ALL=da_DK.UTF-8` on `main` for as long as it existed. CI reported
+ * green throughout, because until `YEO-120` CI named no locale at all and
+ * inherited `en-US` from the runner image.
+ *
+ * The list is worth extending the same way in future: a collation belongs
+ * here once it has caught something, rather than for breadth's own sake.
+ */
+const COLLATION_LOCALES = [
+  "en-US",
+  "sv-SE",
+  "tr-TR",
+  "de-DE-u-co-phonebk",
+  "da-DK",
+  "nb-NO",
+];
+
 describe("searchPartners", () => {
   it("offers everybody when nothing has been typed yet", () => {
     // In name order, so the picker opens with a list rather than a prompt.
@@ -126,13 +159,61 @@ describe("searchPartners", () => {
   /**
    * A given name and a surname are equally good ways to ask for somebody, so
    * both rank as a prefix match and the tie breaks on name.
+   *
+   * ## Why the fixture is not "Aaron Rose"
+   *
+   * It was, and it was an `en-US` answer wearing the clothes of a general one
+   * (`YEO-120`). Danish and Norwegian alphabetise `aa` as `å`, at the *end*
+   * of the alphabet, so "Aaron Rose" sorts *after* "Rosalind" under `da_DK`
+   * and this assertion was simply false there. It was failing on `main`
+   * before `YEO-116` and after it, while CI reported green — CI named no
+   * locale, so it only ever asked `en-US`.
+   *
+   * The repair is the rule `YEO-116` settled on: pick a fixture no locale
+   * disagrees with, rather than pin the test environment so that an `en-US`
+   * fixture keeps passing. Pinning would be doubly wrong here, because
+   * `searchPartners` runs in the reader's browser and its comparator reads
+   * the reader's collation on purpose — a suite pinned to one locale would be
+   * deterministic for a reason production does not share. See "the name
+   * tie-break follows the reader's collation" below, which pins that
+   * position.
+   *
+   * "Edwin" and "Wilhelm" sit either side of "Rosalind" on their first letter
+   * alone, in ordinary unaccented Latin letters that every collation orders
+   * the same way.
+   *
+   * ## Why both directions
+   *
+   * Asserting both is what makes this a test of the *ranking* rather than of
+   * the tie-break. If a surname prefix were ranked below a given-name prefix,
+   * "Rosalind" would come first in both cases — and a single assertion in
+   * whichever direction happened to agree would keep passing. Two assertions
+   * that disagree about which id comes first can only both hold if the two
+   * candidates genuinely tie on rank.
    */
   it("treats a surname prefix as being as good as a given-name prefix", () => {
-    const people = [
-      person({ id: "aaron", givenName: "Aaron", surname: "Rose" }),
+    const sortsBefore = [
+      person({ id: "edwin", givenName: "Edwin", surname: "Rose" }),
       person({ id: "rosalind", givenName: "Rosalind" }),
     ];
-    expect(ids(people, "ros")).toEqual(["aaron", "rosalind"]);
+    const sortsAfter = [
+      person({ id: "wilhelm", givenName: "Wilhelm", surname: "Rose" }),
+      person({ id: "rosalind", givenName: "Rosalind" }),
+    ];
+
+    // Guards the fixture rather than the module, which is the step the
+    // "Aaron Rose" version skipped: unless every collation agrees about these
+    // two pairs, the assertions below are statements about the machine the
+    // suite happens to run on rather than about how a prefix is ranked.
+    for (const locale of COLLATION_LOCALES) {
+      expect("edwin rose".localeCompare("rosalind", locale)).toBeLessThan(0);
+      expect("wilhelm rose".localeCompare("rosalind", locale)).toBeGreaterThan(
+        0,
+      );
+    }
+
+    expect(ids(sortsBefore, "ros")).toEqual(["edwin", "rosalind"]);
+    expect(ids(sortsAfter, "ros")).toEqual(["rosalind", "wilhelm"]);
   });
 
   it("finds a middle name, below a name that starts with the term", () => {
@@ -212,19 +293,9 @@ describe("searchPartners", () => {
  * after `Z`: it is a Polish letter, and even `pl-PL` files it immediately
  * after `l`. So "collation puts Łukasz before Zorro, code units put it
  * after" is true *everywhere*, and the assertion below can be checked
- * against the same four locales the id half uses rather than against one.
+ * against the same collations the id half uses rather than against one.
  */
 describe("the rank tie-break: name by collation, id by code unit", () => {
-  /**
-   * The same four locales the id tie-break is guarded against, and the same
-   * ones `lib/family-components.test.ts` picked: `en` is the default most
-   * developers run under, `sv` reorders letters at the end of its alphabet,
-   * `tr` has its own rules for dotted and dotless `i`, and
-   * `de-DE-u-co-phonebk` is a non-default collation of a locale that also
-   * has a default one.
-   */
-  const locales = ["en-US", "sv-SE", "tr-TR", "de-DE-u-co-phonebk"];
-
   it("orders a name whose folded form sits above 'z' in code units the way a reader expects, not the way code units do", () => {
     const people = [
       person({ id: "zorro", givenName: "Zorro", surname: "Doyle" }),
@@ -241,7 +312,7 @@ describe("the rank tie-break: name by collation, id by code unit", () => {
     // rather than about the machine the suite happens to run on. Unlike a
     // fixture built on `Æ`, this holds under all of them, so the test does
     // not depend on an ambient locale it does not control.
-    for (const locale of locales) {
+    for (const locale of COLLATION_LOCALES) {
       expect(
         foldName("Łukasz").localeCompare(foldName("Zorro"), locale),
       ).toBeLessThan(0);
@@ -261,7 +332,7 @@ describe("the rank tie-break: name by collation, id by code unit", () => {
 
     // Guard: if ICU ever stopped disagreeing with code units here, the
     // pinning test below would keep passing while testing nothing.
-    for (const locale of locales) {
+    for (const locale of COLLATION_LOCALES) {
       expect(
         new Intl.Collator(locale).compare("Zeta-person", "apple-person"),
       ).toBeGreaterThan(0);
@@ -293,6 +364,81 @@ describe("the rank tie-break: name by collation, id by code unit", () => {
         withoutSeparator,
       ),
     ).toBe(0);
+  });
+});
+
+/**
+ * The name tie-break reads the *reader's* collation, and this is the test
+ * that would notice if it stopped (`YEO-120`).
+ *
+ * ## The position being pinned
+ *
+ * `lib/partner-search.ts` calls `localeCompare` with no locale argument on
+ * purpose. `components/PartnerPicker.tsx` is a client component and calls
+ * `searchPartners` from a `useMemo`, so the comparison runs in the reader's
+ * browser, and reading the reader's own collation is the whole point: a
+ * Danish author should find Æsa where a Danish reader looks for her.
+ *
+ * `lib/people-search.ts` takes the opposite position for the opposite reason
+ * — it runs server-side and its ordering is a property of the answer rather
+ * than of who is reading, so it pins `new Intl.Collator("en")` and the same
+ * query returns the same page for everyone.
+ *
+ * Both are right, and until this ticket neither was *verified*. Nothing went
+ * red if somebody pinned this comparator to a locale, and nothing went red if
+ * somebody unpinned that one. `lib/people-search.test.ts` carries the mirror
+ * of this test.
+ *
+ * ## How to assert "follows the ambient collation" without restating it
+ *
+ * Not by deriving the expected order from `localeCompare` at runtime: that
+ * re-runs the implementation and reports the agreement as a result. Instead
+ * the *environment* is classified — on a probe the assertion itself does not
+ * use — and each class gets a literal expected answer. Under an English
+ * collation this test demands English's answer; under a Swedish or Danish one
+ * it demands theirs. A comparator pinned to any single locale satisfies one
+ * branch and fails the other.
+ *
+ * Which means the test only discriminates when the suite runs under more than
+ * one collation. That is exactly what `.github/workflows/ci.yml` now does,
+ * and exactly what it did not do on the day `YEO-116` shipped a broken
+ * fixture past a green CI run — so this test and that workflow change are one
+ * mechanism, not two.
+ *
+ * ## Why the fixture is `Æ`, which `YEO-116` rejected
+ *
+ * `Æ` survives `foldName` — it has no canonical decomposition, so stripping
+ * combining marks leaves it whole — and collations genuinely disagree about
+ * where it belongs: English files it with `A`, while Swedish, Danish and
+ * Norwegian alphabetise it after `Z`. Next door that disagreement was fatal,
+ * because that test needed a claim every locale agreed with. Here the
+ * disagreement is the entire subject, so the same property that disqualified
+ * it there is what qualifies it here.
+ */
+describe("the name tie-break follows the reader's collation rather than a pinned one", () => {
+  it("orders Æ where the ambient collation puts it, not where en-US does", () => {
+    const people = [
+      person({ id: "zorro", givenName: "Zorro", surname: "Doyle" }),
+      person({ id: "aesa", givenName: "Æsa", surname: "Doyle" }),
+    ];
+
+    // The probe: two single letters. It classifies the environment, and the
+    // assertion below is on two full names this comparison never sees.
+    const aeSortsAfterZ = new Intl.Collator().compare("æ", "z") > 0;
+
+    // Guard, so that neither branch can be the only reachable one — if ICU
+    // here had no real tailorings (a `small-icu` build resolves every locale
+    // to the root collation) both branches would agree and this test would
+    // pass while asserting nothing. `test/collation-environment.test.ts` is
+    // the file that fails first when that happens.
+    expect(new Intl.Collator("en").compare("æ", "z")).toBeLessThan(0);
+    expect(new Intl.Collator("da").compare("æ", "z")).toBeGreaterThan(0);
+
+    // Every candidate ties on rank with an empty query, so the name tie-break
+    // is the whole visible order.
+    expect(ids(people, "")).toEqual(
+      aeSortsAfterZ ? ["zorro", "aesa"] : ["aesa", "zorro"],
+    );
   });
 });
 

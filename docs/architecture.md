@@ -1346,10 +1346,21 @@ the client instead of the server.
 jobs that run concurrently. Everything in this table is a gate: red blocks the
 merge.
 
-| Job        | Runs                                                     | Environment                       |
-| ---------- | -------------------------------------------------------- | --------------------------------- |
-| `check`    | `format:check`, `typecheck`, `lint`, `npm test`, `build` | Deliberately empty                |
-| `database` | `db:migrate:test`, `npm run test:db`                     | A throwaway `postgres:17` service |
+| Job        | Runs                                                        | Environment                       |
+| ---------- | ----------------------------------------------------------- | --------------------------------- |
+| `check`    | `format:check`, `typecheck`, `lint`, `npm test` ×3, `build` | Deliberately empty, `en_US.UTF-8` |
+| `database` | `db:migrate:test`, `npm run test:db`                        | A throwaway `postgres:17` service |
+
+`npm test` runs three times because the collation a test sorts under is part of
+what it asserts, and until `YEO-120` CI silently supplied exactly one of them.
+Both jobs now state a `LANG`/`LC_ALL` rather than inheriting whatever
+`ubuntu-latest` resolves to, and the `check` job repeats the unit suite under
+`sv_SE.UTF-8` and `da_DK.UTF-8` — the two collations that have each caught a
+real fixture asserting an `en-US` answer as though it were a general one.
+docs/testing.md ("The collation is an awkward value too") has the full account,
+including why this is extra steps in one job rather than a matrix: the required
+status checks below are matched by **context name**, and a matrix axis renames
+every leg out from under them.
 
 **Nothing else gates a merge.** The two scheduled workflows — `keep-alive.yml`
 and `backup.yml` — report by opening an issue rather than by failing a check on

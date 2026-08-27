@@ -711,6 +711,69 @@ express — a person with no surname, a person whose death is recorded and whose
 birth is not. Both say so. The rule is not "never write a literal"; it is that
 a fixture claiming to be the seed has to actually be it.
 
+### The collation is an awkward value too
+
+**A fixture that only ever runs under one collation is not coverage of an
+ordering.** It is the rule above with the ambient locale standing in for a
+column default, and it went wrong the same way (`YEO-120`).
+
+`.github/workflows/ci.yml` named no `LANG` and no `LC_ALL` until that ticket.
+That did not mean the suite ran without a collation — it meant the collation
+was whichever one `ubuntu-latest` resolved to, `en-US`. Every locale-dependent
+assertion in the repository was therefore checked against exactly one answer,
+and a fixture whose expected order is an `en-US` order rather than a general
+one passed, and kept passing.
+
+Two of them existed:
+
+- `YEO-116`'s own test asserted `"Æsa".localeCompare("Zorro") < 0` with no
+  locale named — in a change whose entire subject was that an unpinned
+  collation looks pinned and is not. Swedish and Danish alphabetise `Æ` after
+  `Z`, so it is false under `LC_ALL=sv_SE.UTF-8`. One reviewer found it by
+  running a targeted second-locale experiment; another approved the same commit
+  after running all 3156 tests green, under their own default locale.
+- `lib/partner-search.test.ts` asserted that "Aaron Rose" sorts before
+  "Rosalind". Danish and Norwegian alphabetise `aa` as `å`, at the end of the
+  alphabet, so it had been failing under `LC_ALL=da_DK.UTF-8` for as long as it
+  existed, on a green `main`.
+
+So the `check` job now runs `npm test` three times: under `en_US.UTF-8`, which
+it states explicitly rather than inheriting, and then under `sv_SE.UTF-8` and
+`da_DK.UTF-8`. Those two are there because they are the two that have caught
+something. The suite is about ten seconds, so the extra runs cost less than
+`npm ci`.
+
+**Two rules follow, and the second is the one that is easy to get backwards.**
+
+**Fix the fixture, not the environment.** When a test fails under a second
+collation, the repair is a fixture whose answer no locale disagrees with — not
+an `Intl.Collator("en")` bolted onto the test, and never a locale pinned across
+the suite. Pinning makes the run deterministic while leaving every fixture
+exactly as locale-blind as it was, which is the outcome that shipped `YEO-116`.
+`lib/partner-search.test.ts` has the worked examples: `Ł` in place of `Æ` where
+the claim has to hold everywhere, and "Edwin"/"Wilhelm" in place of "Aaron"
+where two plain Latin initials settle it.
+
+**A locale-dependent comparison needs a test that pins which way it is
+dependent.** This repository holds two correct and opposite positions.
+`lib/people-search.ts` builds `new Intl.Collator("en")`, because it renders
+server-side and its ordering is a property of the answer — every reader must
+get the same page, and the same second page. `lib/partner-search.ts` leaves
+`localeCompare` unpinned, because it runs in the reader's browser from a
+`useMemo` in `components/PartnerPicker.tsx`, and reading the reader's own
+collation is the point. Each now has a test that fails if its position is
+reversed, and each of those tests only discriminates under the second and third
+runs — which is why the workflow change and those tests are one mechanism
+rather than two.
+
+Finally, `test/collation-environment.test.ts` is what stops the extra runs from
+passing vacuously. A `small-icu` Node build carries collation data for one
+locale and resolves every other request to the root collation, silently: three
+runs would then test one ordering while looking like three. That file asks ICU
+what it actually resolved — `new Intl.Collator().resolvedOptions().locale` —
+rather than reading the environment variable back and believing it, and it
+asserts the specific tailorings the fixtures depend on.
+
 ### Racing two writers
 
 Some bugs no fixture value can express, because they are about two transactions
