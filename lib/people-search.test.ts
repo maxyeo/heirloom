@@ -184,3 +184,82 @@ describe("searchPeople", () => {
     expect(ids(ROWS, "hale", { limit: 2 })).toHaveLength(2);
   });
 });
+
+/**
+ * The name tie-break is pinned to one collation, and this is the test that
+ * would notice if it stopped (`YEO-120`).
+ *
+ * ## The position being pinned
+ *
+ * `lib/people-search.ts` builds `new Intl.Collator("en")` deliberately.
+ * `/search` renders server-side and its ordering is a property of the
+ * *answer* rather than of who is reading it, so the same query has to return
+ * the same page — and the same second page — for every reader. A tie broken
+ * by the host's collation would make the boundary between page one and page
+ * two depend on which machine rendered it.
+ *
+ * `lib/partner-search.ts` takes the opposite position for the opposite
+ * reason: it runs in the reader's browser, from a `useMemo` in
+ * `components/PartnerPicker.tsx`, so its unpinned `localeCompare` is reading
+ * the reader's own collation on purpose. `lib/partner-search.test.ts` carries
+ * the mirror of this test.
+ *
+ * Both positions are right and both were unverified before this ticket. The
+ * pin was never checked against a second collation, so nothing would have
+ * gone red if somebody had deleted the `"en"` argument.
+ *
+ * ## Where this test's discriminating power comes from
+ *
+ * Under `en_US` — which is what CI resolved to before `YEO-120`, by accident
+ * rather than by decision — a pinned `en` collator and an unpinned one give
+ * identical answers, so this test would pass either way. It is the
+ * `sv_SE` and `da_DK` runs in `.github/workflows/ci.yml` that make it a test:
+ * there, an unpinned comparator returns the other order and this goes red.
+ * The workflow change and this file are one mechanism.
+ *
+ * `Æ` is the fixture because it survives `foldName` (no canonical
+ * decomposition, so stripping combining marks leaves it whole) and because
+ * collations genuinely disagree about it: English files it with `A`, and
+ * Swedish, Danish and Norwegian alphabetise it after `Z`.
+ */
+describe("the name tie-break is pinned to one collation, not the reader's", () => {
+  function row(id: string, givenName: string): PersonSearchRow {
+    return {
+      id,
+      givenName,
+      surname: "Doyle",
+      birthDate: null,
+      birthDateQualifier: "exact",
+      birthDateUpper: null,
+      deathDate: null,
+      deathDateQualifier: "exact",
+      deathDateUpper: null,
+    };
+  }
+
+  it("orders Æ where `en` orders it, whatever collation the process runs under", () => {
+    const rows: PersonSearchRow[] = [row("zorro", "Zorro"), row("aesa", "Æsa")];
+
+    // Guards the fixture: it says nothing unless collations really do
+    // disagree about this pair. A `small-icu` Node resolves every locale to
+    // the root collation, under which all three of these agree — and the
+    // assertion below would then pass without testing anything.
+    // `test/collation-environment.test.ts` is the file that fails first when
+    // that is what has happened.
+    expect(
+      new Intl.Collator("en").compare("æsa doyle", "zorro doyle"),
+    ).toBeLessThan(0);
+    expect(
+      new Intl.Collator("sv").compare("æsa doyle", "zorro doyle"),
+    ).toBeGreaterThan(0);
+    expect(
+      new Intl.Collator("da").compare("æsa doyle", "zorro doyle"),
+    ).toBeGreaterThan(0);
+
+    // Both rows tie on rank — "doyle" is a tier-0 surname prefix for each —
+    // so the pinned collator decides the order outright. `en`'s answer, on
+    // every machine: under `LC_ALL=sv_SE.UTF-8` or `LC_ALL=da_DK.UTF-8` an
+    // unpinned comparator would put Zorro first.
+    expect(ids(rows, "doyle")).toEqual(["aesa", "zorro"]);
+  });
+});

@@ -79,6 +79,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # The collation this job runs under, stated rather than inherited
+    # (`YEO-120`).
+    #
+    # Nothing here named `LANG` or `LC_ALL` until this ticket. That did not
+    # mean the suite ran without a collation — it meant the collation was
+    # whatever `ubuntu-latest` resolved to, so every locale-dependent
+    # assertion in the repository was checked against one answer, forever, and
+    # a fixture that quietly encodes an `en-US` answer passed.
+    #
+    # `YEO-116` is what that costs. Its own test asserted
+    # `"Æsa".localeCompare("Zorro") < 0` with no locale named, in a pull
+    # request whose entire subject was that an unpinned collation looks pinned
+    # and is not. CI was green, because the runner resolves to `en-US`; under
+    # `LC_ALL=sv_SE.UTF-8` the assertion is false. A second reviewer approved
+    # that commit after running all 3156 tests green under their own default
+    # locale, which is precisely what the bug predicts. The number of
+    # approvals was not the signal, and CI could not have been one either.
+    #
+    # So the default is written down. `en_US.UTF-8` is not a neutral choice
+    # and is not claimed to be one — it is the collation most contributors
+    # develop under. Naming it is what turns the runs below into a comparison
+    # against a stated baseline rather than against a property of the runner
+    # image, and what makes a change to that baseline show up in a diff.
+    #
+    # Both variables are set because ICU consults `LC_ALL` first and falls
+    # back to `LANG`; setting only one leaves the other as a way for a future
+    # step to change the answer without appearing to.
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+
     steps:
       - uses: actions/checkout@v7
 
@@ -116,6 +147,86 @@ jobs:
       # `database` job below runs those, against a Postgres of its own.
       # See docs/testing.md.
       - run: npm test
+
+      # The same unit suite again, under collations that disagree with
+      # `en_US` about the order of letters (`YEO-120`).
+      #
+      # ## Why extra steps rather than a matrix axis
+      #
+      # A matrix is the obvious shape and it is the one shape this job cannot
+      # take. `protect main` requires a status check by the *context name*
+      # `typecheck, lint, test, build`, which is this job's `name:` — and a
+      # matrix renames every leg to `typecheck, lint, test, build (en_US.UTF-8)`
+      # and so on. The required context would then match no check-run that
+      # exists on any commit, and `main` would be unmergeable until somebody
+      # with admin on the ruleset noticed. See
+      # docs/architecture.md#the-ruleset-is-the-gate-not-the-workflow.
+      #
+      # A separate *job* would parallelise instead of serialising, and is
+      # declined for the same reason turned around: a new job is a new context
+      # name, and a context the ruleset does not require can go red without
+      # blocking anything. Extra steps in this job gate a merge from the first
+      # commit that runs them rather than from whenever the ruleset is next
+      # edited — and closing the hole today is the whole point of the ticket.
+      #
+      # The wall clock does not argue for a job either. The unit suite is
+      # about ten seconds, so both extra runs together cost less than `npm ci`
+      # does.
+      #
+      # ## Why these two collations
+      #
+      # Because they are the two that have actually caught something, which is
+      # a better reason than breadth.
+      #
+      # `sv_SE` alphabetises `Æ`, `Ä` and `Ö` after `Z`. That is the collation
+      # that falsifies the `YEO-116` fixture described on the job above.
+      #
+      # `da_DK` does that *and* alphabetises `aa` as `å`, also at the end — so
+      # "Aaron Rose" sorts after "Rosalind". `lib/partner-search.test.ts`
+      # asserted the opposite, and was failing under Danish on `main` while CI
+      # reported green.
+      #
+      # Neither run is expected to fail. They exist so that the next fixture
+      # written to an `en-US` answer fails *somewhere*, instead of passing
+      # everywhere and being wrong in the other two hundred locales.
+      #
+      # `test/collation-environment.test.ts` is what stops these from passing
+      # vacuously: a `small-icu` Node resolves every locale to the root
+      # collation, which would leave three runs testing one ordering while
+      # looking like three. That file asserts what ICU actually resolved
+      # rather than trusting that the variable took.
+      #
+      # ## The warning these two steps print, which is not a problem
+      #
+      # Each logs, before anything else:
+      #
+      #   bash: warning: setlocale: LC_ALL: cannot change locale (sv_SE.UTF-8)
+      #
+      # That is bash, not Node. The runner image ships only `C.UTF-8` and
+      # `en_US.UTF-8` as *generated glibc* locales, so `setlocale(3)` refuses
+      # the request and bash says so. It reads exactly like the locale failing
+      # to take, and the obvious repairs — `locale-gen`, or giving up on the
+      # second collation — are both answers to a problem that is not there.
+      #
+      # Node's ICU does not go through `setlocale`. It reads `LC_ALL` and
+      # `LANG` from the environment itself and carries its own collation data,
+      # so `new Intl.Collator()` resolves to `sv-SE` here regardless of what
+      # glibc knows. The evidence is not this comment: it is that all three
+      # tests in `test/collation-environment.test.ts` *run and pass* in these
+      # steps, and the one asserting that the resolved locale is the one asked
+      # for would fail if ICU had fallen back. If that assertion ever does go
+      # red, the locale really has not taken and generating it is the fix.
+      - name: Run the unit suite under Swedish collation
+        run: npm test
+        env:
+          LANG: sv_SE.UTF-8
+          LC_ALL: sv_SE.UTF-8
+
+      - name: Run the unit suite under Danish collation
+        run: npm test
+        env:
+          LANG: da_DK.UTF-8
+          LC_ALL: da_DK.UTF-8
 
       # No DATABASE_URL, no AUTH_* — deliberately. `next build` evaluates every
       # module while it collects route data, so a build that needs a live
@@ -193,6 +304,25 @@ jobs:
     # variable pointing somewhere else — nothing here is a CI-only code path.
     env:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+      # Stated for the same reason the `check` job states it (`YEO-120`): a
+      # job that names no collation does not run without one, it runs under
+      # whichever the runner image supplies, and that is a decision made by
+      # nobody.
+      #
+      # This job is *not* run a second time under another collation, and that
+      # is not an oversight. Ordering in `*.db.test.ts` is overwhelmingly
+      # Postgres's, decided by the collation of the `postgres:17` service
+      # container's database rather than by Node's ICU — so a second `LC_ALL`
+      # here would re-run the suite without varying the thing that decides
+      # the answers. What varies it is the container's own `LC_COLLATE`, and
+      # changing that is a different ticket with a different argument to make:
+      # the application's production database has one collation, and a suite
+      # that ran against two would be asserting against an ordering no
+      # deployment has. The collation this job *can* honestly pin is Node's,
+      # so it pins it and stops there.
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
 
     steps:
       - uses: actions/checkout@v7
