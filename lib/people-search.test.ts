@@ -25,6 +25,25 @@ function ids(...args: Parameters<typeof searchPeople>): string[] {
   return searchPeople(...args).map((match) => match.id);
 }
 
+/**
+ * A row carrying only what a tie-break fixture varies — the id and the given
+ * name — with a shared surname so that a one-word query is a tier-0 match
+ * for every row and they all tie on rank.
+ */
+function row(id: string, givenName: string): PersonSearchRow {
+  return {
+    id,
+    givenName,
+    surname: "Doyle",
+    birthDate: null,
+    birthDateQualifier: "exact",
+    birthDateUpper: null,
+    deathDate: null,
+    deathDateQualifier: "exact",
+    deathDateUpper: null,
+  };
+}
+
 describe("searchPeople", () => {
   it("returns nothing for an empty query, rather than the first page of everyone", () => {
     // Deliberately unlike `searchPartners`: `/search` opens with an
@@ -180,6 +199,42 @@ describe("searchPeople", () => {
     expect(ids([...rows].reverse(), "hale")).toEqual(["a", "b"]);
   });
 
+  /**
+   * The id half of the tie-break is `compareIds` (`YEO-121`), which is a
+   * code-unit comparison, and this is what would notice if it drifted back
+   * onto a collation. The comparator's third step used to be two hand-
+   * written lines saying `<` — behaviourally identical to `compareIds`, and
+   * a second place the rule could have moved without this one following.
+   * Nothing red would have marked the drift, because the rest of this file's
+   * tie-break fixtures use ids that code units and collation agree about.
+   *
+   * The fixture is the pair `lib/compare-ids.ts` names: `"Zeta"` sorts
+   * before `"apple"` by code unit and after it under every collation, so the
+   * assertion says which of the two rules is in force rather than which
+   * machine ran it. This deliberately does *not* mirror the name half above
+   * — that one is pinned to `en` on purpose, and only the id below it is on
+   * code units.
+   */
+  it("orders two people who share a name by id, by code unit, not by collation", () => {
+    const rows: PersonSearchRow[] = [
+      row("apple-person", "Amy"),
+      row("Zeta-person", "Amy"),
+    ];
+
+    // Guards the fixture: without a real disagreement here the assertion
+    // below would pass under either rule and be testing nothing.
+    for (const locale of ["en", "sv", "da"]) {
+      expect(
+        new Intl.Collator(locale).compare("Zeta-person", "apple-person"),
+      ).toBeGreaterThan(0);
+    }
+
+    // Both rows tie on rank and on folded name, so the id decides outright.
+    // `Zeta-person` first is the code-unit answer; every locale above would
+    // have put `apple-person` first.
+    expect(ids(rows, "amy")).toEqual(["Zeta-person", "apple-person"]);
+  });
+
   it("stops at the limit", () => {
     expect(ids(ROWS, "hale", { limit: 2 })).toHaveLength(2);
   });
@@ -223,20 +278,6 @@ describe("searchPeople", () => {
  * Swedish, Danish and Norwegian alphabetise it after `Z`.
  */
 describe("the name tie-break is pinned to one collation, not the reader's", () => {
-  function row(id: string, givenName: string): PersonSearchRow {
-    return {
-      id,
-      givenName,
-      surname: "Doyle",
-      birthDate: null,
-      birthDateQualifier: "exact",
-      birthDateUpper: null,
-      deathDate: null,
-      deathDateQualifier: "exact",
-      deathDateUpper: null,
-    };
-  }
-
   it("orders Æ where `en` orders it, whatever collation the process runs under", () => {
     const rows: PersonSearchRow[] = [row("zorro", "Zorro"), row("aesa", "Æsa")];
 

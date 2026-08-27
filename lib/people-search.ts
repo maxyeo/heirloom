@@ -1,3 +1,4 @@
+import { compareIds } from "@/lib/compare-ids";
 import type { DateQualifier } from "@/lib/family-graph";
 import { formatLifespan } from "@/lib/format-date";
 import {
@@ -245,23 +246,57 @@ export function searchPeople(
    * than one over a single concatenated key, and the third is the one that
    * has to be there.
    *
-   * `searchPartners` ties break on a `name`-NUL-`id` key, reasoning that a
-   * space is a character a name can contain and so cannot safely separate
-   * the two halves. That is right about the space and wrong about the
-   * remedy, because the function at the other end is a *collator*:
-   * `Intl.Collator` gives NUL no primary weight at all, so `compare` of
-   * "mary" + NUL + "a" against "marya" is `0`, and the separator chosen to
-   * keep the halves apart is invisible to the only code that ever reads it.
-   * Comparing the two fields one after the other needs no separator, so
-   * there is nothing left to be invisible — and the id comparison is a plain
-   * code-unit one, because an id is an opaque uuid rather than language and
-   * there is nothing for a collator to know about it.
+   * ## Why three comparisons and not one key
    *
-   * Without the id step the order would only be *stable* — a property of
-   * this array, since JavaScript's sort is, rather than of the answer. Two
-   * people of the same name at the same rank would then order by however
-   * Postgres happened to hand them back. With it the order is total, and the
-   * same query returns the same page every time.
+   * The shape this is deliberately not is one sort key per row — the name,
+   * a separator, the id — compared once. The separator is where that falls
+   * apart. A space is a character a name can contain, so it cannot keep the
+   * two halves apart: "Mary Anne" + id would collide with "Mary" + " Anne…"
+   * + id. And the obvious escape from that, a NUL, is not safer but worse,
+   * because the function at the other end is a *collator*. `Intl.Collator`
+   * gives U+0000 no primary weight at all — `compare` of "mary" + NUL + "a"
+   * against "marya" is `0` — so the separator chosen to hold the halves
+   * apart is invisible to the only code that ever reads it. No character
+   * fixes this; the fix is to stop needing one. Two fields compared one
+   * after the other have no separator to get right, and so nothing left to
+   * be invisible.
+   *
+   * `lib/partner-search.ts` reached the same conclusion from the other
+   * direction. It *had* the `` `${foldName(name)}\0${person.id}` `` key, and
+   * `YEO-116` split it into exactly these two comparisons for exactly this
+   * reason; its `sortName`/`sortId` comment argues it there, and
+   * `lib/partner-search.test.ts` pins the ICU half of it ("ICU ignores
+   * U+0000 entirely"). Two modules worked the rule out separately: a
+   * collator cannot see the separator, so do not hand it one to see.
+   *
+   * ## Why the two halves use different comparators
+   *
+   * The name goes through the pinned `collator` above, because it is text a
+   * reader reads *as sorted text*. The id goes through `compareIds` — a
+   * plain code-unit comparison — because an id is an opaque uuid rather than
+   * language, and there is nothing for a collator to know about it.
+   * `lib/compare-ids.ts` makes that argument in full; the point of calling
+   * it rather than restating it is that this comparator used to write the
+   * same two lines out itself, which was a second place the rule could drift
+   * from (`YEO-111`, `YEO-116`).
+   *
+   * That this module pins its collator to `en` while
+   * `lib/partner-search.ts` deliberately leaves its `localeCompare`
+   * unpinned is a *different* decision, and not one to flatten while the two
+   * files agree about NUL: `/search` renders server-side, where the ordering
+   * is part of the answer, and the picker runs in the reader's browser,
+   * where it should follow the reader. `YEO-120` put a test on each
+   * position rather than merging them — see the collation describe block in
+   * `lib/people-search.test.ts` and its mirror in
+   * `lib/partner-search.test.ts`.
+   *
+   * ## Why the id step has to be there
+   *
+   * Without it the order would only be *stable* — a property of this array,
+   * since JavaScript's sort is, rather than of the answer. Two people of the
+   * same name at the same rank would then order by however Postgres happened
+   * to hand them back. With it the order is total, and the same query
+   * returns the same page every time.
    */
   scored.sort((a, b) => {
     if (a.rank !== b.rank) return a.rank - b.rank;
@@ -269,8 +304,7 @@ export function searchPeople(
     const byName = collator.compare(a.sortName, b.sortName);
     if (byName !== 0) return byName;
 
-    if (a.match.id === b.match.id) return 0;
-    return a.match.id < b.match.id ? -1 : 1;
+    return compareIds(a.match.id, b.match.id);
   });
 
   return scored.slice(0, limit).map((entry) => entry.match);
