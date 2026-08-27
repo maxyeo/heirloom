@@ -191,8 +191,30 @@ const DEFAULT_PARTNER_LEAD: PartnerLead = "father";
  * to dagre exactly as before.
  *
  * The pairs cannot contradict each other. Every constraint returned here puts
- * the leading sex on the left and the other on the right, so a cycle would
- * need some constraint pointing the other way, and none does.
+ * the leading sex on the left and the other on the right, and a person's sex
+ * does not change between two of them, so no node is ever on both sides and
+ * the constraint graph is bipartite by construction. A cycle would need some
+ * constraint pointing the other way, and none does. That holds on its own;
+ * the exclusions below narrow the set further, but nothing about acyclicity
+ * rests on them.
+ *
+ * ## What a constraint assumes, and does not check
+ *
+ * Dagre applies a constraint only where both of its nodes turn up on one rank
+ * — the constraint graph is consulted per layer, and a pair split across two
+ * ranks is dropped in silence rather than raised. Nothing here checks for
+ * that, because partners of one union are what dagre's ranker puts on a rank
+ * together: it is fed an edge from each partner to their shared union node,
+ * and the shallower partner is pulled down to meet the deeper one. Trees with
+ * one partner's ancestry many generations deeper than the other's were tried
+ * against this and held.
+ *
+ * So it is an assumption rather than a checked precondition, and worth
+ * knowing which way it fails. A pair that did somehow rank apart would keep
+ * dagre's own order — the couple simply goes unled, exactly as the two
+ * exclusions below go unled. There is no arrangement in which a dropped
+ * constraint draws a wrong tree, which is why this is documented rather than
+ * guarded.
  *
  * ## What it declines to order
  *
