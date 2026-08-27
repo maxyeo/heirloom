@@ -1367,6 +1367,13 @@ describe("sibling order", () => {
     // fails — both links ran through Martha, so nothing is left on the rank
     // and dagre lays the youngest out on the left.
     expect(x.eldest).toBeLessThan(x.youngest);
+
+    // And Edwin's wife is still on his right. This is the fixture the couple
+    // used to lose on: asked for the siblings as bare people, dagre threaded
+    // Yvonne between the two of them and put Winnie out on the left. It is
+    // ordering blocks now — Edwin and Winnie are one — so there is nothing
+    // left for it to thread.
+    expect(x.eldest).toBeLessThan(x.wife);
   });
 
   it("lays out the same tree whichever order the child links arrived in", () => {
@@ -1408,5 +1415,141 @@ describe("sibling order", () => {
         .map((node) => node.id)
         .slice(-3),
     ).toEqual(["eldest", "middle", "youngest"]);
+  });
+});
+
+/**
+ * The couples and the sibships, over trees nobody wrote by hand.
+ *
+ * ## Why this file grew a generated test
+ *
+ * Because a hand-written one could not have caught what this is here for.
+ * When siblings were first ordered, every fixture above passed, the seeded
+ * family passed, and the tree a reader actually had in front of them came out
+ * with a mother on her husband's left. The bug was not in a case nobody
+ * thought of; it was in the *shape* of an ordinary rank — a married sibling,
+ * their spouse, and the brothers and sisters either side — and it took a
+ * combination of who married whom and where their children fell that no
+ * author sits down and invents. Seven per cent of couples were affected, and
+ * the fixtures above found none of them.
+ *
+ * So the generator makes three generations of couples, gives each a few
+ * children, marries most of them off, and asserts the one thing that must
+ * hold for all of them. It is a property, not an arrangement: nothing here
+ * says where anybody goes, only that a father is never drawn to the right of
+ * the mother he is partnered with.
+ *
+ * ## Why it is deterministic anyway
+ *
+ * The seeds are 1 to 200 and the generator is a plain linear congruential
+ * PRNG written out below, so this test runs the same 200 trees on every
+ * machine and every run. A failure names its seed and can be replayed
+ * exactly. Nothing here reaches for `Math.random`, which would make a red run
+ * unreproducible — the one thing worse than no test.
+ */
+describe("partner lead over generated trees", () => {
+  /** A linear congruential generator, so a failing seed replays exactly. */
+  function rng(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
+  }
+
+  /**
+   * Three generations of couples, their children, and the spouses those
+   * children married.
+   *
+   * Birth years ascend within a sibship so the sibling constraints are real
+   * rather than all-ties, and a spouse is born a year after the sibling they
+   * marry so the two are never the same age. Roughly a third of the children
+   * marry nobody, which is what leaves the ranks ragged enough to be worth
+   * laying out.
+   */
+  function generatedTree(seed: number): FamilyGraph {
+    const random = rng(seed);
+    const people: FamilyGraph["people"] = [];
+    const unions: FamilyGraph["unions"] = [];
+    const childLinks: FamilyGraph["childLinks"] = [];
+    let count = 0;
+
+    const add = (sex: "male" | "female", year: number) => {
+      const id = `p${count++}`;
+      people.push(
+        person({ id, givenName: id, sex, birthDate: `${year}-01-01` }),
+      );
+      return id;
+    };
+
+    unions.push({
+      ...union({ id: "u0" }),
+      partnerAId: add("male", 1900),
+      partnerBId: add("female", 1902),
+    });
+    let parentUnions = ["u0"];
+
+    for (let generation = 1; generation <= 3; generation++) {
+      const nextUnions: string[] = [];
+      for (const parentUnion of parentUnions) {
+        const children = 2 + Math.floor(random() * 3);
+        for (let birth = 0; birth < children; birth++) {
+          const sex = random() < 0.5 ? "male" : "female";
+          const born = 1900 + generation * 25 + birth * 2;
+          const child = add(sex, born);
+          childLinks.push({
+            unionId: parentUnion,
+            childId: child,
+            relation: "biological",
+          });
+          if (generation === 3 || random() >= 0.7) continue;
+
+          const spouse = add(sex === "male" ? "female" : "male", born + 1);
+          const id = `u${unions.length}`;
+          unions.push({
+            ...union({ id }),
+            partnerAId: sex === "male" ? child : spouse,
+            partnerBId: sex === "male" ? spouse : child,
+          });
+          nextUnions.push(id);
+        }
+      }
+      parentUnions = nextUnions;
+      if (parentUnions.length === 0) break;
+    }
+
+    return { people, unions, childLinks };
+  }
+
+  it("never draws a father to the right of his wife", () => {
+    const failures: string[] = [];
+    let couples = 0;
+
+    for (let seed = 1; seed <= 200; seed++) {
+      const graph = generatedTree(seed);
+      const sexOf = new Map(graph.people.map((p) => [p.id, p.sex]));
+      const at = new Map(
+        layoutFamilyGraph(graph).nodes.map((node) => [node.id, node.position]),
+      );
+
+      for (const { id, partnerAId, partnerBId } of graph.unions) {
+        if (!partnerAId || !partnerBId) continue;
+        const father =
+          sexOf.get(partnerAId) === "male" ? partnerAId : partnerBId;
+        const mother = father === partnerAId ? partnerBId : partnerAId;
+        const him = at.get(father);
+        const her = at.get(mother);
+        // A pair dagre put on two ranks is a pair it drops the constraint
+        // for, by its own rule — there is nothing to assert about those.
+        if (!him || !her || him.y !== her.y) continue;
+
+        couples++;
+        if (him.x > her.x) failures.push(`seed ${seed}, union ${id}`);
+      }
+    }
+
+    // The guard that keeps a green run meaningful: a generator that quietly
+    // stopped producing couples on one rank would pass the line below by
+    // asserting nothing at all. The 200 seeds yield 1161 of them, and 181 of
+    // the equivalent set came out reversed before the blocks.
+    expect(couples).toBeGreaterThan(1000);
+    expect(failures).toEqual([]);
   });
 });

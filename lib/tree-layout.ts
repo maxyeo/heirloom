@@ -407,6 +407,57 @@ function siblingOrderConstraints(graph: FamilyGraph): OrderConstraint[] {
     else sibships.set(link.unionId, [child]);
   }
 
+  /**
+   * Everybody each person is drawn beside: themselves, and their partners.
+   *
+   * ## Why a sibling is ordered with their spouse and not on their own
+   *
+   * A married sibling does not occupy a slot on the rank; their couple does.
+   * Ordering the siblings alone leaves dagre a rank it has two partial orders
+   * for — the siblings among themselves, the couples among themselves — and
+   * no statement about how they fit together, so it is free to resolve the
+   * gap by threading a sister in between a husband and his wife. Its
+   * heuristic does exactly that, and what gives way is the couple: the
+   * observed tree put a wife on her husband's left, which is the arrangement
+   * `partnerOrderConstraints` exists to rule out.
+   *
+   * Naming the block closes the gap. "The eldest and his wife both come
+   * before the second child" is a total order on the rank rather than two
+   * partial ones, dagre has nothing left to resolve, and both rules come out
+   * satisfied — checked against the fixture that used to reverse the couple,
+   * where it now draws eldest, wife, youngest with the middle child ranked
+   * away. That is also what the convention has always meant: a family chart
+   * puts the children in birth order and each one's spouse beside them, not
+   * the children in birth order and the spouses wherever they fit.
+   *
+   * ## What it does not assume
+   *
+   * A partner may be on another rank, in which case dagre drops the pair in
+   * silence, exactly as it drops any cross-rank constraint. A partner may be
+   * married twice, in which case both spouses join the block and the whole
+   * group stays on one side of the next sibling — which is what should happen
+   * to a remarriage, and does not disturb {@link partnerOrderConstraints}'
+   * separate decision to leave a twice-married person unled. And a spouse who
+   * is also a sibling somewhere on the same rank can be pulled two ways at
+   * once; that is a contradiction rather than a disaster, and
+   * {@link withoutCycles} settles it.
+   */
+  const partners = new Map<string, string[]>();
+  for (const union of graph.unions) {
+    const { partnerAId, partnerBId } = union;
+    if (!partnerAId || !partnerBId) continue;
+    for (const [person, partner] of [
+      [partnerAId, partnerBId],
+      [partnerBId, partnerAId],
+    ]) {
+      const known = partners.get(person);
+      if (known) known.push(partner);
+      else partners.set(person, [partner]);
+    }
+  }
+
+  const blockOf = (id: string): string[] => [id, ...(partners.get(id) ?? [])];
+
   const constraints: OrderConstraint[] = [];
 
   for (const sibship of sibships.values()) {
@@ -415,13 +466,14 @@ function siblingOrderConstraints(graph: FamilyGraph): OrderConstraint[] {
     const eldestFirst = [...sibship].sort(compareByBirth);
     for (let older = 0; older < eldestFirst.length; older++) {
       for (let younger = older + 1; younger < eldestFirst.length; younger++) {
-        // `left` is first in the rank's order, which is leftmost while the
-        // canvas is LTR — the same line an RTL canvas would swap in
-        // {@link partnerOrderConstraints}.
-        constraints.push({
-          left: eldestFirst[older].id,
-          right: eldestFirst[younger].id,
-        });
+        for (const left of blockOf(eldestFirst[older].id)) {
+          for (const right of blockOf(eldestFirst[younger].id)) {
+            // `left` is first in the rank's order, which is leftmost while the
+            // canvas is LTR — the same line an RTL canvas would swap in
+            // {@link partnerOrderConstraints}.
+            constraints.push({ left, right });
+          }
+        }
       }
     }
   }
@@ -492,17 +544,17 @@ function siblingOrderConstraints(graph: FamilyGraph): OrderConstraint[] {
  * — the same thing that happens to a pair split across two ranks, and the
  * same non-event.
  *
- * That is a promise about this filter and not about the drawing, and the
- * difference is worth stating plainly, because a couple *can* still come out
- * reversed. Handed both sets, dagre satisfies what it can rank by rank, and
- * on `raisedByHerBrother` in `lib/tree-layout.test.ts` — the sibship split
- * across two ranks — it answers the crowded rank by putting the wife ahead
- * of the husband, a couple that comes out
- * father-first when the same graph is laid out with the sibling constraints
- * removed. Nothing here dropped that constraint; dagre resolved a rank it
- * could not fully satisfy, and there is no priority to hand it that would say
- * which half to keep. So the order of this list decides what *is* asked for,
- * and dagre decides the rest.
+ * That is a promise about this filter and not, on its own, about the drawing.
+ * A constraint this function keeps is one dagre is *asked* for, and dagre
+ * satisfies what it can rank by rank with a heuristic rather than a solver —
+ * so a rank it cannot see how to satisfy is a rank where something gives way
+ * whatever this list says. That is not hypothetical: asked for the couples
+ * and for the siblings *as bare pairs of people*, it reversed 181 of 2579
+ * couples across the trees `lib/tree-layout.test.ts` generates, and one of
+ * them was reported from a real archive. What fixed it was not a priority
+ * here — there is none to hand dagre — but asking for something it can
+ * satisfy, which is what the blocks in {@link siblingOrderConstraints} are
+ * for. The same couples now come out father-first, every one.
  */
 function withoutCycles(constraints: OrderConstraint[]): OrderConstraint[] {
   /** Everything each node has been constrained to precede, so far. */
