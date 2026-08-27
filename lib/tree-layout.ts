@@ -4,7 +4,7 @@ import type { Edge, Node } from "@xyflow/react";
 
 import { compareIds } from "./compare-ids";
 import { connectedFamilies } from "./family-components";
-import type { FamilyGraph, GraphPerson } from "./family-graph";
+import type { FamilyGraph, GraphChildLink, GraphPerson } from "./family-graph";
 import { formatLifespan } from "./format-date";
 import { compareByBirth } from "./person-detail";
 import { formatPersonName } from "./person-format";
@@ -296,6 +296,34 @@ function partnerOrderConstraints(
 }
 
 /**
+ * The child links in a fixed order, whatever order the rows arrived in.
+ *
+ * `getFamilyGraph` reads `union_children` with no `ORDER BY` — the one of its
+ * three selects that has never had a reason to — so the same archive hands
+ * this file its child links in whatever order Postgres felt like, and that
+ * order is not inert. It reaches dagre twice over: as the order the
+ * `union → child` edges are added to the graph in, which is an input to its
+ * ordering heuristic, and as the order the sibships below are offered to
+ * {@link withoutCycles} in, whose tie-break is first-offered-wins. Reversing
+ * the four links of the archive `lib/tree-layout.test.ts` builds for the
+ * cycle moved three people across the canvas.
+ *
+ * So the drawing was a function of the family *and* of a row order nobody
+ * chose. Sorted here rather than in the query, because the property is owed
+ * by a `FamilyGraph` assembled any other way too — an import preview, a
+ * fixture in a test — and a layout that is a pure function of its argument is
+ * the thing worth having. {@link compareIds} for the reason every other
+ * tie-break in this file uses it: these ids are never read, so all the
+ * comparison has to do is give the same answer on CI as on a laptop.
+ */
+function orderedChildLinks(graph: FamilyGraph): GraphChildLink[] {
+  return [...graph.childLinks].sort(
+    (a, b) =>
+      compareIds(a.unionId, b.unionId) || compareIds(a.childId, b.childId),
+  );
+}
+
+/**
  * Order each sibship oldest first, as constraints for the same ordering phase.
  *
  * A sibship is not a couple, but the problem is the one
@@ -329,13 +357,27 @@ function partnerOrderConstraints(
  * Eldest before second and second before third implies eldest before third,
  * so a chain would say this in three constraints where this says it in six.
  * It is the wrong economy, because dagre applies a constraint only where both
- * of its nodes turn up on one rank and drops it in silence otherwise, and
- * siblings are not guaranteed to share a rank. A sister who married into a
- * lineage recorded three generations deeper is pulled down to meet her
- * husband, exactly as the shallower partner of any couple is. In a chain she
- * takes the link between her elder and younger siblings away with her and
- * the siblings still on the rank come out unordered; pairwise, the only
- * ordering lost is the one she was in.
+ * of its nodes turn up on one rank and drops it in silence otherwise — and a
+ * sibship is not guaranteed to be on one rank.
+ *
+ * What splits one is a person who is a child of two unions a generation
+ * apart. A daughter raised by her elder brother is recorded as a child of her
+ * parents' union and an adopted child of his, and his union is a rank below
+ * theirs, so she is ranked below the siblings she was born beside. That
+ * fixture is in `lib/tree-layout.test.ts` and it does split, checked rather
+ * than argued — as were two shapes that sound like they should and do not,
+ * both of them a sibling marrying into a lineage recorded generations deeper.
+ * Dagre answers those by moving the shallower *family* down together, and the
+ * sibship stays whole.
+ *
+ * So it is one sibling in an uncommon position, and the difference is what
+ * happens to the rest of her sibship. Every pair costs her the two pairs she
+ * is in and leaves her brother and sister ordered by the pair between them. A
+ * chain has nothing between them at all: both of its links ran through her,
+ * both are dropped, and the two siblings still standing on the rank come out
+ * in whatever order dagre reached for. Run against that fixture a chain does
+ * exactly that — it lays the youngest out left of the eldest, which is the
+ * arrangement with no constraints at all.
  *
  * The cost is a sibship squared, and a sibship is small: twelve children is a
  * large family and 66 constraints.
@@ -355,7 +397,9 @@ function siblingOrderConstraints(graph: FamilyGraph): OrderConstraint[] {
    */
   const sibships = new Map<string, GraphPerson[]>();
 
-  for (const link of graph.childLinks) {
+  // {@link orderedChildLinks}, so the sibships reach {@link withoutCycles} in
+  // an order the rows cannot move.
+  for (const link of orderedChildLinks(graph)) {
     const child = people.get(link.childId);
     if (!child) continue;
     const sibship = sibships.get(link.unionId);
@@ -443,11 +487,22 @@ function siblingOrderConstraints(graph: FamilyGraph): OrderConstraint[] {
  *
  * The first one, so the caller orders the list by what it cares about most.
  * {@link orderConstraints} puts the partners in front, and because they
- * cannot conflict with each other none of them is ever dropped: father-left
- * is exactly what it was before siblings were ordered at all. What gives way
- * is one sibling pair, which leaves those two in dagre's own order — the same
- * thing that happens to a pair split across two ranks, and the same
- * non-event.
+ * cannot conflict with each other none of them is ever dropped here. What
+ * gives way is one sibling pair, which leaves those two in dagre's own order
+ * — the same thing that happens to a pair split across two ranks, and the
+ * same non-event.
+ *
+ * That is a promise about this filter and not about the drawing, and the
+ * difference is worth stating plainly, because a couple *can* still come out
+ * reversed. Handed both sets, dagre satisfies what it can rank by rank, and
+ * on `raisedByHerBrother` in `lib/tree-layout.test.ts` — the sibship split
+ * across two ranks — it answers the crowded rank by putting the wife ahead
+ * of the husband, a couple that comes out
+ * father-first when the same graph is laid out with the sibling constraints
+ * removed. Nothing here dropped that constraint; dagre resolved a rank it
+ * could not fully satisfy, and there is no priority to hand it that would say
+ * which half to keep. So the order of this list decides what *is* asked for,
+ * and dagre decides the rest.
  */
 function withoutCycles(constraints: OrderConstraint[]): OrderConstraint[] {
   /** Everything each node has been constrained to precede, so far. */
@@ -564,7 +619,7 @@ export function layoutFamilyGraph(
     }
   }
 
-  for (const link of graph.childLinks) {
+  for (const link of orderedChildLinks(graph)) {
     g.setEdge(link.unionId, link.childId);
     edges.push({
       id: `c-${link.unionId}-${link.childId}`,

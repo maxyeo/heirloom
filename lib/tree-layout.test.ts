@@ -1278,13 +1278,15 @@ describe("sibling order", () => {
 
     // Which of the three gave way, stated exactly. The couple is untouched —
     // the partner constraints are offered first and none of them is ever the
-    // one dropped — so the groom still leads his bride; the bride still leads
-    // the brother she is older than; and the one claim that cannot hold with
-    // those two, that the brother comes before the groom he is older than, is
-    // the one lost. Handed the cycle instead, dagre keeps the siblings and
-    // discards the couple, which is how this line fails when the filter goes.
+    // one dropped — so the groom leads his bride. Of the two sibships, the
+    // adoptive one is offered first, `u-adoptive` sorting before `u-birth`,
+    // so Sam keeps his place ahead of the younger brother he was raised with;
+    // and the claim that cannot hold alongside those two — that Delia, older
+    // than Sam, comes before him — is the one lost. Handed the cycle instead,
+    // dagre keeps the siblings and discards the couple, which is how the
+    // first of these lines fails when the filter goes.
+    expect(x.shared).toBeLessThan(x.groom);
     expect(x.groom).toBeLessThan(x.bride);
-    expect(x.bride).toBeLessThan(x.shared);
 
     // Cheap insurance on the worse of the two failure modes: a node dagre
     // could not release from a rank comes back with no coordinates at all.
@@ -1294,6 +1296,99 @@ describe("sibling order", () => {
       expect(Number.isFinite(node.position.x)).toBe(true);
       expect(Number.isFinite(node.position.y)).toBe(true);
     }
+  });
+
+  /**
+   * A sibship dagre puts on two ranks.
+   *
+   * Martha was raised by her elder brother: a child of her parents' union and
+   * an adopted child of his, which the schema records as two child links and
+   * nothing else. His union is a rank below theirs, so she is ranked below the
+   * siblings she was born beside, and every constraint she is in is dropped —
+   * dagre applies one only where both of its nodes turn up on one rank.
+   *
+   * This is the fixture behind `siblingOrderConstraints`' argument for
+   * emitting every pair rather than a chain of neighbours, and it is the only
+   * shape checked here that actually splits a sibship. Two that sound as
+   * though they should — a sibling marrying into a lineage recorded three and
+   * four generations deeper — do not: dagre moves the shallower family down
+   * as a whole and the sibship stays on one rank.
+   */
+  function raisedByHerBrother(): FamilyGraph {
+    return {
+      people: [
+        person({ id: "pa", givenName: "Pa", sex: "male" }),
+        person({ id: "ma", givenName: "Ma" }),
+        person({
+          id: "eldest",
+          givenName: "Edwin",
+          sex: "male",
+          birthDate: "1900-01-01",
+        }),
+        person({ id: "middle", givenName: "Martha", birthDate: "1905-01-01" }),
+        person({
+          id: "youngest",
+          givenName: "Yvonne",
+          birthDate: "1910-01-01",
+        }),
+        person({ id: "wife", givenName: "Winnie" }),
+      ],
+      unions: [
+        { ...union({ id: "u-parents" }), partnerAId: "pa", partnerBId: "ma" },
+        {
+          ...union({ id: "u-eldest" }),
+          partnerAId: "eldest",
+          partnerBId: "wife",
+        },
+      ],
+      childLinks: [
+        { unionId: "u-parents", childId: "eldest", relation: "biological" },
+        { unionId: "u-parents", childId: "middle", relation: "biological" },
+        { unionId: "u-parents", childId: "youngest", relation: "biological" },
+        { unionId: "u-eldest", childId: "middle", relation: "adopted" },
+      ],
+    };
+  }
+
+  it("keeps the rest of a sibship in order when one child is ranked away", () => {
+    const { nodes } = layoutFamilyGraph(raisedByHerBrother());
+    const y = (id: string) => nodeById(nodes, id).position.y;
+    const x = xById(nodes);
+
+    // The premise first, because the test is worthless if the fixture stops
+    // splitting: Martha really is on a rank of her own, so both of the pairs
+    // she is in are dropped by dagre and cannot be what orders anybody.
+    expect(y("middle")).toBeGreaterThan(y("eldest"));
+    expect(y("eldest")).toBe(y("youngest"));
+
+    // And the claim: her brother and sister are ordered by the pair between
+    // them, which only exists because every pair is emitted. Replace the loop
+    // in `siblingOrderConstraints` with a chain of neighbours and this line
+    // fails — both links ran through Martha, so nothing is left on the rank
+    // and dagre lays the youngest out on the left.
+    expect(x.eldest).toBeLessThan(x.youngest);
+  });
+
+  it("lays out the same tree whichever order the child links arrived in", () => {
+    /*
+     * `getFamilyGraph` reads `union_children` with no `ORDER BY`, so the same
+     * archive can hand the layout its child links in a different order
+     * tomorrow. The drawing must not move when it does — the property the tab
+     * order tests above assert for `individuals`, now owed by the sibships
+     * too, because the order they are offered in is the order `withoutCycles`
+     * breaks its ties in. The archive is the one that *has* a tie to break:
+     * before `siblingOrderConstraints` sorted its sibships, reversing these
+     * four links moved three people.
+     */
+    const forwards = conflictingArchive();
+    const backwards: FamilyGraph = {
+      ...forwards,
+      childLinks: [...forwards.childLinks].reverse(),
+    };
+
+    expect(xById(layoutFamilyGraph(backwards).nodes)).toEqual(
+      xById(layoutFamilyGraph(forwards).nodes),
+    );
   });
 
   it("tabs through a generation eldest first", () => {
