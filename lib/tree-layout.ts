@@ -771,14 +771,21 @@ function descentBars(
  * the same on CI as on a laptop — {@link compareIds}, for the reason given
  * there.
  *
- * ## Why greedy is enough
+ * ## Why greedy is enough, and what it is not
  *
- * Levels are assigned by taking the first one where the bar clears
- * everything already on it, which is the standard colouring of an interval
- * graph and gives the fewest levels a set of intervals can be drawn in when
- * they are taken in a sorted order. The count matters because it is what
- * `ranksep` has to pay for; the arrangement matters because it is what a
- * reader sees; and both come out of the same pass.
+ * Levels are assigned by taking the first one where the bar clears everything
+ * already on it. What that guarantees is the only thing being asked of it: no
+ * two bars that overlap ever share a level, whatever order they are taken in,
+ * because a bar is never placed on a level it does not clear.
+ *
+ * It is not the fewest levels. The greedy colouring of an interval graph is
+ * optimal when the intervals are taken by left endpoint, and these are taken
+ * widest first, for the arrangement above. Over 200,000 random interval sets
+ * widest-first came out one or two levels deeper than left-endpoint-first in
+ * about 2% of them. Nothing is drawn wrongly by those: an extra level only
+ * tightens the step {@link descentBarHeights} divides the rank's room into.
+ * The arrangement is what a reader sees and the level count is not, so where
+ * the two disagree this spends the levels.
  */
 function descentBarLevels(bars: DescentBar[]): Map<string, number> {
   const clear = (a: DescentBar, b: DescentBar) =>

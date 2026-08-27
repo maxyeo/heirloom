@@ -38,9 +38,22 @@ import { DESCENT_STUB } from "@/lib/tree-layout";
  * `offset` is {@link DESCENT_STUB} rather than the default 20 for the same
  * reason it is that value in the layout: it is the straight run before the
  * path turns, and a bar nearer the marker than the offset is drawn by
- * overshooting past it and coming back.
+ * overshooting past it and coming back. It cancels out of the midpoint
+ * `getSmoothStepPath` falls back to, so an edge with no `barY` is drawn
+ * exactly where `smoothstep` drew it.
+ *
+ * ## Everything else is passed through
+ *
+ * The label, the markers and the id are forwarded rather than dropped, which
+ * is the whole difference between this and the four lines it takes to draw
+ * one path. `lib/tree-layout.ts` sets none of them on a child link today, so
+ * nothing would look wrong if they were left out — and that is exactly the
+ * problem: an arrowhead added to the adopted-child edge later would vanish
+ * here with no error anywhere, because `EdgeProps` still declares every one
+ * of these. Mirroring React Flow's own `SmoothStepEdge` costs a line each.
  */
 export function DescentEdge({
+  id,
   sourceX,
   sourceY,
   sourcePosition = Position.Bottom,
@@ -48,10 +61,18 @@ export function DescentEdge({
   targetY,
   targetPosition = Position.Top,
   data,
+  label,
+  labelStyle,
+  labelShowBg,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  markerStart,
+  markerEnd,
   style,
   interactionWidth,
 }: EdgeProps<Edge<{ barY?: number }>>) {
-  const [path] = getSmoothStepPath({
+  const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -63,6 +84,21 @@ export function DescentEdge({
   });
 
   return (
-    <BaseEdge path={path} style={style} interactionWidth={interactionWidth} />
+    <BaseEdge
+      id={id}
+      path={path}
+      labelX={labelX}
+      labelY={labelY}
+      label={label}
+      labelStyle={labelStyle}
+      labelShowBg={labelShowBg}
+      labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+      markerStart={markerStart}
+      markerEnd={markerEnd}
+      style={style}
+      interactionWidth={interactionWidth}
+    />
   );
 }
