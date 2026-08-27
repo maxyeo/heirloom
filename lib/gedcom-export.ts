@@ -928,10 +928,13 @@ function positions(
  * Read a table of GEDCOM spellings the other way round.
  *
  * The first spelling of a member wins, which matters for a table that is not
- * a bijection — none of the two this module inverts is such a table today, and
- * `lib/gedcom-export.test.ts` asserts that both cover their enum completely,
- * so a member losing its spelling is a test failure rather than a missing
- * line in an export.
+ * a bijection — and since `YEO-91` one of the two this module inverts is such
+ * a table. `PEDIGREES` reads both `step` and `stepchild`, because Gramps
+ * writes the second; `step` is listed first there, so it stays the spelling
+ * this module writes and the export does not change byte for byte.
+ * `lib/gedcom-export.test.ts` asserts that both tables cover their enum
+ * completely, so a member losing its spelling is a test failure rather than a
+ * missing line in an export.
  *
  * A `Map` rather than a `Record`, because a `Record<Member, string>` would be
  * claiming a totality no inversion can prove at the type level. The claim is

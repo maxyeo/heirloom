@@ -172,6 +172,17 @@ const UNNAMED = "Unknown";
  * fact the file went out of its way to record — the same reasoning `SEX_CODES`
  * gives for accepting `X`.
  *
+ * `stepchild` means the same thing and is the spelling **Gramps** writes.
+ * `YEO-91` found it by running the export through Gramps and back: Gramps
+ * reads our `PEDI step` happily and normalises it to `PEDI stepchild` in its
+ * own 5.5.1 export, so a family who move a tree from here into Gramps and out
+ * again used to arrive back with every step-child recorded as biological.
+ * Nothing was silent about it — the sentence below said so, once per child —
+ * but a loss that is reported is still a loss, and the file was making a
+ * statement this table could have read. It is listed *after* `step` because
+ * the inverse takes the first spelling of a member (`invert` in
+ * `lib/gedcom-export.ts`), and `step` is the one the export writes.
+ *
  * `sealing` is deliberately absent: it is an LDS ordinance, not a kind of
  * parentage, and it is handled below with a sentence of its own rather than
  * quietly folded into `biological` by a table.
@@ -186,7 +197,26 @@ export const PEDIGREES: Readonly<Record<string, ChildRelation>> = {
   adopted: "adopted",
   foster: "foster",
   step: "step",
+  stepchild: "step",
 };
+
+/**
+ * The vocabulary above, said in prose, for the sentence a file outside it gets.
+ *
+ * Derived rather than written out, because the sentence names a closed set and
+ * a hand-written copy of a closed set stops being true the day the set grows —
+ * which is exactly what `YEO-91` did to it. Nobody would have noticed: the
+ * message would have gone on offering four spellings while the table read
+ * five, and the one person it misleads is the one holding a file it refused.
+ */
+const PEDIGREE_VOCABULARY = listInWords(Object.keys(PEDIGREES));
+
+/** `a, b or c` — a closed set, for a sentence a reader has to act on. */
+function listInWords(items: readonly string[]): string {
+  if (items.length < 2) return items.join("");
+
+  return `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+}
 
 /**
  * Map a parsed file onto this schema.
@@ -735,7 +765,7 @@ function relationFor(
     message:
       link.pedigree === "sealing"
         ? `"sealing" is a religious ordinance rather than a kind of parentage, so this child was recorded as biological.`
-        : `"${link.pedigree}" is not a pedigree this import understands, so this child was recorded as biological. Expected birth, adopted, foster or step.`,
+        : `"${link.pedigree}" is not a pedigree this import understands, so this child was recorded as biological. Expected ${PEDIGREE_VOCABULARY}.`,
   });
 
   return "biological";

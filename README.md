@@ -214,6 +214,7 @@ sentence stays true.
 | `npm run db:seed`           | Reset and load the example family — refuses on a non-local host without `SEED_ALLOW_DESTRUCTIVE` |
 | `npm run db:keep-alive`     | Ping the database so Supabase does not pause it                                                  |
 | `npm run db:studio`         | Drizzle Studio                                                                                   |
+| `npm run gramps:check`      | Open the GEDCOM export in a real Gramps, in Docker — `test/gramps/`                              |
 
 ## Licence
 
