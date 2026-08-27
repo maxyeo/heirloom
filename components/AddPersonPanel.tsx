@@ -240,7 +240,7 @@ export function AddPersonForm({
       aria-label="Add a person"
       className="fixed inset-x-0 bottom-0 z-20 flex max-h-[85%] flex-col border-t border-rule bg-panel sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-none sm:w-96 sm:border-t-0 sm:border-l"
     >
-      <div className="flex items-start justify-between gap-2 border-b border-rule-soft px-4 py-3">
+      <div className="flex items-start justify-between gap-2 border-b border-rule px-4 py-3">
         <h2 className="border-0 pb-0 text-h2">Add a person</h2>
         <button
           type="button"
