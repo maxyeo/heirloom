@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { RetiredEntryNotice } from "@/components/RetiredEntryNotice";
 import { getPageBySlug } from "@/lib/pages";
 import {
   formatRevisionAuthor,
@@ -162,7 +163,18 @@ export default async function RevisionHistoryPage({
       <h1>Revision history: {page.title}</h1>
 
       <p className="mb-6 text-caption">
-        <Link href={`/wiki/${slug}`}>Return to the current version</Link>
+        <Link href={`/wiki/${slug}`}>
+          {/*
+            Named for what is actually at that address (`YEO-123`). On a
+            retired entry it is a tombstone, and "the current version" would
+            promise an article — the same mislabelling the two revision routes
+            were filed for, on a link sitting directly above the banner that
+            contradicts it.
+          */}
+          {page.deletedAt === null
+            ? "Return to the current version"
+            : "Return to the retired entry"}
+        </Link>
       </p>
 
       {page.deletedAt === null ? null : (
@@ -179,20 +191,15 @@ export default async function RevisionHistoryPage({
           explains the same thing and offers the way out. See
           `history/[revisionId]/restore/page.tsx`.
 
-          The same panel language the tombstone itself uses.
+          The panel was written here first and lifted into
+          `components/RetiredEntryNotice.tsx` by `YEO-123`, which found the two
+          revision routes one click from this row saying nothing at all. The
+          argument above is why the notice exists; the component is why there
+          is now one copy of the sentence rather than three.
         */
-        <div className="mb-6 rounded-panel border border-rule bg-wash px-4 py-3 text-caption">
-          <p>
-            This entry has been retired. Its history is kept in full, and
-            nothing below has been changed.
-          </p>
-          <p className="mt-2">
-            <Link href={`/wiki/${encodeURIComponent(slug)}`}>
-              Go to the entry to restore it
-            </Link>
-            .
-          </p>
-        </div>
+        <RetiredEntryNotice slug={slug}>
+          Its history is kept in full, and nothing below has been changed.
+        </RetiredEntryNotice>
       )}
 
       {revisions.length === 0 ? (

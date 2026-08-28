@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { RetiredEntryNotice } from "@/components/RetiredEntryNotice";
 import { RevisionCategories } from "@/components/RevisionCategories";
 import { categorySlug, compareCategoriesByName } from "@/lib/category-name";
 import { getPageBySlug } from "@/lib/pages";
@@ -119,7 +120,7 @@ export default async function RevisionDetailPage({
 
   if (!loaded) notFound();
 
-  const { revision, restoredFrom } = loaded;
+  const { page, revision, restoredFrom } = loaded;
 
   // Sanitised again on the way out, exactly as the live route does — see the
   // "sanitise on write and read" reasoning in `lib/sanitize-html.ts`'s header
@@ -151,6 +152,31 @@ export default async function RevisionDetailPage({
 
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
+      {page.deletedAt === null ? null : (
+        /*
+          The entry itself has been retired (E1-T10, `YEO-122`), and until
+          `YEO-123` this page said nothing about it — it rendered a retired
+          entry's prose under a banner ending "It may differ significantly from
+          the current version", beside a link offering to show that current
+          version, which is a tombstone.
+
+          Above the historical banner rather than inside it, because the two
+          statements are about different things and the retirement is the
+          larger one: "this is an old version of the entry" is a fact about the
+          revision, and "there is no live entry to be an old version *of*" is a
+          fact about the address. A reader who takes in only the first panel
+          should have taken in the one that changes what the second means.
+
+          `app/wiki/[slug]/history/page.tsx` already made this argument for
+          its own banner — a reader arriving from a bookmark "has no way to
+          tell that `/wiki/<slug>` now answers with a tombstone" — and this
+          page is one click from the row that argument is written on.
+        */
+        <RetiredEntryNotice slug={slug}>
+          The version below is kept in full, exactly as it was saved.
+        </RetiredEntryNotice>
+      )}
+
       {/*
         The historical banner. MediaWiki shows the same thing — "This is an
         old revision of this page, as edited by X on Y. It may differ
@@ -195,7 +221,19 @@ export default async function RevisionDetailPage({
         ) : null}
 
         <p className="mt-2 text-caption">
-          <Link href={`/wiki/${slug}`}>View the current version</Link>
+          <Link href={`/wiki/${slug}`}>
+            {/*
+              Named for what is at that address rather than for what this page
+              is not (`YEO-123`). "View the current version" beside "It may
+              differ significantly from the current version" reads as an offer
+              to go and see the entry as it stands — and on a retired entry
+              what it reaches is a tombstone, which is not a version of
+              anything.
+            */}
+            {page.deletedAt === null
+              ? "View the current version"
+              : "View the retired entry"}
+          </Link>
           {" · "}
           <Link href={`/wiki/${slug}/history`}>View revision history</Link>
           {" · "}

@@ -92,23 +92,52 @@ export type WikiEntry = {
  * question about the *set* of entries — what is in the index, what a search
  * matches, which of these links lead somewhere — and a retired entry is not in
  * any of those sets. This one answers a question about one address, and there
- * are five routes standing behind it that each want a different thing from a
- * retired row: the article renders a tombstone, the history list goes on
- * working, the editor refuses.
+ * are six routes standing behind it, each of which wants a different thing
+ * from a retired row:
  *
- * Filtering here would make all five of them a 404, which is the outcome §3 of
+ *   - `/wiki/[slug]` renders the tombstone — what happened, who did it, and
+ *     the button that undoes it;
+ *   - `/wiki/[slug]/edit` redirects to that tombstone rather than opening an
+ *     editor `savePage` would refuse to save from;
+ *   - `/wiki/[slug]/history` goes on listing every version, under a notice
+ *     saying the entry itself is retired;
+ *   - `/wiki/[slug]/history/[revisionId]` carries the same notice above one
+ *     version, and stops calling the address beside it "the current version";
+ *   - `/wiki/[slug]/history/compare` carries it above a diff of two;
+ *   - `/wiki/[slug]/history/[revisionId]/restore` refuses, because there is
+ *     nothing to restore *into* until the entry itself is back.
+ *
+ * Filtering here would make all six of them a 404, which is the outcome §3 of
  * the ticket argues against: on a wiki where everybody signed in is a full
  * editor (`lib/allowed-emails.ts`), hiding the history from the only people
  * who can reach it buys nothing, and an accidental retirement that answers 404
  * is indistinguishable from data loss. So the row comes back with the
  * timestamp on it, and the decision belongs to the route.
  *
- * The one thing that could go wrong with that is a route forgetting to look.
- * That is why the field is `deletedAt: Date | null` on the returned type rather
- * than something a caller has to ask a second question to discover — a route
- * that never mentions it renders a retired entry as an article, which is
- * visible the moment anybody retires one, rather than a photograph quietly
- * disappearing months later.
+ * That is also why the field is `deletedAt: Date | null` on the returned type
+ * rather than something a caller has to ask a second question to discover: the
+ * one thing that could go wrong here is a route forgetting to look, and a
+ * column already in hand is the cheapest possible reminder.
+ *
+ * ## Why the list above is checked rather than trusted (`YEO-123`)
+ *
+ * Because it was wrong. It said five, and the two routes it left out were
+ * exactly the two that had forgotten to look: the revision-detail page and the
+ * comparison page both rendered a retired entry's prose as though it were
+ * live, beside a link labelled "View the current version" that landed on a
+ * tombstone. The miscount and the gap were one mistake — an enumeration in
+ * prose is maintained by whoever remembers it is here, and the person adding
+ * the sixth route is the person who does not.
+ *
+ * So the list is no longer the guard. `lib/pages.route-decisions.test.ts`
+ * reads this docblock and the route tree together and fails when they
+ * disagree: when a route calls this function without naming `deletedAt`, when
+ * a caller is missing from the list above, and when the list names a route
+ * that has stopped calling. It is the route-level counterpart of
+ * `lib/pages.call-sites.test.ts`, which does the same job one layer down for
+ * the queries, and it exists for the reason that file gives: every way of
+ * getting this wrong is silent, and a route that never mentions `deletedAt`
+ * looks right in review.
  */
 export async function getPageBySlug(
   slug: string,
