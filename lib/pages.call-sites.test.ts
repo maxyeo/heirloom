@@ -4,7 +4,14 @@ import { describe, expect, it } from "vitest";
 
 import { schema } from "@/db";
 import * as livePages from "@/lib/live-pages";
-import { read, SOURCE_DIRS, sourceFiles } from "@/test/route-inventory";
+import type { SchemaAccess, SchemaImport } from "@/test/route-inventory";
+import {
+  read,
+  schemaAccess,
+  schemaAccessOfSource,
+  SOURCE_DIRS,
+  sourceFiles,
+} from "@/test/route-inventory";
 
 /**
  * `lib/pages.db.test.ts` and its siblings prove each query filters retired
@@ -52,13 +59,29 @@ import { read, SOURCE_DIRS, sourceFiles } from "@/test/route-inventory";
  * ## What this can and cannot see
  *
  * A tripwire, not a proof — the same caveat both files it is modelled on
- * state, and here it has a specific shape worth naming rather than leaving to
- * be discovered.
+ * state, and here it has two specific shapes worth naming rather than leaving
+ * to be discovered. One of them is closed below; the other is not.
  *
- * **The check is per file.** A module that names the predicate for query A can
- * gain an unfiltered query B without this noticing. There are two such reads
- * today and both are deliberate, so they are named here rather than left to be
- * found:
+ * **The spelling is asserted, not assumed** (`YEO-124`). The scan finds its
+ * candidates by the text `schema.pages`, so on its own it would see only the
+ * modules that happen to be written that way. A module written as
+ * `import { pages } from "@/db/schema"` queries the same table and never
+ * enters the candidate set at all — not exempt-but-unlisted, which the stale
+ * check below would catch, but *invisible*, with this file green while an
+ * unfiltered reader ships. Nobody has to be careless to write it: the bare
+ * import is the more idiomatic Drizzle style, and it reviews as correct code.
+ *
+ * So rather than teach the scan every spelling, the last assertion here
+ * forbids the others, and `schema.pages` becomes the only way to reach the
+ * table by construction. That is the cheaper half of the trade and the better
+ * one: it makes a convention every module already follows explicit instead of
+ * merely prevalent, and it leaves the scan above complete rather than nearly
+ * complete.
+ *
+ * **The check is per file**, and this one stays open. A module that names the
+ * predicate for query A can gain an unfiltered query B without this noticing.
+ * There are two such reads today and both are deliberate, so they are named
+ * here rather than left to be found:
  *
  *   - `getPageBySlug` in `lib/pages.ts`, which must return the retired row so
  *     that `/wiki/[slug]` can render a tombstone rather than a 404;
@@ -71,9 +94,19 @@ import { read, SOURCE_DIRS, sourceFiles } from "@/test/route-inventory";
  * `.from(schema.pages)` and `Join(schema.pages` occurrences per file against a
  * registered expected count. That is a real design and it is not built here,
  * because a count nobody can explain is worse than a rule everybody can.
+ *
+ * Two smaller things it does not do, for the record. It guards `pages` and no
+ * other table — `revisions` and `page_categories` have no soft delete of
+ * their own to forget, so there is nothing yet for the same rule to protect
+ * there. And the spelling rule covers `SOURCE_DIRS` minus tests, which is the
+ * same population the scan covers; `db/` and `test/` may spell the schema
+ * however they like, for the reason `isTest` gives below.
  */
 
-/** What a query names when it means this table. */
+/**
+ * What a query names when it means this table — and, since `YEO-124`, the
+ * only thing it may name. `otherDoors` below is what makes that true.
+ */
 const TABLE = "schema.pages";
 
 /**
@@ -184,6 +217,71 @@ function isTest(file: string): boolean {
   return file.endsWith(".test.ts") || file.endsWith(".test.tsx");
 }
 
+/**
+ * The local name the schema must be bound to.
+ *
+ * `import { schema } from "@/db"` in every module of the application today,
+ * which is why the scan above works. Requiring the *name* rather than the
+ * import is what closes the alias: `import { schema as s }` reaches the same
+ * table through `s.pages`, and a rule about the module specifier alone would
+ * wave it through.
+ */
+const CANONICAL_BINDING = "schema";
+
+/** The table's own name in `db/schema.ts`, as a bare import would spell it. */
+const TABLE_EXPORT = "pages";
+
+/**
+ * Every way this module could reach `pages` that the scan above cannot see.
+ *
+ * Three doors, and the argument for treating them alike is that a reader of
+ * the scan has no way to tell which one a module used — all three compile,
+ * all three query the same rows, and none of them contains the text the scan
+ * looks for.
+ *
+ *   - **A bare table import**, `import { pages } from "@/db/schema"`, under
+ *     any alias. This is the one `YEO-124` was filed about and the one a
+ *     contributor writes without meaning anything by it.
+ *   - **The schema under another name**, whether aliased out of `@/db` or
+ *     taken as a namespace off `@/db/schema`. `import * as db from "@/db"` is
+ *     *not* here: it spells the table `db.schema.pages`, which the scan finds.
+ *   - **`db.query.pages`**, Drizzle's relational API, which names the table
+ *     without naming the schema at all. Nothing uses it today and it is a
+ *     door rather than a hypothetical — the client is constructed with the
+ *     schema (`db/index.ts`), so it works, and it is what the Drizzle
+ *     documentation reaches for first.
+ *
+ * Type-only imports are dropped: a type cannot issue a query, and
+ * `import type { Page } from "@/db/schema"` is a reasonable line to write.
+ * Everything else about a module's schema imports is left alone —
+ * `lib/pages.ts` imports `SEARCH_TEXT_CONFIG` from `@/db/schema` and that is
+ * a string constant, not a way to the table.
+ */
+function otherDoors({ imports, relational }: SchemaAccess): string[] {
+  const reachesSchema = ({ module, exported }: SchemaImport) =>
+    (module === "@/db/schema" && exported === "*") ||
+    (module === "@/db" && exported === CANONICAL_BINDING);
+
+  const doors = imports
+    .filter((entry) => !entry.typeOnly)
+    .filter(
+      (entry) =>
+        entry.exported === TABLE_EXPORT ||
+        (reachesSchema(entry) && entry.local !== CANONICAL_BINDING),
+    )
+    .map(({ module, exported, local }) => {
+      const binding =
+        exported === "*"
+          ? `* as ${local}`
+          : exported === local
+            ? `{ ${exported} }`
+            : `{ ${exported} as ${local} }`;
+      return `import ${binding} from "${module}"`;
+    });
+
+  return [...doors, ...relational];
+}
+
 describe("queries against schema.pages", () => {
   const files = sourceFiles(SOURCE_DIRS).filter((file) => !isTest(file));
 
@@ -271,5 +369,150 @@ describe("queries against schema.pages", () => {
     );
 
     expect(stale).toEqual([]);
+  });
+
+  it("leaves the table one spelling, so the scan is not merely lucky", () => {
+    // Every other assertion in this file starts from `mentions`, and
+    // `mentions` starts from a string. This one runs over *every* source
+    // file, including the ones that never name the table, because a module
+    // that has found another door is precisely a module the string cannot
+    // find. It is the assertion the rest of the file rests on.
+    //
+    // Nothing fails it today and nothing had to change for that (`YEO-124`):
+    // the whole application already imports `{ db, schema } from "@/db"`. The
+    // point is that it now has to.
+    const offenders = files.flatMap((file) =>
+      otherDoors(schemaAccess(file)).map((door) => `${file}: ${door}`),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * The spelling rule, against fixtures rather than the tree (`YEO-124`).
+ *
+ * The assertion above passes over a repository where every module is already
+ * written the right way, which means it has never once executed the branch
+ * that finds something. A guard in that state is indistinguishable from a
+ * guard that returns the empty list — and this one exists to catch a spelling
+ * nobody has written yet, so the tree will never supply the case.
+ *
+ * Each fixture below is a module that queries `pages` correctly, compiles,
+ * and would review as fine.
+ */
+describe("a module that reaches pages another way", () => {
+  /**
+   * The shape `YEO-124` is about. Idiomatic Drizzle, and the first thing the
+   * documentation shows.
+   */
+  const BARE_IMPORT = `
+    import { eq } from "drizzle-orm";
+
+    import { db } from "@/db";
+    import { pages } from "@/db/schema";
+
+    export async function listEntries() {
+      return db.select().from(pages).where(eq(pages.slug, "x"));
+    }
+  `;
+
+  it("is invisible to the scan above", () => {
+    // The premise. If this ever stops holding, the scan has grown to cover
+    // the spelling itself and the rule below is the belt to its braces —
+    // which is fine, but somebody should decide that on purpose.
+    expect(BARE_IMPORT).not.toContain(TABLE);
+  });
+
+  it("is caught by the spelling rule anyway", () => {
+    expect(otherDoors(schemaAccessOfSource(BARE_IMPORT))).toEqual([
+      'import { pages } from "@/db/schema"',
+    ]);
+  });
+
+  it("is caught under an alias, which is the same import", () => {
+    const source = `
+      import { pages as entries } from "@/db/schema";
+      export const all = () => entries;
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([
+      'import { pages as entries } from "@/db/schema"',
+    ]);
+  });
+
+  it("is caught when the schema itself is renamed", () => {
+    const source = `
+      import { schema as tables } from "@/db";
+      export const all = () => tables.pages;
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([
+      'import { schema as tables } from "@/db"',
+    ]);
+  });
+
+  it("is caught when the schema is taken as a namespace under another name", () => {
+    const source = `
+      import * as tables from "@/db/schema";
+      export const all = () => tables.pages;
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([
+      'import * as tables from "@/db/schema"',
+    ]);
+  });
+
+  it("is caught through the relational query API", () => {
+    const source = `
+      import { db } from "@/db";
+      export const all = () => db.query.pages.findMany();
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([
+      "db.query.pages",
+    ]);
+  });
+});
+
+/**
+ * The other half, and the half a rule like this is usually deleted over: a
+ * false failure against code that is written exactly as asked. Each of these
+ * exists in the repository today.
+ */
+describe("a module the spelling rule must leave alone", () => {
+  it("the spelling every module uses", () => {
+    const source = `
+      import { db, schema } from "@/db";
+      import { LIVE_PAGES } from "@/lib/live-pages";
+      export const all = () =>
+        db.select().from(schema.pages).where(LIVE_PAGES);
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([]);
+  });
+
+  it("a constant imported from the schema module", () => {
+    // `lib/pages.ts` line for line. `SEARCH_TEXT_CONFIG` is a string, and a
+    // rule that made reaching for it a violation would be a rule about
+    // imports rather than about the table.
+    const source = `
+      import { db, schema } from "@/db";
+      import { SEARCH_TEXT_CONFIG } from "@/db/schema";
+      export const config = SEARCH_TEXT_CONFIG;
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([]);
+  });
+
+  it("a type-only import of the table's row", () => {
+    const source = `
+      import type { pages } from "@/db/schema";
+      export type Row = typeof pages.$inferSelect;
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([]);
+  });
+
+  it("the whole of @/db as a namespace, which spells the table in full", () => {
+    const source = `
+      import * as database from "@/db";
+      export const all = () => database.db.select().from(database.schema.pages);
+    `;
+    expect(source).toContain(TABLE);
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([]);
   });
 });

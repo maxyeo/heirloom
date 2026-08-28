@@ -875,6 +875,184 @@ function declaresBoundaryName(node: ts.Node): string | null {
 }
 
 /**
+ * The two module specifiers a file under `SOURCE_DIRS` can reach the schema
+ * through.
+ *
+ * `db/index.ts` re-exports `schema` so that `@/db` is the one import a query
+ * needs, and every module in the application uses it. `@/db/schema` is the
+ * module underneath, reachable directly and — for `SEARCH_TEXT_CONFIG` in
+ * `lib/pages.ts` — reached directly today. Both are listed because a checker
+ * that knew about only the front door would be reporting on the spelling
+ * nobody has to work at avoiding.
+ *
+ * Relative specifiers are deliberately not understood. `db/` and `test/` are
+ * outside `SOURCE_DIRS`, and inside it there is no relative path that arrives
+ * at the schema — `@/` is the alias `tsconfig.json` declares for the
+ * repository root and the only way across a directory boundary here.
+ */
+const SCHEMA_MODULES = ["@/db", "@/db/schema"];
+
+/** The name `@/db` exports the client under, whose `.query` is the other door. */
+const CLIENT_EXPORT = "db";
+
+export type SchemaImport = {
+  /** The specifier, as written — one of `SCHEMA_MODULES`. */
+  module: string;
+  /**
+   * What was imported: the export's own name, or `"*"` for a namespace
+   * import. An alias resolves to the name it was exported under, so
+   * `import { pages as p }` reports `pages` here and `p` below.
+   */
+  exported: string;
+  /** The local name the import binds. */
+  local: string;
+  /**
+   * Whether the binding is erased at compile time — `import type { … }` or a
+   * `{ type X }` element. A type has no runtime reach into a table, so a
+   * caller asking "what can query this" wants to drop these, and a caller
+   * asking "what does this module name" does not. Reported rather than
+   * filtered, so the choice stays with the assertion.
+   */
+  typeOnly: boolean;
+};
+
+export type SchemaAccess = {
+  /** Every import from a module in `SCHEMA_MODULES`, in source order. */
+  imports: SchemaImport[];
+  /**
+   * Drizzle's relational query API, as spelled at each use — `db.query.pages`,
+   * or `db.query` where nothing follows it. Its whole point is that it names
+   * a table without naming the schema, so a scan for `schema.pages` cannot
+   * see it and a scan of the imports cannot either.
+   */
+  relational: string[];
+};
+
+/**
+ * Every way a module reaches the schema, read off the syntax tree.
+ *
+ * This exists for `lib/pages.call-sites.test.ts`, whose scan for the text
+ * `schema.pages` is complete only for as long as that is the sole spelling in
+ * use. It is not a policy about imports; it reports what is there, and the
+ * rule about what is allowed lives beside the assertion that applies it.
+ *
+ * Read from the tree rather than the text for the reason `boundaryUsage`
+ * gives: a docblock that mentions `db.query` is not a query, and this file
+ * and that one both contain sentences that a regex could not tell from code.
+ *
+ * @param file repo-relative
+ */
+export function schemaAccess(file: string): SchemaAccess {
+  return schemaAccessOfSource(read(file), file);
+}
+
+/**
+ * `schemaAccess`, against source text rather than a path.
+ *
+ * Exported for `test/route-inventory.schema-access.test.ts`, and the reason
+ * is stronger here than for the two checkers above: every branch that *finds*
+ * something is unreachable from this repository, because the repository is
+ * exactly the thing the guard keeps clean. Without fixtures, a checker whose
+ * job is to catch a spelling nobody has written yet would be tested only by
+ * its own silence.
+ *
+ * @param source the module's text
+ * @param fileName only used to pick TS vs TSX parsing, and in diagnostics
+ */
+export function schemaAccessOfSource(
+  source: string,
+  fileName = "fixture.ts",
+): SchemaAccess {
+  const parsed = parseSource(source, fileName);
+
+  const imports: SchemaImport[] = [];
+  /** Local names bound to the client, whose `.query` is the relational door. */
+  const clients = new Set<string>();
+
+  // ESM import declarations are always top level.
+  for (const statement of parsed.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+
+    // Not `module`: `@next/next/no-assign-module-variable` reserves that name.
+    const specifier = statement.moduleSpecifier.text;
+    if (!SCHEMA_MODULES.includes(specifier)) continue;
+
+    const clause = statement.importClause;
+    if (!clause) continue;
+
+    const record = (exported: string, local: string, typeOnly: boolean) => {
+      imports.push({ module: specifier, exported, local, typeOnly });
+      if (!typeOnly && specifier === "@/db" && exported === CLIENT_EXPORT) {
+        clients.add(local);
+      }
+    };
+
+    // Neither module has a default export, so a default import here is a
+    // mistake rather than a door — recorded all the same, because a checker
+    // that silently drops what it does not expect is the shape of the hole
+    // this one was written to close.
+    if (clause.name) record("default", clause.name.text, clause.isTypeOnly);
+
+    const named = clause.namedBindings;
+    if (!named) continue;
+
+    if (ts.isNamespaceImport(named)) {
+      record("*", named.name.text, clause.isTypeOnly);
+      continue;
+    }
+
+    for (const element of named.elements) {
+      // `propertyName` is set only for `{ a as b }`, where it holds `a`.
+      const exported = (element.propertyName ?? element.name).text;
+      record(
+        exported,
+        element.name.text,
+        clause.isTypeOnly || element.isTypeOnly,
+      );
+    }
+  }
+
+  const relational: string[] = [];
+  /**
+   * `db.query` nodes already reported as part of a longer chain. The walk is
+   * pre-order, so `db.query.pages` is seen before the `db.query` inside it,
+   * and without this the same use would be reported twice under two names.
+   */
+  const consumed = new Set<ts.Node>();
+
+  const isClientQuery = (node: ts.Node): node is ts.PropertyAccessExpression =>
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    clients.has(node.expression.text) &&
+    node.name.text === "query";
+
+  // Never satisfied: every use is wanted, not just the first.
+  some(parsed, (node) => {
+    if (!ts.isPropertyAccessExpression(node)) return false;
+
+    if (isClientQuery(node.expression)) {
+      consumed.add(node.expression);
+      relational.push(
+        `${node.expression.expression.getText(parsed)}.query.${node.name.text}`,
+      );
+    } else if (isClientQuery(node) && !consumed.has(node)) {
+      // `const q = db.query` — the table is chosen somewhere this cannot see,
+      // which is not better.
+      relational.push(`${node.expression.getText(parsed)}.query`);
+    }
+
+    return false;
+  });
+
+  return { imports, relational };
+}
+
+/**
  * The `matcher` patterns as `proxy.ts` actually declares them.
  *
  * Read out of the source text rather than imported, for a reason that is not
