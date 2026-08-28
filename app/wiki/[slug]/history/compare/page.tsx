@@ -14,6 +14,7 @@ import {
   type ContentBlockKind,
   type ContentDiffStatus,
 } from "@/lib/content-diff";
+import { RetiredEntryNotice } from "@/components/RetiredEntryNotice";
 import { getPageBySlug } from "@/lib/pages";
 import {
   formatRevisionAuthor,
@@ -263,9 +264,42 @@ export default async function CompareRevisionsPage({
         <Link href={historyHref}>Return to revision history</Link>
         {" · "}
         <Link href={`/wiki/${encodeURIComponent(slug)}`}>
-          Return to the current version
+          {/*
+            Named for what is at that address (`YEO-123`). This page compares
+            two things the entry used to say, so "the current version" is
+            already the most load-bearing phrase on it — and on a retired entry
+            it addresses a tombstone rather than a third version to read
+            against these two.
+          */}
+          {page.deletedAt === null
+            ? "Return to the current version"
+            : "Return to the retired entry"}
         </Link>
       </p>
+
+      {page.deletedAt === null ? null : (
+        /*
+          The entry itself has been retired (E1-T10, `YEO-122`). Until
+          `YEO-123` this route said nothing whatever about it: it rendered a
+          full diff of two of a retired entry's versions, under its title,
+          beside a link to "the current version", and a reader arriving from a
+          bookmark had nothing on the page to tell them the entry is no longer
+          in the index, the search or any category.
+
+          The sibling detail route carries the same notice, and
+          `app/wiki/[slug]/history/page.tsx` carries the argument for it —
+          which this page is one click from, since the two revisions being
+          compared are chosen with the radio buttons on that list.
+
+          Below the two links rather than above them, matching the history
+          list: the way back is the first thing on the page on all three of
+          them, and the notice is what explains where back leads.
+        */
+        <RetiredEntryNotice slug={slug}>
+          Both versions below are kept in full, and the comparison between them
+          is unchanged.
+        </RetiredEntryNotice>
+      )}
 
       {/*
         The two ends of the comparison, named before anything is said about
