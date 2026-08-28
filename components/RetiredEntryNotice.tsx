@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 
 /**
  * The panel that tells a reader the entry behind this page has been retired
@@ -41,11 +40,15 @@ import type { ReactNode } from "react";
  *
  * ## Why it is a Server Component
  *
- * It takes a string and some markup and returns markup: no state, no handler,
- * nothing to hydrate. It imports no action either, so — unlike
- * `components/EntryRetirement.tsx`, which docs/testing.md names as one of the
- * components a suite cannot mount — a test can render it without an
- * `AUTH_SECRET` or a `DATABASE_URL`.
+ * It takes a slug and a sentence and returns markup: no state, no handler,
+ * nothing to hydrate. It imports no action either, which is what makes
+ * `components/RetiredEntryNotice.test.tsx` possible at all: mounting
+ * `components/EntryRetirement.tsx` drags `retireEntryAction`, and behind it
+ * Auth.js and `@/db`, into a suite that has no `AUTH_*` and no
+ * `DATABASE_URL`. That is docs/testing.md's rule — take the action, do not
+ * import it — and `lib/retirement-copy.ts` is what the other half of this
+ * feature had to do about breaking it: hold its sentences as plain strings,
+ * because the component carrying them cannot be mounted to assert on them.
  */
 export interface RetiredEntryNoticeProps {
   /**
@@ -57,9 +60,15 @@ export interface RetiredEntryNoticeProps {
 
   /**
    * What *this* page is still showing, in one sentence, to follow "This entry
-   * has been retired." Plain text: it is a sentence, not a layout.
+   * has been retired."
+   *
+   * `string` rather than `ReactNode`, so that "a sentence, not a layout" is
+   * enforced rather than asked for. A slot accepting markup would invite a
+   * second link or a second paragraph into a panel whose whole value is that
+   * a reader meets the same three lines on whichever of the three pages they
+   * arrive at.
    */
-  children: ReactNode;
+  children: string;
 }
 
 export function RetiredEntryNotice({
