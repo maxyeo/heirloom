@@ -1,4 +1,4 @@
-import { inArray, max, or } from "drizzle-orm";
+import { eq, inArray, max, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { authorColumns, type IndividualAuthor } from "@/lib/individual-author";
@@ -8,8 +8,11 @@ import { individualExists } from "@/lib/save-individual";
 import type { Transaction } from "@/lib/save-page";
 import {
   type AddSpouseInput,
+  type EditableUnionInput,
+  type UnionFields,
   type UnionValidationIssue,
   validateAddSpouse,
+  validateUnionEdit,
 } from "@/lib/union-input";
 
 /**
@@ -244,5 +247,172 @@ export async function addSpouse(
       .returning({ id: schema.unions.id });
 
     return { status: "added", unionId: created.id, partnerId };
+  });
+}
+
+/**
+ * Every way correcting a union can end.
+ *
+ * The same four `updateIndividual` has, and for the same reasons:
+ * `unchanged` is not a failure, and `not-found` covers both "no such union"
+ * and "that is not a union id at all" — the ordinary way to reach either is a
+ * form left open in one tab while the union was deleted or merged in another.
+ */
+export type UpdateUnionResult =
+  | { status: "updated"; unionId: string }
+  | { status: "unchanged"; unionId: string }
+  | { status: "not-found" }
+  | { status: "invalid"; issues: UnionValidationIssue[] };
+
+/**
+ * Every column a correction is compared against, for the no-op check below.
+ *
+ * Written as the keys of a `Record` rather than as a bare array so that it is
+ * exhaustive *by construction*: the object literal cannot omit a field of
+ * `UnionFields` and cannot invent one, both of which `satisfies` reports as
+ * type errors here. A plain list would compile perfectly well while quietly no
+ * longer looking at a column somebody added — and the symptom would be an edit
+ * that reports "nothing changed" and discards itself. The same guard, for the
+ * same reason, as `FIELD_NAMES` in `lib/save-individual.ts`.
+ *
+ * The three anchors are in the list even though a form cannot move them: they
+ * are read from the stored row and written back, so including them costs
+ * nothing and means a future flow that *does* change one is not silently
+ * reported as a no-op.
+ */
+const UNION_FIELD_NAMES = Object.keys({
+  partnerAId: true,
+  partnerBId: true,
+  type: true,
+  startDate: true,
+  startDateQualifier: true,
+  startDatePrecision: true,
+  startDateUpper: true,
+  startDateUpperPrecision: true,
+  endDate: true,
+  endDateQualifier: true,
+  endDatePrecision: true,
+  endDateUpper: true,
+  endDateUpperPrecision: true,
+  endReason: true,
+  sequence: true,
+  notes: true,
+} satisfies Record<keyof UnionFields, true>) as (keyof UnionFields)[];
+
+/**
+ * Correct a union that already exists.
+ *
+ * ## Why this could not be `addSpouse` with an id
+ *
+ * `addSpouse` answers "who is this person marrying", and its whole shape is
+ * built around that: a partner mode, a person created inline, a sequence
+ * chosen from the unions that already exist. None of it applies to a
+ * correction. What is being fixed here is a *date*, a kind, an end reason or a
+ * note on a row whose partners were settled when it was written — so the id is
+ * a reference the caller is entitled to name, and everything else is their
+ * change. That is the split the Next.js server-actions guide asks for, and
+ * here it is also all the authorisation there is to do: every signed-in member
+ * may edit every person, because `ALLOWED_EMAILS` is the whole membership
+ * model (see `lib/session.ts`).
+ *
+ * ## Why the partners and the sequence come from the row
+ *
+ * They are read inside the transaction and written straight back, so the
+ * statement below always sets the full record and there is no partial-update
+ * shape for a caller to get wrong. It also makes "an edit cannot change who is
+ * in a union" true of any caller, not only of the form: a hand-made POST
+ * naming a different `partnerBId` is validated against the *stored* one and
+ * writes the stored one. Moving a partner is `detachPartner`; merging two
+ * unions is `lib/merge-unions.ts`; reordering is `lib/reorder-unions.ts`. Each
+ * has a confirmation in front of it because each is destructive in a way
+ * correcting a year is not.
+ *
+ * ## Why it validates rather than trusting the caller
+ *
+ * The same reason `addSpouse` does, stated once in this module's header: this
+ * is one door among several onto the same table, and a rule that lives on one
+ * door is a rule somebody forgets to fit to the next.
+ *
+ * @param id the union to correct, as it arrived — checked, not trusted
+ * @param input the new details, untrusted and untyped
+ * @returns what happened, including whether anything actually changed
+ */
+export async function updateUnion(
+  id: string,
+  input: EditableUnionInput,
+): Promise<UpdateUnionResult> {
+  /**
+   * `unions.id` is a `uuid` column, and this id came from a hidden form field
+   * or a direct POST. Handing a non-UUID to `eq` reaches Postgres, which
+   * raises `invalid input syntax for type uuid` — a thrown error rather than a
+   * query returning no rows. Checking the shape first turns a bad id into the
+   * ordinary `not-found` the caller already handles. See `lib/row-id.ts`.
+   */
+  if (!isRowId(id)) return { status: "not-found" };
+
+  return db.transaction(async (tx): Promise<UpdateUnionResult> => {
+    const [existing] = await tx
+      .select()
+      .from(schema.unions)
+      .where(eq(schema.unions.id, id));
+
+    // Creating a union is `addSpouse`'s job. No row for this id means it was
+    // deleted or merged away, or that somebody POSTed here directly.
+    if (!existing) return { status: "not-found" };
+
+    /**
+     * Validated *after* the row is read, because the anchors are half of what
+     * is being validated: "a union needs at least one partner" has to be asked
+     * of the record that would actually be written, and the request does not
+     * carry the partners at all.
+     */
+    const checked = validateUnionEdit(input, {
+      partnerAId: existing.partnerAId,
+      partnerBId: existing.partnerBId,
+      sequence: existing.sequence,
+    });
+    if (!checked.ok) return { status: "invalid", issues: checked.issues };
+
+    /**
+     * Compared against the values that would actually be written — after
+     * trimming, parsing and normalising — so `unchanged` means "the row would
+     * not move" rather than "the author retyped the same thing". A cleared
+     * note that was already null therefore counts as unchanged, which is what
+     * stops a form that was opened and closed from reporting a save and
+     * throwing a good cache entry away.
+     *
+     * The select above is checked by this loop rather than by inspection: a
+     * column left out of it makes `existing[field]` a type error, so the query
+     * and the field set cannot drift apart.
+     */
+    const unchanged = UNION_FIELD_NAMES.every(
+      (field) => existing[field] === checked.value[field],
+    );
+    if (unchanged) return { status: "unchanged", unionId: id };
+
+    /**
+     * `returning` rather than a bare `update`, so the answer comes from the
+     * statement that did the work instead of from the read above it. Inside
+     * one transaction the row cannot be deleted between the two, which is what
+     * this buys over `updateIndividual`'s two independent statements — but the
+     * `returning` stays, because a bare `update` reporting success against
+     * zero rows is a failure mode worth being unable to have.
+     *
+     * `checked.value` rather than a spread of the author's fields: it is the
+     * whole record including the three anchors read above, so every column is
+     * stated and none is left to a partial update. `sequence` is restated from
+     * the row on top of it because `UnionFields` types it `number | null` —
+     * the null being `addSpouse`'s "place this one last", which is not an
+     * answer a correction can give and not a value this column accepts.
+     */
+    const [updated] = await tx
+      .update(schema.unions)
+      .set({ ...checked.value, sequence: existing.sequence })
+      .where(eq(schema.unions.id, id))
+      .returning({ id: schema.unions.id });
+
+    if (!updated) return { status: "not-found" };
+
+    return { status: "updated", unionId: id };
   });
 }

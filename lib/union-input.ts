@@ -821,3 +821,124 @@ export function validateAddSpouse(input: AddSpouseInput): AddSpouseValidation {
     union: unionChecked.value,
   };
 }
+
+/**
+ * The fields the edit-union flow lets an author change.
+ *
+ * `UnionFields` minus the three references nobody types into a form. That is
+ * not a convenience — it is the whole safety property of the edit flow, and it
+ * is stated as a type so the compiler keeps it:
+ *
+ * - **`partnerAId` / `partnerBId`** — who is in a union is not an edit, it is
+ *   a different union. Changing a partner would silently move every child
+ *   hanging off the row to a family they were not born into, which is what
+ *   `detachPartner` and `lib/union-merge.ts` exist to do deliberately and with
+ *   a confirmation in front of them.
+ * - **`sequence`** — the display order belongs to E3-T7's reorder control,
+ *   which restates one person's whole list at once so the numbers stay
+ *   coherent. A form posting a single number would renumber a union out from
+ *   under the sibling it was ordered against.
+ *
+ * A form that simply omitted them would be worse than one that excludes them:
+ * `unionInputFromFormData` reads every key it knows, and a missing input is
+ * `null` rather than absent — so an edit submission run through it would
+ * *clear* both partners and reset the order, and `validateUnion` would refuse
+ * it with "a union needs at least one partner" against a field the author
+ * cannot see. Naming the editable set is what stops that being possible.
+ */
+export type EditableUnionField = Exclude<
+  UnionField,
+  "partnerAId" | "partnerBId" | "sequence"
+>;
+
+/** A union's editable details as they arrive: every value `unknown`. */
+export type EditableUnionInput = {
+  [Field in EditableUnionField]?: unknown;
+};
+
+/**
+ * One submission of the edit-union form, still untrusted.
+ *
+ * `unionId` is a reference the form is entitled to send — the row being
+ * corrected, exactly as the edit-person form sends an `id`. Everything else is
+ * the author's change. Whether the id names a union that still exists is a
+ * database question and belongs in `lib/save-union.ts`.
+ */
+export type EditUnionInput = {
+  /** The union being corrected. */
+  unionId: unknown;
+  /** Its editable fields. */
+  union: EditableUnionInput;
+};
+
+/**
+ * The three columns an edit is not allowed to move, read from the row as it
+ * stands.
+ *
+ * They are supplied by `lib/save-union.ts` from the stored union rather than
+ * by the submission, which is what makes "an edit cannot change who is in a
+ * union" a property of the code rather than of the form's markup.
+ */
+export type UnionAnchors = Pick<UnionFields, "partnerAId" | "partnerBId"> & {
+  /**
+   * A real number rather than `UnionFields`' `number | null`. That null means
+   * "place this union after the ones already recorded" and is only ever an
+   * answer for a row being *inserted*; a row being corrected has a sequence
+   * already, and saying so here is what keeps `updateUnion` from having to
+   * defend against a case it cannot reach.
+   */
+  sequence: number;
+};
+
+/**
+ * Pull one edit-union submission out of a form.
+ *
+ * Reads only the editable fields, so a hand-made POST that includes
+ * `partnerAId` or `sequence` is not refused — it is simply not listened to.
+ * `validateUnionEdit` then puts the stored values back in their place.
+ */
+export function editUnionInputFromFormData(form: FormData): EditUnionInput {
+  return {
+    unionId: form.get("unionId"),
+    union: {
+      type: form.get("type"),
+      startDate: form.get("startDate"),
+      startDateQualifier: form.get("startDateQualifier"),
+      startDatePrecision: form.get("startDatePrecision"),
+      startDateUpper: form.get("startDateUpper"),
+      startDateUpperPrecision: form.get("startDateUpperPrecision"),
+      endDate: form.get("endDate"),
+      endDateQualifier: form.get("endDateQualifier"),
+      endDatePrecision: form.get("endDatePrecision"),
+      endDateUpper: form.get("endDateUpper"),
+      endDateUpperPrecision: form.get("endDateUpperPrecision"),
+      endReason: form.get("endReason"),
+      notes: form.get("notes"),
+    },
+  };
+}
+
+/**
+ * Check one correction to a union that already exists.
+ *
+ * Every rule is `validateUnion`'s — this adds none and relaxes none. A
+ * marriage that ends before it starts is refused here for the same reason and
+ * in the same words as one entered that way in the first place, and a rule
+ * added there arrives here without this function being touched. What this does
+ * is decide *what a union being edited consists of*: the author's five fields,
+ * plus three columns taken from the row rather than from the request.
+ *
+ * Pure, like everything else in this module: the anchors are passed in, not
+ * looked up.
+ *
+ * @param input the editable fields as they arrived, untrusted and untyped
+ * @param anchors the partner columns and sequence, read from the stored row
+ * @returns the cleaned record — the whole row, ready to be written — or every
+ *   problem found
+ */
+export function validateUnionEdit(
+  input: EditableUnionInput,
+  anchors: UnionAnchors,
+): UnionValidation {
+  return validateUnion({ ...input, ...anchors });
+}

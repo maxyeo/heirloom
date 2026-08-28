@@ -184,6 +184,7 @@ function graph(): FamilyGraph {
         endDatePrecision: "day",
         endDateUpper: null,
         endDateUpperPrecision: "day",
+        notes: null,
       },
     ],
     childLinks: [{ unionId: "u1", childId: "dora", relation: "biological" }],
@@ -901,6 +902,7 @@ describe("a fresh graph arriving after a write", () => {
       endDatePrecision: "day",
       endDateUpper: null,
       endDateUpperPrecision: "day",
+      notes: null,
     });
     reseed(host, grown);
 

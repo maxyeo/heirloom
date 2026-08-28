@@ -452,6 +452,7 @@ function family(spec: {
       endDatePrecision: "day",
       endDateUpper: null,
       endDateUpperPrecision: "day",
+      notes: null,
     })),
     childLinks: children.map(([unionId, childId, relation]) => ({
       unionId,

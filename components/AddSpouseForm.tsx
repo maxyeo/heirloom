@@ -9,8 +9,6 @@ import {
   useState,
 } from "react";
 
-import { DateField } from "@/components/DateField";
-import { FormSelect } from "@/components/FormSelect";
 import {
   emptyIndividualFormValues,
   IndividualFieldset,
@@ -19,42 +17,39 @@ import {
 } from "@/components/IndividualFieldset";
 import { PartnerPicker } from "@/components/PartnerPicker";
 import { useDismissableSurface } from "@/components/surface-stack";
+import {
+  emptyUnionFormValues,
+  UnionFieldset,
+  type UnionFormField,
+  type UnionFormValues,
+} from "@/components/UnionFieldset";
 import type { GraphPerson } from "@/lib/family-graph";
-import { MAX_NOTES_LENGTH } from "@/lib/field-input";
 import { type PartnerCandidate, splitTypedName } from "@/lib/partner-search";
 import {
   type AddSpouseFormAction,
   emptySpouseFormState,
   type SpouseFormState,
 } from "@/lib/spouse-form-state";
-import {
-  PARTNER_FIELD_PREFIX,
-  type PartnerMode,
-  UNION_END_REASONS,
-  UNION_TYPES,
-  type UnionField,
-} from "@/lib/union-input";
+import { PARTNER_FIELD_PREFIX, type PartnerMode } from "@/lib/union-input";
 
 /**
  * Recording a marriage or partnership (E3-T4, `YEO-32`).
  *
- * ## What the form insists on saying out loud
+ * ## Why the union's fields are their own fieldset
  *
- * `type` and `endReason` are controls with no hidden default, because the
- * ticket asks for that in as many words: they are "fields, not defaults to fix
- * later". The database columns do have defaults — `marriage` and `ongoing` —
- * and that is exactly the trap. A form that quietly took them would fill a
- * tree with marriages nobody said were marriages and ongoing unions between
- * people who have been dead for a century, and none of it would look wrong on
- * the canvas until somebody tried to export it. The two selects *open* on
- * those values because they are the commonest answers, but they are submitted
- * because the author left them there, not because the column filled them in.
+ * `components/UnionFieldset.tsx` holds them, and holds the reasoning that goes
+ * with them: that `type` and `endReason` are fields rather than defaults to
+ * fix later, that both dates are optional and both carry a qualifier because a
+ * marriage year read off a parish register is routinely "about". They lived
+ * here while this was the only form that put a union on screen. The edit form
+ * is the second, and a second copy of those rules is how two forms end up
+ * disagreeing about what a union is — the same argument that split
+ * `IndividualFieldset` out of the add-person panel, arrived at from the other
+ * direction.
  *
- * Both dates are optional and both carry a qualifier, because a marriage year
- * read off a parish register is routinely "about". The pair of controls beside
- * each date is deliberately plain; E4-T2 replaces them with one field that
- * parses "abt 1912", and this form is written so that swap touches two inputs
- * rather than the flow around them.
+ * What stays here is what is particular to *adding* one: the partner half
+ * above it, the three-way picker, and the single submission that writes a
+ * person and a union together.
  *
  * ## Why every input is controlled
  *
@@ -94,62 +89,11 @@ import {
  * framework's own pattern and the same one `AddPersonPanel` settled on.
  */
 
-/** The union's own fields, as a form holds them: every value a string. */
-export type UnionFormValues = Record<UnionFormField, string>;
-
 /**
- * The union fields this form puts on screen.
- *
- * `partnerAId`, `partnerBId` and `sequence` are deliberately absent. The first
- * two are decided by whose panel the flow was opened from and what the picker
- * was told — never typed — and `sequence` is chosen by `lib/save-union.ts`
- * from the unions that already exist, which is what places a remarriage after
- * the marriage it followed without touching it.
- *
- * So are the two dates' qualifier and precision columns, since E4-T2
- * (`YEO-39`): they are read out of what the author typed into the date box
- * rather than picked, and `DateField` posts them as hidden inputs. Holding
- * them here as well would be a second copy free to disagree with the text on
- * screen. Same reasoning, and same shape, as `IndividualFormField`.
- */
-type UnionFormField = Extract<
-  UnionField,
-  "type" | "startDate" | "endDate" | "endReason" | "notes"
->;
-
-/**
- * A blank union.
- *
- * Frozen for the reason `emptyIndividualFormValues` is: it is a shared default
- * held across renders, and a mutable one would leak a half-filled union from
- * one form into the next that mounted.
- */
-export const emptyUnionFormValues: UnionFormValues = Object.freeze({
-  type: "marriage",
-  startDate: "",
-  endDate: "",
-  endReason: "ongoing",
-  notes: "",
-});
-
-const UNION_TYPE_LABELS: Record<(typeof UNION_TYPES)[number], string> = {
-  marriage: "Marriage",
-  partnership: "Partnership",
-  unknown: "Not recorded",
-};
-
-const END_REASON_LABELS: Record<(typeof UNION_END_REASONS)[number], string> = {
-  ongoing: "It did not end",
-  death: "Ended by death",
-  divorce: "Divorce",
-  separation: "Separation",
-  unknown: "Ended, reason unknown",
-};
-
-/**
- * Prepositions rather than the stored words, because each sits immediately
- * before its date and the two read as one phrase. The same wording
- * `IndividualFieldset` uses, so a union's dates and a person's read alike.
+ * The input styling for this panel, handed to `UnionFieldset` and to E3-T2's
+ * `IndividualFieldset` beside it — each surface on this canvas owns one class
+ * list rather than every fieldset holding an opinion about widths it cannot
+ * see.
  */
 const CONTROL_CLASS =
   "mt-1 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink disabled:cursor-not-allowed disabled:opacity-60";
@@ -230,19 +174,6 @@ export function AddSpouseForm({
   const setUnionField = useCallback((field: UnionFormField, value: string) => {
     setUnion((current) => ({ ...current, [field]: value }));
   }, []);
-
-  /**
-   * Every message a union date can come back with, in one place.
-   *
-   * `DateField` derives the qualifier and the precision, so only a hand-made
-   * POST can get either refused — but a message with no field on screen to
-   * hang under is a message nobody ever sees. The same fold as
-   * `IndividualFieldset`'s `dateError`, and for the same reason.
-   */
-  const unionDateError = (field: "startDate" | "endDate") =>
-    state.unionErrors[field] ??
-    state.unionErrors[`${field}Qualifier`] ??
-    state.unionErrors[`${field}Precision`];
 
   /**
    * The union exists, so this form has nothing left to show. Watching the
@@ -333,87 +264,19 @@ export function AddSpouseForm({
 
         <h3>The union</h3>
 
-        <UnionField label="Kind" name="type">
-          {(id) => (
-            <FormSelect
-              id={id}
-              name="type"
-              disabled={pending}
-              value={union.type}
-              onChange={(event) => setUnionField("type", event.target.value)}
-              className={CONTROL_CLASS}
-            >
-              {UNION_TYPES.map((value) => (
-                <option key={value} value={value}>
-                  {UNION_TYPE_LABELS[value]}
-                </option>
-              ))}
-            </FormSelect>
-          )}
-        </UnionField>
-        <FieldError message={state.unionErrors.type} />
-
-        <div className="mt-3">
-          <DateField
-            legend="Started"
-            name="startDate"
-            value={union.startDate}
-            onChange={(value) => setUnionField("startDate", value)}
-            error={unionDateError("startDate")}
-            disabled={pending}
-            className={CONTROL_CLASS}
-          />
-        </div>
-
-        <div className="mt-3">
-          <DateField
-            legend="Ended"
-            name="endDate"
-            value={union.endDate}
-            onChange={(value) => setUnionField("endDate", value)}
-            error={unionDateError("endDate")}
-            disabled={pending}
-            className={CONTROL_CLASS}
-          />
-        </div>
-
-        <UnionField label="How it ended" name="endReason">
-          {(id) => (
-            <FormSelect
-              id={id}
-              name="endReason"
-              disabled={pending}
-              value={union.endReason}
-              onChange={(event) =>
-                setUnionField("endReason", event.target.value)
-              }
-              className={CONTROL_CLASS}
-            >
-              {UNION_END_REASONS.map((value) => (
-                <option key={value} value={value}>
-                  {END_REASON_LABELS[value]}
-                </option>
-              ))}
-            </FormSelect>
-          )}
-        </UnionField>
-        <FieldError message={state.unionErrors.endReason} />
-
-        <UnionField label="Notes" name="notes">
-          {(id) => (
-            <textarea
-              id={id}
-              name="notes"
-              rows={2}
-              maxLength={MAX_NOTES_LENGTH}
-              disabled={pending}
-              value={union.notes}
-              onChange={(event) => setUnionField("notes", event.target.value)}
-              className={CONTROL_CLASS}
-            />
-          )}
-        </UnionField>
-        <FieldError message={state.unionErrors.notes} />
+        {/*
+          The same five controls the edit form renders, from the same
+          component. Splitting them out is what keeps "the kind is a field
+          rather than a default" written once — see
+          `components/UnionFieldset.tsx`.
+        */}
+        <UnionFieldset
+          values={union}
+          onChange={setUnionField}
+          fieldErrors={state.unionErrors}
+          disabled={pending}
+          controlClassName={CONTROL_CLASS}
+        />
 
         {/*
           `partnerAId` faults the hidden `personId` field, which has no input
@@ -569,30 +432,6 @@ function Partner({
 }
 
 /**
- * A labelled row. The child is a function so that the label and its control
- * share one generated id without the caller writing `useId` per field.
- */
-function UnionField({
-  label,
-  name,
-  children,
-}: {
-  label: string;
-  name: UnionFormField;
-  children: (id: string) => React.ReactNode;
-}) {
-  const id = useId();
-  return (
-    <div className="mt-3" data-field={name}>
-      <label htmlFor={id} className="block text-caption text-ink-muted">
-        {label}
-      </label>
-      {children(id)}
-    </div>
-  );
-}
-
-/**
  * A failure belonging to no single input: the person deleted in another tab,
  * or a `partnerAId` fault against the hidden field naming them.
  */
@@ -600,15 +439,6 @@ function FormError({ message }: { message: string | undefined }) {
   if (message === undefined) return null;
   return (
     <p role="alert" className="mt-3 text-note text-ink">
-      {message}
-    </p>
-  );
-}
-
-function FieldError({ message }: { message: string | undefined }) {
-  if (message === undefined) return null;
-  return (
-    <p role="alert" className="mt-1 text-note text-ink">
       {message}
     </p>
   );
