@@ -59,10 +59,11 @@ export default async function TreePage() {
           </p>
           {/*
             The way in to E6-T3's import screen, and the only one — the
-            sidebar's four links are the E11 reference mockup's and adding a
-            fifth is a decision about the shell rather than about importing.
-            Here is where it belongs anyway: this is the page an import
-            changes, and the counts above are what it changes them from.
+            sidebar's five links are `lib/site-nav.ts`'s own set (four off the
+            E11 reference mockup, plus "New entry"), and giving import a sixth
+            is a decision about the shell rather than about importing. Here is
+            where it belongs anyway: this is the page an import changes, and
+            the counts above are what it changes them from.
           */}
           <p className="text-note">
             <Link href="/import">Import a GEDCOM file</Link>

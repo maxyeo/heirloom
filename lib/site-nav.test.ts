@@ -3,16 +3,18 @@ import { describe, expect, it } from "vitest";
 import { siteNavItems } from "@/lib/site-nav";
 
 /**
- * The sidebar's contents are read off the E11 reference mockup, and their
- * order is part of what makes the shell recognisable. Nothing else in the app
- * would notice if a link went to the wrong place or if the list got
- * rearranged, so the list itself is what gets asserted.
+ * The sidebar's contents are read off the E11 reference mockup's four links,
+ * plus "New entry" — a fifth the mockup does not draw, because it predates
+ * `/wiki/new` — and their order is part of what makes the shell recognisable.
+ * Nothing else in the app would notice if a link went to the wrong place or
+ * if the list got rearranged, so the list itself is what gets asserted.
  */
 describe("site navigation", () => {
-  it("is the mockup's four entries, in the mockup's order", () => {
+  it('is the mockup\'s four entries, plus "New entry", in that order', () => {
     expect(siteNavItems.map((item) => item.label)).toEqual([
       "Main page",
       "All entries",
+      "New entry",
       "Family tree",
       "Recent changes",
     ]);
@@ -29,6 +31,9 @@ describe("site navigation", () => {
       "Main page": "/",
       // E1-T9.
       "All entries": "/wiki",
+      // Where `app/wiki/new/page.tsx` lives — the one link in this list not
+      // on the E11 mockup, and the whole point of this test file's change.
+      "New entry": "/wiki/new",
       // The E3 canvas.
       "Family tree": "/tree",
     });
@@ -37,7 +42,7 @@ describe("site navigation", () => {
   it("leaves recent changes inert until E8-T4 builds it", () => {
     // The property that matters is not which ticket is named but that the one
     // unbuilt destination is a `null` href rather than a link to a 404 — and
-    // that the other three are not accidentally inert.
+    // that the other four are not accidentally inert.
     const pending = siteNavItems.filter((item) => item.href === null);
 
     expect(pending.map((item) => item.label)).toEqual(["Recent changes"]);

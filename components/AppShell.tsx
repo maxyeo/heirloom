@@ -84,7 +84,7 @@ export function AppShell({
       {/*
         The first tab stop on every signed-in page (`YEO-108`), and so
         ahead of the header's hamburger, wordmark, search box and account menu
-        and of the sidebar's four links. WCAG 2.4.1: the shell is the repeated
+        and of the sidebar's five links. WCAG 2.4.1: the shell is the repeated
         block, and this is the way over it. Off-screen until it is focused —
         see `.skip-link` in `app/globals.css`.
       */}

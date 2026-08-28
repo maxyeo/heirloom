@@ -42,9 +42,17 @@ export default async function WikiIndexPage() {
         /**
          * A wiki with no entries is the state this install actually starts in,
          * so it gets a first-run invitation rather than "0 results". The link
-         * goes to the create-page flow (E1-T8), which is a sibling ticket and
-         * not on this branch — deliberately addressed by path rather than by
-         * importing anything from it.
+         * goes to the create-page flow (E1-T8), addressed by path rather than
+         * by importing anything from it — it was a sibling ticket when this
+         * was written, and there is still nothing worth importing.
+         *
+         * `lib/site-nav.ts` now offers "New entry" from the sidebar too, so on
+         * a wide screen this page shows two doors to the same form. Kept
+         * anyway, because the sidebar is not a reliable second door: below
+         * 55rem `globals.css` gives it `display: none` until the hamburger
+         * opens it, and a reader who has closed it sees nothing at any width.
+         * The one screen whose entire job is to ask for a first entry should
+         * not be asking from inside a drawer.
          */
         <div className="wiki-body">
           <p>

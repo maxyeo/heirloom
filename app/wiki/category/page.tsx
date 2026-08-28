@@ -21,11 +21,12 @@ import { requireSession } from "@/lib/session";
  *
  * ## What it deliberately is not
  *
- * Not a sidebar item. `lib/site-nav.ts` holds the four places the shell
- * offers, pinned by `lib/site-nav.test.ts` against the mockup E11-T2 was
- * built from, and a fifth is a change to the skin rather than to this feature.
- * Categories are reached from the entries that use them, which is the same way
- * Wikipedia reaches them.
+ * Not a sidebar item. `lib/site-nav.ts` holds the five places the shell
+ * offers — the four off the mockup E11-T2 was built from, plus "New entry",
+ * which the mockup does not draw — pinned by `lib/site-nav.test.ts`, and
+ * giving categories a sixth is a change to the skin rather than to this
+ * feature. Categories are reached from the entries that use them, which is
+ * the same way Wikipedia reaches them.
  *
  * Reads a session cookie and the `categories` table, so there is nothing to
  * prerender — stated explicitly, the way every other database-backed route
