@@ -13,13 +13,14 @@ import { viewerInitials, viewerLabel } from "@/lib/viewer";
  * ## Why settings is here
  *
  * E7-T3 (`YEO-53`) needed a way in to `/settings`, and this menu is the second
- * item the note above anticipated. It is not in the sidebar: those four links
- * are the E11 reference mockup's, in the mockup's order, and `lib/site-nav.ts`
- * is asserted to be exactly them — adding a fifth is a decision about the
- * shell rather than about settings. `app/tree/page.tsx` makes the same call
- * for the import link, from the other direction. An account menu is also where
- * a reader looks for their own settings, which is the better argument of the
- * two.
+ * item the note above anticipated. It is not in the sidebar: the sidebar's
+ * five links are `lib/site-nav.ts`'s own set — four off the E11 reference
+ * mockup, in the mockup's order, plus "New entry" for the create flow — and
+ * `lib/site-nav.test.ts` asserts them exactly, so giving settings a sixth is
+ * a decision about the shell rather than about settings. `app/tree/page.tsx`
+ * makes the same call for the import link, from the other direction. An
+ * account menu is also where a reader looks for their own settings, which is
+ * the better argument of the two.
  *
  * The sign-out action arrives as a prop. `components/` stays clear of
  * `@/auth`, which is what keeps anything in here mountable in a suite that has
