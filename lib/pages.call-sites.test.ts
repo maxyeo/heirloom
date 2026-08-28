@@ -220,8 +220,9 @@ function isTest(file: string): boolean {
 /**
  * The local name the schema must be bound to.
  *
- * `import { schema } from "@/db"` in every module of the application today,
- * which is why the scan above works. Requiring the *name* rather than the
+ * Every module of the application that reaches the schema at all binds it
+ * this way today, which is why the scan above works. Requiring the *name*
+ * rather than the
  * import is what closes the alias: `import { schema as s }` reaches the same
  * table through `s.pages`, and a rule about the module specifier alone would
  * wave it through.
@@ -232,19 +233,41 @@ const CANONICAL_BINDING = "schema";
 const TABLE_EXPORT = "pages";
 
 /**
+ * How `schemaAccess` spells a default import (`YEO-127`).
+ *
+ * Neither `@/db` nor `@/db/schema` has a default export, so there is no module
+ * anybody could write that lands here, and against the tree this clause never
+ * fires. It is in the rule anyway, because the alternative is a checker that
+ * carefully records the shape and a rule that quietly throws it away.
+ * `test/route-inventory.ts` argues for the recording on the grounds that
+ * dropping the unexpected is the hole this whole guard exists to close — and
+ * that argument only holds while something downstream is listening. Adding a
+ * default export to either module is a one-line change; the rule should
+ * already know what to say on the day somebody makes it.
+ */
+const DEFAULT_EXPORT = "default";
+
+/**
  * Every way this module could reach `pages` that the scan above cannot see.
  *
- * Three doors, and the argument for treating them alike is that a reader of
- * the scan has no way to tell which one a module used — all three compile,
- * all three query the same rows, and none of them contains the text the scan
- * looks for.
+ * Four doors. The argument for treating them alike is that a reader of the
+ * scan has no way to tell which one a module used: each reaches the same rows
+ * and none of them contains the text the scan looks for. Three can be written
+ * against the modules as they stand today; the fourth is here so that it is
+ * never the shape that was recorded and then dropped.
  *
  *   - **A bare table import**, `import { pages } from "@/db/schema"`, under
  *     any alias. This is the one `YEO-124` was filed about and the one a
  *     contributor writes without meaning anything by it.
  *   - **The schema under another name**, whether aliased out of `@/db` or
- *     taken as a namespace off `@/db/schema`. `import * as db from "@/db"` is
- *     *not* here: it spells the table `db.schema.pages`, which the scan finds.
+ *     taken as a namespace off `@/db/schema` — and that second one counts
+ *     even when the name it lands on is `schema` itself, which is a different
+ *     module reached a different way rather than the canonical import it
+ *     resembles. `import * as db from "@/db"` is *not* here: it spells the
+ *     table `db.schema.pages`, which the scan finds.
+ *   - **A default import** from either module, which nothing can spell today
+ *     and which is a door the moment something can. `DEFAULT_EXPORT` is the
+ *     argument for keeping it in the rule while it is unreachable.
  *   - **`db.query.pages`**, Drizzle's relational API, which names the table
  *     without naming the schema at all. Nothing uses it today and it is a
  *     door rather than a hypothetical — the client is constructed with the
@@ -262,20 +285,40 @@ function otherDoors({ imports, relational }: SchemaAccess): string[] {
     (module === "@/db/schema" && exported === "*") ||
     (module === "@/db" && exported === CANONICAL_BINDING);
 
+  /**
+   * The one import that reaches the schema and is not a door: `schema`, out
+   * of `@/db`, bound to `schema`.
+   *
+   * All three parts are load-bearing, and testing the local name on its own
+   * was the bug `YEO-127` closed. `import * as schema from "@/db/schema"`
+   * also leaves the schema bound to `schema`, so a rule reading only the
+   * binding waved it through — while the docblock above listed it as a door.
+   * It was covered in practice, because any use of it spells `schema.pages`
+   * and the text scan finds that; but covered by the older guard, by
+   * coincidence of spelling, rather than by the rule that claims it.
+   */
+  const isCanonicalImport = (entry: SchemaImport) =>
+    entry.module === "@/db" &&
+    entry.exported === CANONICAL_BINDING &&
+    entry.local === CANONICAL_BINDING;
+
   const doors = imports
     .filter((entry) => !entry.typeOnly)
     .filter(
       (entry) =>
         entry.exported === TABLE_EXPORT ||
-        (reachesSchema(entry) && entry.local !== CANONICAL_BINDING),
+        entry.exported === DEFAULT_EXPORT ||
+        (reachesSchema(entry) && !isCanonicalImport(entry)),
     )
     .map(({ module, exported, local }) => {
       const binding =
-        exported === "*"
-          ? `* as ${local}`
-          : exported === local
-            ? `{ ${exported} }`
-            : `{ ${exported} as ${local} }`;
+        exported === DEFAULT_EXPORT
+          ? local
+          : exported === "*"
+            ? `* as ${local}`
+            : exported === local
+              ? `{ ${exported} }`
+              : `{ ${exported} as ${local} }`;
       return `import ${binding} from "${module}"`;
     });
 
@@ -378,9 +421,15 @@ describe("queries against schema.pages", () => {
     // that has found another door is precisely a module the string cannot
     // find. It is the assertion the rest of the file rests on.
     //
-    // Nothing fails it today and nothing had to change for that (`YEO-124`):
-    // the whole application already imports `{ db, schema } from "@/db"`. The
-    // point is that it now has to.
+    // Nothing fails it today and nothing had to change for that (`YEO-124`).
+    // What every module that reaches the schema already does is bind it as
+    // `schema` out of `@/db`. Most write `{ db, schema }`, because most have
+    // a query to run; `lib/live-pages.ts` writes `{ schema }` alone, since it
+    // builds predicates and never issues SQL. The rule is about that binding
+    // and not about the rest of the import clause, so it reads the two as the
+    // same door — which is the accurate version of a sentence that used to
+    // claim the whole application wrote `{ db, schema }` (`YEO-127`). The
+    // point is that the door is now the only one.
     const offenders = files.flatMap((file) =>
       otherDoors(schemaAccess(file)).map((door) => `${file}: ${door}`),
     );
@@ -460,6 +509,39 @@ describe("a module that reaches pages another way", () => {
     ]);
   });
 
+  it("is caught as a namespace that lands on `schema`, the canonical name", () => {
+    // The overlap `YEO-127` closed. This module was covered before the fix —
+    // but by the text scan, which sees `schema.pages` and cannot tell which
+    // module the `schema` came from, rather than by the rule that lists a
+    // namespace off `@/db/schema` among its doors. Two guards agreeing by
+    // coincidence of spelling is not either of them being right, and the
+    // coincidence holds only for as long as the module writes `schema.pages`
+    // somewhere the scan can read it.
+    const source = `
+      import * as schema from "@/db/schema";
+      export const all = () => schema.pages;
+    `;
+    expect(source).toContain(TABLE);
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([
+      'import * as schema from "@/db/schema"',
+    ]);
+  });
+
+  it("is caught as a default import, which neither module offers yet", () => {
+    // Unwritable against `@/db` as it stands — there is no default export to
+    // bind — so this fixture is the only place the `DEFAULT_EXPORT` clause is
+    // ever executed, and the only thing that makes the recorder's refusal to
+    // drop the shape (`test/route-inventory.ts`) worth anything. Before
+    // `YEO-127` the recording was real and the reporting was not.
+    const source = `
+      import database from "@/db";
+      export const all = () => database.schema.pages;
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([
+      'import database from "@/db"',
+    ]);
+  });
+
   it("is caught through the relational query API", () => {
     const source = `
       import { db } from "@/db";
@@ -483,6 +565,20 @@ describe("a module the spelling rule must leave alone", () => {
       import { LIVE_PAGES } from "@/lib/live-pages";
       export const all = () =>
         db.select().from(schema.pages).where(LIVE_PAGES);
+    `;
+    expect(otherDoors(schemaAccessOfSource(source))).toEqual([]);
+  });
+
+  it("the schema without the client, which is `lib/live-pages.ts`", () => {
+    // `lib/live-pages.ts` line for line, and the module that makes the
+    // sentence "the whole application imports `{ db, schema }`" false
+    // (`YEO-127`). It has no use for the client because it exports predicates
+    // rather than running queries. The rule asks what the schema is bound to,
+    // not what else came with it.
+    const source = `
+      import { isNull } from "drizzle-orm";
+      import { schema } from "@/db";
+      export const LIVE_PAGES = isNull(schema.pages.deletedAt);
     `;
     expect(otherDoors(schemaAccessOfSource(source))).toEqual([]);
   });
