@@ -2,6 +2,7 @@ import { and, eq, ne } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { createPageIn } from "@/lib/create-page";
+import { LIVE_PAGES } from "@/lib/live-pages";
 import { formatPersonName } from "@/lib/person-format";
 import { isRowId } from "@/lib/row-id";
 import type { Transaction } from "@/lib/save-page";
@@ -93,6 +94,29 @@ export type SetPersonEntryResult =
 export type CreateEntryForPersonResult =
   | { status: "created"; pageId: string; slug: string; revisionId: string }
   | { status: "already-linked"; slug: string }
+  | {
+      /**
+       * A **retired** entry already sits at the address this person's name
+       * derives (§4 of E1-T10, `YEO-122`), so nothing was written.
+       *
+       * Passed straight through from `createPageIn`, which is where the
+       * argument for refusing rather than disambiguating lives. What is worth
+       * saying *here* is why this flow cannot simply restore it and link: the
+       * panel asked for an entry about **this person**, and a retired entry at
+       * `rose-whitfield` may be about a different Rose Whitfield entirely —
+       * the tree routinely holds three generations of one name, which is the
+       * whole reason `lib/namesakes.ts` exists. Restoring somebody else's
+       * entry and pointing this person at it would be a guess, made silently,
+       * about which Rose the author meant.
+       *
+       * So the author is told what is there and sent to it. Restoring is one
+       * press on the tombstone, and linking is the panel's other button — two
+       * deliberate steps rather than one inference.
+       */
+      status: "retired-entry-exists";
+      slug: string;
+      title: string;
+    }
   | { status: "person-not-found" }
   | { status: "no-name" };
 
@@ -148,6 +172,23 @@ export async function createEntryForPerson(input: {
        * or the other half of a double-press. Read the address back rather than
        * reporting a failure: what the author asked for is an entry about this
        * person, and there is one.
+       *
+       * **No `LIVE_PAGES` here, deliberately** (E1-T10, `YEO-122`), and this
+       * is the read the tripwire in `lib/pages.call-sites.test.ts` cannot see
+       * — the file names the predicate for `setPersonEntry`'s lookup below, so
+       * the guard is satisfied file-wide. It is called out here so the
+       * omission reads as a decision rather than as the thing the guard
+       * missed.
+       *
+       * The decision: this is not a link operation, it is a read of a link
+       * that already exists. A retirement leaves `individuals.page_id` alone
+       * — that is an acceptance criterion — so a person whose entry has been
+       * retired *is* still linked to it, and saying `already-linked` is simply
+       * true. It also sends the author somewhere useful: the tombstone, which
+       * carries the Restore button. Filtering here would fall through to
+       * create a *second* entry about a person who already has one, which is
+       * precisely the duplicate this branch exists to prevent, reached through
+       * the change meant to prevent duplicates.
        */
       const [existing] = await tx
         .select({ slug: schema.pages.slug })
@@ -173,9 +214,29 @@ export async function createEntryForPerson(input: {
     const page = await createPageIn(tx, { title, createdBy: input.createdBy });
 
     // Unreachable: the title is non-empty by the check above, and that is the
-    // only refusal `createPageIn` has. The branch is here so the compiler can
-    // narrow, rather than because there is a case to handle.
+    // only refusal `createPageIn` has that this flow can cause. The branch is
+    // here so the compiler can narrow, rather than because there is a case to
+    // handle.
     if (page.status === "empty-title") return { status: "no-name" };
+
+    /**
+     * The one refusal this flow genuinely can meet (`YEO-122`): a retired
+     * entry already holds this name's address. Passed through unchanged —
+     * `app/tree/actions.ts` turns it into a sentence naming the entry, and
+     * `CreateEntryForPersonResult` carries the argument for why the author
+     * decides rather than this function.
+     *
+     * Nothing has been written at this point: `createPageIn` returns before
+     * its insert, so the transaction has done no work and there is nothing to
+     * roll back beyond the person's row lock being released on commit.
+     */
+    if (page.status === "retired-entry-exists") {
+      return {
+        status: "retired-entry-exists",
+        slug: page.slug,
+        title: page.title,
+      };
+    }
 
     await tx
       .update(schema.individuals)
@@ -245,10 +306,40 @@ export async function setPersonEntry(
      * the entry taken. Locks are always taken person-first then entry, in both
      * of this module's functions, so there is no cycle to deadlock on.
      */
+    /**
+     * A retired entry is not one to link somebody to (E1-T10, `YEO-122`), so
+     * `LIVE_PAGES` is part of what this looks up rather than a branch after
+     * it: a retired entry and no entry are the same answer here, and the
+     * predicate says so in the place the row is fetched.
+     *
+     * `listEntryLinks` already keeps retired entries out of the picker, so
+     * nothing on screen offers this. That is exactly why the refusal has to be
+     * here as well: the picker is a convenience, this transaction is the
+     * boundary, and `setPersonEntryAction` is a POST endpoint that takes a
+     * `pageId` from its caller. Without it, a panel opened before an entry was
+     * retired — or a direct POST — would attach a person to a tombstone, and
+     * the panel would then offer a "read the entry" link to it while
+     * `readEntryInfobox` refused to link back: the two-sided inconsistency
+     * `entry-taken` below exists to prevent in the other direction.
+     *
+     * Inside the `for("update")` lock rather than checked before it, for the
+     * reason `savePage` gives: retirement is an ordinary `UPDATE` on this row,
+     * so only the lock makes "is it retired" and "is it taken" one answer.
+     *
+     * Folded into `entry-not-found` rather than given a status of its own, and
+     * this is the one place in `YEO-122` where the vague answer is the right
+     * one. The other two refusals are told to somebody standing on the entry,
+     * who can act on knowing it was retired; this one is told to somebody
+     * standing on a *person's panel* in the tree, for whom "that entry is not
+     * one you can link to" is the whole of the actionable content. Since an
+     * entry can no longer be deleted at all, retirement is now the only way a
+     * real id reaches this branch, so `app/tree/actions.ts` says so in the one
+     * sentence it already had rather than growing a second.
+     */
     const [entry] = await tx
       .select({ slug: schema.pages.slug, title: schema.pages.title })
       .from(schema.pages)
-      .where(eq(schema.pages.id, input.pageId))
+      .where(and(eq(schema.pages.id, input.pageId), LIVE_PAGES))
       .for("update");
 
     if (!entry) return { status: "entry-not-found" };

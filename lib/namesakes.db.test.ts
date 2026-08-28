@@ -1,4 +1,4 @@
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
@@ -140,6 +140,41 @@ describe("findNamesakes", () => {
     // Nobody has written about her, so there is no address to have been
     // written down — which the hatnote renders as a red link.
     expect(bySlug[YOUNGER]).toBeNull();
+  });
+
+  it("keeps a namesake whose entry has been retired, without the address", async () => {
+    /**
+     * E1-T10 (`YEO-122`), and the shape of the answer is the whole assertion.
+     *
+     * The hatnote is a claim about *people*: "for other people named Rose
+     * Whitfield" is still true of a Rose whose entry somebody retired, so she
+     * must go on being named. What she loses is the link — and she loses it by
+     * arriving in exactly the shape a namesake nobody has written about
+     * arrives in, a name with a null slug, which `lib/hatnote.ts` already
+     * knows how to render.
+     *
+     * This is also the regression guard for the `ON`-versus-`WHERE` trap that
+     * `lib/namesakes.ts` documents. The predicate lives in the `left join`'s
+     * `ON` clause; written into the `WHERE` it would still pass the second
+     * assertion here — `deleted_at is null` is true of the all-null row a join
+     * miss produces — but the *elder* would vanish from the result entirely
+     * rather than merely losing her address. So both are asserted: she is
+     * still there, and her slug is null.
+     */
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, ELDER_PAGE));
+
+    const { people } = await findNamesakes(subject, SUBJECT_PAGE);
+    const elder = people.find((person) => person.id === ELDER);
+
+    expect(elder).toBeDefined();
+    expect(elder?.slug).toBeNull();
+
+    // And the namesake with no entry at all is untouched by the change, which
+    // is the half a `WHERE` would have taken down with it.
+    expect(people.map((person) => person.id)).toContain(YOUNGER);
   });
 
   it("carries the dates the line needs to tell them apart", async () => {

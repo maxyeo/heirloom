@@ -805,6 +805,102 @@ photographs travel in the [full export](export.md), which is an archive and
 can carry bytes. The round trip is unaffected — neither half writes or reads
 the column, so the two texts still match byte for byte.
 
+### Retiring an entry, and why every reader has to filter
+
+`pages.deleted_at` and `pages.deleted_by` (E1-T10, `YEO-122`) are the second
+place in this schema where **a row is retired rather than deleted**. The first
+is `gedcom_imports.released_at`, argued at length below; the difference here is
+that a retired entry is something a _reader_ can walk into, so the consequences
+run much further than one guard.
+
+**`delete from pages` was never the answer, and the schema is the argument.**
+`revisions.page_id` is `on delete cascade`, so a hard delete takes the entry's
+whole history with it — the one thing the append-only model exists to keep. And
+it is quietly a photograph deletion too: `lib/image-references.ts` counts an
+image as referenced if any body _or revision_ mentions it, so dropping both
+makes every picture the entry ever held unreferenced, and the next
+`npm run db:images-sweep --delete` reclaims files the nightly backup does not
+carry ([Backups](backups.md#what-is-not-in-these-backups)). Nothing on screen
+would say so and nothing could put them back.
+
+So retiring is one `UPDATE` against two nullable columns. The row stays, the
+revisions stay, `individuals.page_id` goes on pointing at it, every image stays
+referenced, and the way back is another `UPDATE`.
+
+#### Twelve readers, three right answers, and a tripwire
+
+A dozen modules issue SQL against `pages`, and getting one of them wrong is
+silent — an entry somebody retired goes on appearing in search, or a
+photograph the sweep reclaims. `LIVE_PAGES` in `lib/live-pages.ts` is the one
+predicate they share, and `lib/pages.call-sites.test.ts` is the tripwire that
+no module names the table without having decided about the column.
+
+The rule that guard enforces is deliberately "has decided", not "filters",
+because there are three correct answers and the first draft of the file was
+wrong about that:
+
+- **Filter.** The index, search, the link graph, the recently-changed feed, the
+  category listings, the infobox's id-to-slug map, and the person-to-entry
+  link. `findExistingSlugs` filtering is what makes "links to a retired entry
+  render red" true — that function is the whole of red-link resolution, so an
+  entry absent from its answer is an entry every link to which is painted red
+  with an invitation to write it, which is the correct thing to say about an
+  entry somebody decided should not have been written.
+- **Look for the retired one on purpose.** `lib/create-page.ts`, through
+  `RETIRED_PAGES`. A tombstone keeps its address, so an author re-typing a
+  retired entry's title would otherwise be handed `rose-whitfield-2` beside an
+  invisible twin; instead they are offered the entry back.
+- **Read the row and refuse it by name.** `lib/save-page.ts` and
+  `lib/restore-revision.ts` cannot filter: they have to tell "this entry is
+  retired" from "there is no entry here" in order to say which, and a filtered
+  query collapses the two into one silence. Both check inside the
+  `for("update")` transaction they already hold, beside their existing
+  not-found branches — in the route it would be the check-then-write race, and
+  an editor opened before a retirement and saved after would write into a
+  tombstone.
+
+**Two modules must not filter**, and both are registered as named exemptions:
+
+- `lib/image-references.ts`. A retirement is reversible, so a retired entry's
+  body refers to its photographs exactly as much as a superseded revision's
+  does. This is the paragraph above, one level out, and it is the trap the
+  whole ticket is mostly about.
+- `lib/export-full.ts`, which must carry retired rows **and the columns**. An
+  archive missing `deleted_at` restores as a wiki in which every retirement
+  anybody ever made has been silently undone.
+
+#### One partial index, doing two jobs
+
+`pages_updated_at_idx` is now `on pages (updated_at) where deleted_at is null`
+— the same change `gedcom_imports_live_digest_idx` makes, for a second reason.
+It is the recently-changed feed's access path, and keying it on the predicate
+means the rows in it are exactly the rows that feed can return, so the filter
+costs nothing. It also means the filter cannot be quietly dropped: a partial
+index is unusable by a query that does not repeat its predicate, so a feed
+query that stopped filtering would fall off the index and
+`lib/recent-changes.db.test.ts` goes red on the query plan.
+
+#### What a retired entry's URL does
+
+`/wiki/[slug]` renders a **tombstone**, not a 404: the title, who retired it
+and when, a working link to the history, and a Restore button. Membership is
+flat — `ALLOWED_EMAILS` is the entire model — so everybody who can reach the
+address is already entitled to un-retire it, and there is nobody a 404 would
+hide the entry from. What a 404 would cost is the thing that matters: an
+accidental retirement would be indistinguishable from data loss, and somebody
+would go looking for a backup of an entry sitting intact one button away. The
+editor redirects there rather than loading, because `savePage` refuses the
+write regardless and an editor that cannot save is a trap.
+
+**A retirement does not move `updated_at` and appends no revision.** Both are
+decisions rather than omissions. A revision is the record of what an entry
+_said_, and a retirement changes nothing it says. `updated_at` is subtler: the
+bump would be invisible while the entry is retired, and would land on the
+_restore_ — a years-old entry arriving at the top of "recently changed" as
+though somebody had just rewritten it. A retirement appearing in the feed as an
+event of its own is a reasonable thing to want and is a feed-schema change, not
+a timestamp to reuse.
+
 ### Categories, and the `on delete` that makes them safe
 
 `categories` and `page_categories` (E11-T8, `YEO-78`) are the second axis of

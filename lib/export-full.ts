@@ -102,6 +102,31 @@ import { zipChunks } from "@/lib/zip-stream";
  * row of the same table. Causality settles it — a revision can only ever have
  * been restored from one that already existed — so oldest-first is an order
  * in which every self-reference is already present.
+ *
+ * ## `pages` here means every row, retired ones included (E1-T10, `YEO-122`)
+ *
+ * The dozen readers that go through `LIVE_PAGES` are answering "what should
+ * somebody be shown". This is answering "what is in the database", and those
+ * are different questions in the one direction that matters: an archive is
+ * what the family is left holding if the database is lost, so anything it
+ * leaves out is destroyed rather than hidden. A retired entry's row, its
+ * revisions and the photographs its body refers to are all still here, and all
+ * still restorable by an `UPDATE`, so all three belong in the archive.
+ *
+ * Two halves of that, and the second is the one worth stating because it is
+ * silent when it goes wrong:
+ *
+ *  - **The rows.** No filter on the read below. This file is registered as one
+ *    of the two exemptions in `lib/pages.call-sites.test.ts`, so adding one
+ *    fails a test.
+ *  - **The column.** `deleted_at` and `deleted_by` have to travel *with* the
+ *    rows. They do, because `exportedColumns` derives the column list from the
+ *    table definition rather than naming columns here — but the consequence of
+ *    them not doing so is worth writing down, since nothing about a successful
+ *    restore would look wrong: every entry anybody had ever retired would come
+ *    back live, into the index and into search, months or years after somebody
+ *    decided they should not be there. `lib/export-full.db.test.ts` round-trips
+ *    a retired entry for that reason.
  */
 const EXPORT_TABLES = [
   schema.pages,

@@ -7,6 +7,7 @@ import {
   type NamedCategory,
   normaliseEntryCategories,
 } from "@/lib/category-name";
+import { LIVE_PAGES } from "@/lib/live-pages";
 import { compareEntriesByTitle, type TitledEntry } from "@/lib/page-index";
 import type { Transaction } from "@/lib/save-page";
 
@@ -142,8 +143,27 @@ export async function getCategoryBySlug(
  * same place in a category's list as it does in the index. `bodyHtml` and
  * `updatedAt` are the deliberate omissions: this list links and nothing more.
  *
+ * ## Retired entries, and why the filing row is left alone (`YEO-122`)
+ *
+ * `LIVE_PAGES` rides on the `innerJoin` rather than on the `where`, which for
+ * an inner join is the same set of rows and a different sentence: the join is
+ * "the live entry this filing points at", so a filing whose entry has been
+ * retired matches nothing and the row simply is not here. Written into the
+ * `where` it would read as a second thing being asked about the category,
+ * which it is not.
+ *
+ * What is deliberately *not* done is deleting the `page_categories` row when
+ * an entry is retired. Retirement is reversible by design — the whole of
+ * E1-T10 — and unfiling an entry on the way out would mean restoring it puts
+ * back an entry filed under nothing, with no record anywhere of what it used
+ * to be filed under. The filing survives the retirement and comes back with
+ * it, exactly as `individuals.page_id` does.
+ *
+ * The count in the tagline above a category's listing is derived from this
+ * list, so it agrees with it without being told to.
+ *
  * @param categoryId the category
- * @returns its entries, alphabetically by title; empty when it has none
+ * @returns its live entries, alphabetically by title; empty when it has none
  */
 export async function listEntriesInCategory(
   categoryId: string,
@@ -154,7 +174,10 @@ export async function listEntriesInCategory(
       title: schema.pages.title,
     })
     .from(schema.pageCategories)
-    .innerJoin(schema.pages, eq(schema.pages.id, schema.pageCategories.pageId))
+    .innerJoin(
+      schema.pages,
+      and(eq(schema.pages.id, schema.pageCategories.pageId), LIVE_PAGES),
+    )
     .where(eq(schema.pageCategories.categoryId, categoryId));
 
   return rows.sort(compareEntriesByTitle);

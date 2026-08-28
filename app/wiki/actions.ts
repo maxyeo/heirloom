@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { deleteCategory } from "@/lib/categories";
 import { createPage } from "@/lib/create-page";
+import { restorePage, retirePage } from "@/lib/retire-page";
 import { restoreRevision } from "@/lib/restore-revision";
 import {
   savePage,
@@ -146,11 +147,44 @@ export async function savePageAction(
  * There is no success member: a successful creation ends in a `redirect`,
  * which throws, so the only state this action ever returns to the form is one
  * in which the author is still standing in front of it.
+ *
+ * ## Why a union since `YEO-122`
+ *
+ * It was `{ error: string | null }` until §4 of E1-T10 gave the form a second
+ * thing to say — that a *retired* entry already holds this title's address,
+ * and that restoring it is one link away. That is not a sentence: it is a
+ * sentence plus an address to link to, and threading it through an `error`
+ * string would mean either printing a bare URL into prose or teaching the form
+ * to parse one back out of a message.
+ *
+ * A discriminated union rather than adding nullable members beside `error`, on
+ * `lib/removal-state.ts`'s argument for exactly this shape: the states are
+ * genuinely exclusive — the form is never showing a refusal and an offer at
+ * once — and the nullable-members version would make `error !== null &&
+ * retired !== null` representable, which is two states spelled four ways.
+ *
+ * It stays in this `"use server"` module because a type is erased at compile
+ * time and exports nothing at runtime. A frozen *constant* for the idle state
+ * could not live here, which is the whole reason `lib/removal-state.ts` is its
+ * own file; `NewEntryForm` writes its initial value inline instead, as it
+ * already did.
  */
-export type NewEntryFormState = {
-  /** A sentence to show the author, or null when there is nothing to say. */
-  error: string | null;
-};
+export type NewEntryFormState =
+  /** Nothing to say — the state the form is mounted in. */
+  | { status: "idle" }
+  /** A refusal the author can act on, as a sentence. */
+  | { status: "refused"; error: string }
+  /**
+   * A retired entry already holds this title's address (§4 of E1-T10,
+   * `YEO-122`).
+   *
+   * Carries the retired entry's own title and its address as separate fields,
+   * so the form can render the second as a link rather than as text. The title
+   * is the retired entry's rather than the one just typed, because those can
+   * differ — an entry renamed after creation keeps its original address — and
+   * which is true is the fact that decides whether the author wants it back.
+   */
+  | { status: "retired-entry"; slug: string; title: string };
 
 /**
  * Start an entry from a title (E1-T8).
@@ -192,7 +226,32 @@ export async function createPageAction(
     // The input is `required`, so this is the no-JavaScript path or a direct
     // POST. Said as a request rather than as an error, because an author who
     // pressed a button on an empty form has not done anything wrong.
-    return { error: "Give the entry a title to start it." };
+    return { status: "refused", error: "Give the entry a title to start it." };
+  }
+
+  if (result.status === "retired-entry-exists") {
+    /**
+     * A retired entry already holds this title's address (§4 of E1-T10,
+     * `YEO-122`), so the author is offered it back rather than handed a
+     * near-twin at `rose-whitfield-2` that nothing would ever tell them about.
+     *
+     * A state rather than a redirect, and that is the decision worth stating.
+     * Sending the author straight to the tombstone would answer "start an
+     * entry called Rose Whitfield" by navigating them away from the form to a
+     * page about somebody else's retirement, with the title they typed gone.
+     * Returning a state leaves them where they are with the field still filled
+     * — `NewEntryForm` uses `defaultValue`, so a refused submission does not
+     * throw the text away — free to follow the link, change the title, or
+     * think about it.
+     *
+     * The two fields travel separately rather than as one sentence so the form
+     * can render the address as a real link. See `NewEntryFormState`.
+     */
+    return {
+      status: "retired-entry",
+      slug: result.slug,
+      title: result.title,
+    };
   }
 
   /**
@@ -305,6 +364,28 @@ export async function restoreRevisionAction(
       return {
         error:
           "This entry already matches that version, so nothing was changed.",
+      };
+
+    case "retired":
+      /**
+       * The entry has been retired (E1-T10, `YEO-122`), so nothing was
+       * written.
+       *
+       * Reachable by ordinary navigation rather than only by a direct POST,
+       * which is why it earns a sentence of its own: the tombstone keeps the
+       * history tab working on purpose, and every row of that history links to
+       * a restore confirmation. A reader can therefore walk from a retired
+       * entry to this form without doing anything unusual, and what they need
+       * to be told is which of the two restores they are one step away from.
+       *
+       * That is the whole message. The two operations share a word and are not
+       * the same act — one brings back an entry, the other brings back a
+       * version of one — and performing the second without the first would be
+       * writing content into a tombstone.
+       */
+      return {
+        error:
+          "This entry has been retired, so nothing was changed. Restore the entry itself first, then restore this version.",
       };
 
     case "restored":
@@ -483,4 +564,252 @@ export async function deleteCategoryAction(
    * answer a question they were not asking.
    */
   redirect("/wiki/category");
+}
+
+/**
+ * What the retire confirmation renders while it waits, and after a refusal.
+ *
+ * Shaped like `RestoreFormState` and `DeleteCategoryFormState` above, and for
+ * the same reason: a successful retirement ends in a `redirect`, which throws,
+ * so the only state this action ever returns is one in which the reader is
+ * still standing in front of the confirmation.
+ */
+export type RetireEntryFormState = {
+  /** A sentence to show the reader, or null when there is nothing to say. */
+  error: string | null;
+};
+
+/**
+ * Retire an entry (E1-T10, `YEO-122`).
+ *
+ * ## What this writes, and what it deliberately cannot
+ *
+ * Two columns on one row. **No revision is deleted, no image is dereferenced,
+ * and `individuals.page_id` is not touched** — those are the ticket's
+ * acceptance criteria and every one of them is a property of the write rather
+ * than of care taken here: `lib/retire-page.ts` issues a single `UPDATE`
+ * against `pages`, and nothing else in the schema hangs off `deleted_at`. See
+ * that module for why it does not append a revision and does not move
+ * `updated_at`.
+ *
+ * The confirmation in front of this names the entries whose links turn red,
+ * the versions that are kept and the photographs that stay in storage, and
+ * every one of those numbers comes from `previewRetirement` — the same
+ * function `retirePage` runs again inside the writing transaction, so the
+ * screen and the write cannot come to different conclusions.
+ *
+ * ## Why the entry is named rather than identified
+ *
+ * The form posts the slug, which is the address the reader is standing on and
+ * is entitled to name, rather than the primary key — the "send a reference
+ * plus the user's change" shape the Next.js server-actions guide asks for, and
+ * the same choice `deleteCategoryAction` makes. Every signed-in member may
+ * retire every entry, because `ALLOWED_EMAILS` is the entire membership model
+ * and there is no per-entry ownership to check against (`lib/session.ts`).
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields — `slug`, and nothing else
+ * @returns a state to render, or never, when the redirect fires
+ */
+export async function retireEntryAction(
+  _previous: RetireEntryFormState,
+  form: FormData,
+): Promise<RetireEntryFormState> {
+  const session = await requireSession();
+
+  // As in every action above: `requireSession` has already thrown if there is
+  // no email, but its return type is next-auth's `Session`, whose `user.email`
+  // is optional, and the compiler cannot see that narrowing across the call.
+  const retiredBy = session.user?.email;
+  if (!retiredBy) throw new UnauthorizedError();
+
+  // A hidden field on a form the browser posts; `File` and null are what a
+  // direct POST can send instead, and neither is a reference to anything.
+  const slug = form.get("slug");
+  if (typeof slug !== "string") {
+    throw new TypeError("retireEntryAction expects a slug field, as text.");
+  }
+
+  const result = await retirePage({ slug, retiredBy });
+
+  switch (result.status) {
+    case "not-found":
+      /**
+       * No row at this address at all — a confirmation left open while the
+       * slug was changed by hand, or a direct POST. Said as a fact about the
+       * world rather than as a failure, matching `deleteCategoryAction`.
+       */
+      return {
+        error: "There is no entry at that address, so nothing was retired.",
+      };
+
+    case "already-retired":
+      /**
+       * A second tab, a double-press, or a back button onto a confirmation
+       * for an entry somebody has already retired. Not a failure — the entry
+       * is in the state the reader asked for — so the redirect below is
+       * skipped only because there is a sentence worth reading first, and the
+       * tombstone they would be sent to is one link away.
+       */
+      return {
+        error: "That entry has already been retired.",
+      };
+
+    case "retired":
+      break;
+  }
+
+  /**
+   * Everything this write moved, revalidated before the `redirect` below,
+   * because `redirect` throws. This is a longer list than any other action in
+   * this file, and that is the honest measure of what retiring an entry does:
+   * it leaves six surfaces at once.
+   *
+   * Every one of these routes is dynamic and calls `requireSession()`, so
+   * nothing server-side is stale — what is being cleared is the *client*
+   * router cache, which would otherwise show the reader the entry they just
+   * retired still sitting in the index they navigate to next.
+   */
+  revalidatePath(`/wiki/${slug}`);
+  // The entry's own route, which now renders a tombstone rather than an
+  // article — and the history views around it, whose chrome names the entry.
+  revalidatePath(`/wiki/${slug}/history`);
+  // The index (E1-T9), which has lost a row.
+  revalidatePath("/wiki");
+  // The front page, which renders the recently-changed feed (E8-T4) this entry
+  // has just dropped out of.
+  revalidatePath("/");
+  /**
+   * And every *other* entry (`/wiki/[slug]` as a pattern, with the `"page"`
+   * type Next requires for a path holding a dynamic segment). This is the one
+   * line here that is more than housekeeping: every link to the retired entry
+   * has just turned red, and those links are in other entries' bodies and
+   * hatnotes. The confirmation named which ones, and this action could
+   * therefore clear them by name — but the preview is computed inside the
+   * transaction and the pattern costs the same client-cache discard for a
+   * family wiki's few hundred dynamic routes, so the simpler line is the one
+   * that cannot fall out of step with the preview.
+   */
+  revalidatePath("/wiki/[slug]", "page");
+  /**
+   * And every category listing, which this entry has just come off. The
+   * pattern rather than the listings by name, matching `savePageAction`: the
+   * filing rows are untouched by a retirement, so nothing was deleted from
+   * which to derive a list, and the entry's categories are on the preview
+   * rather than on this action's arguments.
+   */
+  revalidatePath("/wiki/category/[slug]", "page");
+  // And the index of every category, whose counts have moved.
+  revalidatePath("/wiki/category");
+  /**
+   * And the tree, whose panels link to entries: `listEntryLinks` no longer
+   * offers this one, and a person linked to it now shows a red link where a
+   * blue one was. `/tree` is a single route, so it is named rather than
+   * patterned.
+   */
+  revalidatePath("/tree");
+
+  /**
+   * To the tombstone, which is where "the entry is retired" is actually
+   * legible: it names who retired it and when, keeps the history tab working,
+   * and carries the Restore button. That is deliberately *not* `/wiki` — the
+   * index would answer a question the reader was not asking and would show
+   * them nothing at all about the thing they just did, which for a reversible
+   * operation is exactly the wrong reward.
+   *
+   * The slug is encoded rather than interpolated raw, as every redirect in
+   * this file is: a non-Latin title produces a non-Latin slug
+   * (`lib/entry-slug.ts`) and the `Location` header of the no-JavaScript
+   * response has to be a valid URL.
+   */
+  redirect(`/wiki/${encodeURIComponent(slug)}`);
+}
+
+/**
+ * What the tombstone's Restore control renders while it waits, and after a
+ * refusal. Shaped like `RetireEntryFormState` above, and for the same reason.
+ */
+export type RestoreEntryFormState = {
+  /** A sentence to show the reader, or null when there is nothing to say. */
+  error: string | null;
+};
+
+/**
+ * Put a retired entry back (E1-T10, `YEO-122`).
+ *
+ * ## Why there is no confirmation in front of this one
+ *
+ * Because it is the *undo*, and asking somebody to confirm an undo is asking
+ * them to confirm a decision they have already made twice. Every confirmation
+ * in this repository guards an operation whose consequences are hard to see or
+ * hard to reverse; this one has neither property. It puts an entry back at the
+ * address it never left, with the history it never lost, and if it was pressed
+ * by mistake the entry can be retired again through the confirmation that is
+ * still there.
+ *
+ * That asymmetry is the point of the whole feature: retiring is the deliberate
+ * act and restoring is the cheap one. A wiki where both cost the same is one
+ * where nobody retires anything.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields — `slug`, and nothing else
+ * @returns a state to render, or never, when the redirect fires
+ */
+export async function restoreEntryAction(
+  _previous: RestoreEntryFormState,
+  form: FormData,
+): Promise<RestoreEntryFormState> {
+  await requireSession();
+
+  const slug = form.get("slug");
+  if (typeof slug !== "string") {
+    throw new TypeError("restoreEntryAction expects a slug field, as text.");
+  }
+
+  const result = await restorePage(slug);
+
+  switch (result.status) {
+    case "not-found":
+      return {
+        error: "There is no entry at that address, so nothing was restored.",
+      };
+
+    case "not-retired":
+      /**
+       * Two tabs, or a double-press. Not a failure — the entry is live, which
+       * is what the reader asked for — and the page they are looking at is
+       * about to be re-rendered as the article by the revalidation the
+       * redirect below carries.
+       */
+      return { error: "That entry is not retired." };
+
+    case "restored":
+      break;
+  }
+
+  /**
+   * The same six surfaces `retireEntryAction` clears, for the mirror of each
+   * reason: the entry is back in the index, back in the feed, back on its
+   * category listings, and every link that had turned red is blue again. The
+   * symmetry is deliberate — a restore that revalidated less than the
+   * retirement would leave somebody looking at a cached page where the entry
+   * is still gone, which is the one thing that would make this feature feel
+   * unreliable.
+   */
+  revalidatePath(`/wiki/${slug}`);
+  revalidatePath(`/wiki/${slug}/history`);
+  revalidatePath("/wiki");
+  revalidatePath("/");
+  revalidatePath("/wiki/[slug]", "page");
+  revalidatePath("/wiki/category/[slug]", "page");
+  revalidatePath("/wiki/category");
+  revalidatePath("/tree");
+
+  /**
+   * To the entry, at its original address — which is where "it is back" is
+   * legible, and which is the acceptance criterion stated as a redirect: the
+   * slug the reader was standing on is the slug they end up on, because the
+   * tombstone never gave it up.
+   */
+  redirect(`/wiki/${encodeURIComponent(result.slug)}`);
 }

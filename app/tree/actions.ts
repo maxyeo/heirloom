@@ -822,6 +822,29 @@ export async function createEntryForPersonAction(
     );
   }
 
+  if (result.status === "retired-entry-exists") {
+    /**
+     * A retired entry already holds the address this person's name derives
+     * (§4 of E1-T10, `YEO-122`), so nothing was created.
+     *
+     * Reported rather than redirected to, which is the opposite of the
+     * `already-linked` branch below, and the difference is who the entry is
+     * about. There, the entry *is* this person's and going to it is what the
+     * author asked for. Here it may be about a different Rose Whitfield
+     * entirely — three generations of one name is the ordinary shape of a
+     * family tree — so the author is told what is there, by title, and left to
+     * decide. `lib/link-person-entry.ts` sets out why guessing would be worse
+     * than asking.
+     *
+     * The title is named because it is the fact that decides: an entry
+     * retired under a name that has since been edited is the case where "there
+     * is already an entry at that address" would otherwise be baffling.
+     */
+    return failedEntryLinkState(
+      `A retired entry, "${result.title}", already has that address. Open /wiki/${result.slug} to restore it, then link this person to it.`,
+    );
+  }
+
   if (result.status === "already-linked") {
     /**
      * The panel was open in another tab, or the button was pressed twice.
@@ -883,8 +906,18 @@ export async function linkPersonEntryAction(
       );
 
     case "entry-not-found":
+      /**
+       * Two situations, one sentence — and since `YEO-122` the second is the
+       * likely one. An entry cannot be deleted any more: E1-T10 made removing
+       * one a *retirement*, so the ways to reach this branch are an id for a
+       * row that was never there, and an entry somebody has retired since this
+       * panel was opened. The copy names retirement rather than deletion
+       * because that is the one a reader can do something about — the entry is
+       * still at its address, with a Restore button on it — and because
+       * "deleted" is no longer something that happens to an entry.
+       */
       return failedEntryLinkState(
-        "That entry no longer exists. It may have been deleted.",
+        "That entry is not one you can link to. It may have been retired.",
       );
 
     case "entry-taken":

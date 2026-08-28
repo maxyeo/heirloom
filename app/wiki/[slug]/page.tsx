@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
@@ -6,6 +7,7 @@ import { ArticleCategories } from "@/components/ArticleCategories";
 import { ArticleContents } from "@/components/ArticleContents";
 import { ArticleHatnote } from "@/components/ArticleHatnote";
 import { ArticleHeading } from "@/components/ArticleHeading";
+import { EntryRestoration } from "@/components/EntryRestoration";
 import { PersonInfobox } from "@/components/PersonInfobox";
 import { readArticleOutline } from "@/lib/article-outline";
 import { readEntryCategories } from "@/lib/categories";
@@ -16,6 +18,11 @@ import { findNamesakes, NO_NAMESAKES } from "@/lib/namesakes";
 import { findExistingSlugs, getPageBySlug } from "@/lib/pages";
 import { formatPersonName } from "@/lib/person-format";
 import { infoboxEntrySlugs } from "@/lib/person-infobox";
+import {
+  formatRevisionAuthor,
+  formatRevisionTimestamp,
+  revisionTimestampIso,
+} from "@/lib/revision-format";
 import {
   entryLinkSlugs,
   markMissingEntryLinks,
@@ -73,7 +80,17 @@ export async function generateMetadata({
   // A wiki is read with a dozen tabs open, so the tab needs to say which entry
   // it is holding. `robots: noindex` is inherited from the root layout, and
   // Next adds its own on a 404 response.
-  return { title: entry ? entry.title : "Not found" };
+  if (!entry) return { title: "Not found" };
+
+  /**
+   * And which *state* it is holding (E1-T10, `YEO-122`) — the revision detail
+   * route's argument, applied one page over. A tab left open overnight on an
+   * entry somebody retired in the morning must not read as identical to the
+   * live one, and the tab strip is all a reader can see of a background tab.
+   */
+  return {
+    title: entry.deletedAt === null ? entry.title : `${entry.title} (retired)`,
+  };
 }
 
 export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
@@ -84,6 +101,85 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
   // to `not-found.tsx` in this segment, and — crucially — sets the response
   // status to 404 rather than serving a 200 with nothing in it.
   if (!entry) notFound();
+
+  /**
+   * The tombstone (§3 of E1-T10, `YEO-122`), and it returns rather than
+   * branching further down for a reason worth stating.
+   *
+   * ## Why this is not a 404
+   *
+   * Membership here is flat: `ALLOWED_EMAILS` is the entire model
+   * (`lib/allowed-emails.ts`) and everybody signed in is a full editor. So
+   * there is nobody to hide a retired entry *from* — the only people who can
+   * reach this URL at all are the people entitled to un-retire it. A 404 would
+   * buy no privacy and would cost the one thing that matters: an accidental
+   * retirement would be indistinguishable from data loss, and the reader's
+   * next move would be to go looking for a backup of an entry that is sitting
+   * right here, intact, one button from coming back.
+   *
+   * ## What it deliberately does not render
+   *
+   * The body. Rendering the prose would make the tombstone look like the live
+   * article at a glance, which defeats the page; and the content is one click
+   * away in the history, where the newest revision holds it byte for byte
+   * (`lib/save-page.ts` writes both from the same values in one transaction).
+   *
+   * ## What the early return buys
+   *
+   * Everything below this line is skipped: `sanitizeHtml`, `normaliseHatnote`,
+   * `readArticleOutline`, `getEntryPerson`, `readEntryInfobox`,
+   * `readEntryCategories`, `findNamesakes`, `insertSectionEditLinks`,
+   * `resolveEntryLinks` and `markMissingEntryLinks`. That is five database
+   * round trips and three passes over the document that a tombstone has no use
+   * for, and returning here is what makes that a fact rather than an
+   * intention.
+   */
+  if (entry.deletedAt !== null) {
+    return (
+      <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
+        {/* The title, so the address stays recognisable — a reader arriving on
+            an old link needs to know they found the right entry before they
+            are told what happened to it. */}
+        <ArticleHeading title={entry.title} />
+
+        {/*
+          The same panel language the historical-revision banner uses, because
+          it is the same kind of thing: chrome about an entry rather than the
+          entry itself.
+        */}
+        <div className="mb-6 rounded-panel border border-rule bg-wash px-4 py-3">
+          <p>
+            This entry has been retired. It is no longer in the index, in
+            search, or in any link that points at it — but nothing about it has
+            been deleted.
+          </p>
+
+          <p className="mt-2 text-caption text-ink-muted">
+            Retired{" "}
+            {/* `time` with a machine-readable value, as every other date in
+                this application is rendered. `formatRevisionAuthor` already
+                handles the null a hand-run `UPDATE` can leave. */}
+            <time dateTime={revisionTimestampIso(entry.deletedAt)}>
+              {formatRevisionTimestamp(entry.deletedAt)}
+            </time>{" "}
+            by {formatRevisionAuthor(entry.deletedBy)}.
+          </p>
+
+          <p className="mt-2 text-caption">
+            <Link href={`/wiki/${encodeURIComponent(entry.slug)}/history`}>
+              View revision history
+            </Link>{" "}
+            {/* The promise the acceptance criteria make, stated where somebody
+                can act on it: the history is not merely kept, it is reachable,
+                and this link is the proof. */}
+            — every saved version is still here.
+          </p>
+        </div>
+
+        <EntryRestoration slug={entry.slug} />
+      </main>
+    );
+  }
 
   /**
    * Sanitised again on the way out, having already been sanitised on the way
@@ -347,6 +443,28 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
             and to nothing at all when the entry has no headings. */}
         <ArticleContents headings={outline.headings} />
       </article>
+
+      {/*
+        The way to retire this entry (E1-T10, `YEO-122`), in the wrapper
+        `CategoryRemoval` uses at the foot of a category's listing — outside
+        the `<article>`, because it is not part of the entry.
+
+        A link and not a form, which is the whole reason this costs nothing to
+        put on every article view. The confirmation needs to know which entries
+        link here, and finding that out is a read of every live entry's body;
+        `app/wiki/[slug]/retire/page.tsx` pays for it when somebody has decided
+        to look, and this anchor pays for nothing.
+
+        Last on the page, under the categories, and understated on purpose. It
+        is the least common thing anybody does to an entry, and a control that
+        looked as important as Edit would be offering a decision nobody came
+        here to make.
+      */}
+      <p className="mt-8 border-t border-rule-soft pt-4 text-note text-ink-muted">
+        <Link href={`/wiki/${encodeURIComponent(entry.slug)}/retire`}>
+          Retire this entry
+        </Link>
+      </p>
     </main>
   );
 }

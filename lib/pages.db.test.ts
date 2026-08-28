@@ -5,6 +5,7 @@ import { db, schema } from "@/db";
 import {
   findExistingSlugs,
   getPageBySlug,
+  listEntryLinks,
   listPages,
   searchEntries,
 } from "@/lib/pages";
@@ -94,6 +95,12 @@ describe("getPageBySlug", () => {
       // Empty, because this fixture never set one — which is what the column's
       // `default ''` means for every row that predates it (E11-T9, `YEO-79`).
       hatnote: "",
+      // Live, which is what null means in both columns (E1-T10, `YEO-122`).
+      // Asserted rather than omitted because `toEqual` would pass either way
+      // if the fields were absent, and their presence is the property the
+      // tombstone route depends on.
+      deletedAt: null,
+      deletedBy: null,
     });
   });
 
@@ -500,6 +507,102 @@ describe("searchEntries", () => {
 
       // And the table is still there.
       expect(await getPageBySlug(SLUG)).toBeDefined();
+    });
+  });
+});
+
+/**
+ * Retired entries (E1-T10, `YEO-122`).
+ *
+ * The ticket's first two acceptance criteria, and they are both properties of
+ * these queries rather than of anything on screen: a retired entry leaves the
+ * index, leaves search and leaves the link graph, and `findExistingSlugs` no
+ * longer knowing about it *is* "links to it render red" — that function is the
+ * whole of red-link resolution, so an entry absent from its answer is an entry
+ * every link to which is painted red by `markMissingEntryLinks`.
+ *
+ * `getPageBySlug` is the deliberate exception and is asserted here beside the
+ * others, because the interesting thing about it is exactly that it disagrees
+ * with them.
+ *
+ * Its own `describe`, with a fixture retired in `beforeAll` and restored in
+ * `afterAll`, so nothing above has to know this block exists — the tests up
+ * there filter down to `FIXTURE_SLUGS` and would otherwise start seeing a row
+ * disappear from the middle of their corpus.
+ */
+describe("a retired entry", () => {
+  const RETIRED_ID = "00000000-0000-4000-8000-00000000e201";
+  const RETIRED_SLUG = "pages-fixture-retired-quernstone";
+
+  beforeAll(async () => {
+    await db.delete(schema.pages).where(eq(schema.pages.id, RETIRED_ID));
+
+    await db.insert(schema.pages).values({
+      id: RETIRED_ID,
+      slug: RETIRED_SLUG,
+      title: "Retired Quernstone Cottage",
+      // A word nothing else in this file uses, so the search assertion below
+      // is about this row rather than about what else the database holds.
+      bodyHtml: "<p>A cottage by the quernstone brook.</p>",
+      deletedAt: new Date("2024-06-01T00:00:00.000Z"),
+      deletedBy: "rose@example.com",
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(schema.pages).where(eq(schema.pages.id, RETIRED_ID));
+  });
+
+  it("is absent from the index", async () => {
+    const slugs = (await listPages()).map((entry) => entry.slug);
+
+    expect(slugs).not.toContain(RETIRED_SLUG);
+  });
+
+  it("is absent from the entries a person can be linked to", async () => {
+    // `listEntryLinks` fills the tree panel's picker and the editor's link
+    // button. A retired entry left in it would be a live-looking link to a
+    // tombstone on every relative's panel — and a way to attach a person to a
+    // retired entry, which is a write. `lib/link-person-entry.ts` refuses that
+    // at the transaction as well, because a picker is not a boundary.
+    const slugs = (await listEntryLinks()).map((entry) => entry.slug);
+
+    expect(slugs).not.toContain(RETIRED_SLUG);
+  });
+
+  it("is not found by search, for a word its body plainly contains", async () => {
+    // Stated as "for a word its body plainly contains" rather than as an empty
+    // result, so the assertion cannot pass because the query was wrong: the
+    // same term against the same row *would* match if the filter were absent.
+    const matches = await searchEntries("quernstone");
+
+    expect(matches.map((match) => match.slug)).not.toContain(RETIRED_SLUG);
+  });
+
+  it("does not exist, as far as a link is concerned", async () => {
+    // The "links to it render red" criterion. `findExistingSlugs` is what
+    // `resolveEntryLinks` asks, and a slug missing from its answer is a slug
+    // `markMissingEntryLinks` paints red with an invitation to write the
+    // entry — which is the correct thing to say about an entry somebody
+    // decided should not have been written.
+    await expect(findExistingSlugs([RETIRED_SLUG, SLUG])).resolves.toEqual(
+      new Set([SLUG]),
+    );
+  });
+
+  it("is still returned by getPageBySlug, carrying the tombstone", async () => {
+    // The exception, and the reason `WikiEntry` carries these two fields.
+    // Filtering here would make `/wiki/<slug>` a 404 for every retired entry,
+    // which is the outcome §3 of the ticket argues against: on a wiki where
+    // everybody signed in is a full editor, an accidental retirement that
+    // answers 404 is indistinguishable from data loss.
+    const entry = await getPageBySlug(RETIRED_SLUG);
+
+    expect(entry).toMatchObject({
+      id: RETIRED_ID,
+      slug: RETIRED_SLUG,
+      deletedAt: new Date("2024-06-01T00:00:00.000Z"),
+      deletedBy: "rose@example.com",
     });
   });
 });

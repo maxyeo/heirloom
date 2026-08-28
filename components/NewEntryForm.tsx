@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useId } from "react";
 
 import { createPageAction, type NewEntryFormState } from "@/app/wiki/actions";
@@ -63,7 +64,19 @@ export function NewEntryForm({ suggestedTitle = "" }: NewEntryFormProps) {
   const [state, formAction, pending] = useActionState<
     NewEntryFormState,
     FormData
-  >(createPageAction, { error: null });
+  >(createPageAction, { status: "idle" });
+
+  /**
+   * Whether the field itself is at fault, which is not the same question as
+   * whether there is anything to say (E1-T10, `YEO-122`).
+   *
+   * `refused` is the author's title being wrong, so the input is marked
+   * invalid and described by the message. `retired-entry` is the title being
+   * *right* — right enough to have found an entry that already exists — so
+   * the input is left alone: telling a screen reader the field is invalid
+   * would be telling them to change something that is not the problem.
+   */
+  const fieldIsWrong = state.status === "refused";
 
   return (
     <form action={formAction} className="mt-6">
@@ -82,8 +95,8 @@ export function NewEntryForm({ suggestedTitle = "" }: NewEntryFormProps) {
         required
         autoComplete="off"
         placeholder="Rose Hall"
-        aria-invalid={state.error !== null}
-        aria-describedby={state.error === null ? undefined : errorId}
+        aria-invalid={fieldIsWrong}
+        aria-describedby={state.status === "idle" ? undefined : errorId}
         className="mt-1 block w-full rounded-panel border border-rule bg-paper px-2 py-1.5 text-ink"
       />
 
@@ -92,11 +105,33 @@ export function NewEntryForm({ suggestedTitle = "" }: NewEntryFormProps) {
         It can be changed later.
       </p>
 
-      {state.error === null ? null : (
+      {state.status === "refused" ? (
         <p id={errorId} role="alert" className="mt-2 text-note text-ink">
           {state.error}
         </p>
-      )}
+      ) : null}
+
+      {state.status === "retired-entry" ? (
+        /*
+          §4 of E1-T10 (`YEO-122`): the address this title derives already
+          holds a retired entry, so the author is offered it back rather than
+          handed `rose-whitfield-2` beside an invisible tombstone.
+
+          `role="alert"` like the refusal above, because it arrives after a
+          submission and is the reason nothing happened — but the copy is an
+          offer rather than a correction, and the link is the point of it. A
+          `<Link>` rather than an `<a>` so the tombstone is a client
+          navigation, and the title is quoted because it is the retired
+          entry's own and may not be the one just typed.
+        */
+        <p id={errorId} role="alert" className="mt-2 text-note text-ink">
+          A retired entry, “{state.title}”, already has this address.{" "}
+          <Link href={`/wiki/${encodeURIComponent(state.slug)}`}>
+            Open it to restore it
+          </Link>
+          , or give this one a different title.
+        </p>
+      ) : null}
 
       <div className="mt-6 flex items-center gap-3">
         <button

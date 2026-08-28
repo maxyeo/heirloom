@@ -294,3 +294,94 @@ describe("the archive it produces", () => {
     );
   });
 });
+
+/**
+ * Retired entries in the archive (E1-T10, `YEO-122`).
+ *
+ * ## Why this is not quite the "round trip" the ticket names
+ *
+ * The acceptance criterion says a full export/restore round trip preserves
+ * retired-ness, and there is no JSONL *loader* in this repository to round-trip
+ * through: `db/restore.ts` replays a `pg_dump`, and reading the archive back is
+ * a documented manual procedure (`RESTORE.md`). So what is provable here is the
+ * export half, stated exactly — the rows come out, and the two columns come out
+ * with them — and that is the half a code change can break.
+ *
+ * It is also the half that fails silently. An archive missing `deleted_at`
+ * restores into a wiki where every retirement anybody ever made has been
+ * undone: entries somebody deliberately took out of the index are back in it,
+ * back in search, months or years later, and nothing about the restore looks
+ * wrong at the time. An archive missing the *rows* is worse and louder —
+ * `revisions.page_id` would fail its foreign key on the way in.
+ *
+ * `PAGE` is the one retired here rather than `OTHER_PAGE`, because it is the
+ * one with photographs in it: that makes the last assertion below about a
+ * retired entry's pictures rather than about somebody else's.
+ */
+describe("a retired entry", () => {
+  beforeAll(async () => {
+    await db
+      .update(schema.pages)
+      .set({
+        deletedAt: new Date("2026-03-01T00:00:00.000Z"),
+        deletedBy: "rose@example.com",
+      })
+      .where(inArray(schema.pages.id, [PAGE]));
+  });
+
+  afterAll(async () => {
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(inArray(schema.pages.id, [PAGE]));
+  });
+
+  it("is carried, and so is the fact that it is retired", async () => {
+    const { tables } = await readFullExport(NOON);
+    const [retired] = ours(tables[0].rows, [PAGE]);
+
+    // The row is here at all — `lib/export-full.ts` is one of the two modules
+    // exempted from the live-pages filter, and this is why.
+    expect(retired).toBeDefined();
+
+    // And it says so, under the *column* names a restore inserts by. The whole
+    // restore procedure rests on these being column names rather than
+    // Drizzle's JS properties, which is why they are spelled out here rather
+    // than read off the object.
+    expect(retired.deleted_at).toEqual(new Date("2026-03-01T00:00:00.000Z"));
+    expect(retired.deleted_by).toBe("rose@example.com");
+  });
+
+  it("leaves a live entry's columns null", async () => {
+    // The control. Without it, an export that wrote a timestamp into every row
+    // would pass the assertion above, and would restore as a wiki with no
+    // entries in the index at all.
+    const { tables } = await readFullExport(NOON);
+    const [live] = ours(tables[0].rows, [OTHER_PAGE]);
+
+    expect(live.deleted_at).toBeNull();
+    expect(live.deleted_by).toBeNull();
+  });
+
+  it("still carries its revisions", async () => {
+    // `revisions.page_id` is `on delete cascade`, which is the argument the
+    // whole ticket rests on: a hard delete would have taken these with it.
+    // A retirement does not, and the archive carries them exactly as before.
+    const { tables } = await readFullExport(NOON);
+
+    expect(ours(tables[1].rows, [OLD_REVISION, NEW_REVISION])).toHaveLength(2);
+  });
+
+  it("still carries the photographs its body refers to", async () => {
+    // The other half of §2 of the ticket, from the archive's side rather than
+    // the sweep's: a retired entry's pictures are still the family's, so they
+    // are still in the file the family takes with them.
+    // `lib/image-references.ts` is shared by the export and the sweep exactly
+    // so that these two cannot come to different answers.
+    const { images } = await readFullExport(NOON);
+    const keys = images.map((image) => image.key);
+
+    expect(keys).toContain(CURRENT_IMAGE);
+    expect(keys).toContain(REMOVED_IMAGE);
+  });
+});

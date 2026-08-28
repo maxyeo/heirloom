@@ -212,3 +212,72 @@ describe("the sweep's view of this fixture", () => {
     expect(plan.orphans.map((object) => object.key)).toEqual([UNREFERENCED]);
   });
 });
+
+/**
+ * The trap E1-T10 (`YEO-122`) is mostly about, asserted rather than argued.
+ *
+ * Retiring an entry must not make its photographs unreferenced. If it did, the
+ * sequence is: somebody retires an entry; the next `npm run db:images-sweep
+ * --delete` reclaims every picture in it; months later somebody restores the
+ * entry and the paragraphs come back around broken `<img>` tags — baked, by
+ * then, into append-only revision rows that can never be edited. The files are
+ * not recoverable, because the nightly backup carries the rows that point at
+ * images and never the images themselves.
+ *
+ * `lib/pages.call-sites.test.ts` guards the same property from the other side,
+ * by refusing to let `lib/image-references.ts` name the live-pages predicate.
+ * This is the half that proves the behaviour rather than the shape of the
+ * code, and it is the acceptance criterion in as many words: the sweep reports
+ * nothing new to delete after an entry is retired.
+ */
+describe("a retired entry", () => {
+  it("still references the photographs in it", async () => {
+    const before = await readReferencedImageKeys();
+    expect(before.keys).toContain(CURRENT_IMAGE);
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(inArray(schema.pages.id, [PAGE]));
+
+    try {
+      const after = await readReferencedImageKeys();
+
+      // Still referenced, and still counted in the *pages* bucket rather than
+      // moved to one of its own: the census's buckets say which table a key
+      // came from, not what state the row is in.
+      expect(after.keys).toContain(CURRENT_IMAGE);
+      expect(after.fromPages).toBe(before.fromPages);
+
+      // And the sweep, run over the same objects, still has exactly one
+      // orphan — the control key nothing ever wrote. This is the criterion
+      // itself: nothing new to delete after a retirement.
+      const { planImageSweep } = await import("@/lib/image-sweep");
+      const now = new Date("2026-08-25T12:00:00.000Z");
+      const plan = planImageSweep({
+        listed: [
+          CURRENT_IMAGE,
+          REMOVED_IMAGE,
+          PORTRAIT_IMAGE,
+          PORTRAIT_THUMB,
+          UNREFERENCED,
+        ].map((key) => ({
+          key,
+          size: 1000,
+          uploadedAt: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+        })),
+        referenced: after.keys,
+        now,
+        maxOrphanFraction: 1,
+      });
+
+      expect(plan.orphans.map((object) => object.key)).toEqual([UNREFERENCED]);
+    } finally {
+      // Put it back, so nothing after this file sees a retired fixture.
+      await db
+        .update(schema.pages)
+        .set({ deletedAt: null, deletedBy: null })
+        .where(inArray(schema.pages.id, [PAGE]));
+    }
+  });
+});

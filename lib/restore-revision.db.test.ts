@@ -791,3 +791,90 @@ describe("restoreRevision", () => {
     });
   });
 });
+
+/**
+ * Restoring a revision into a retired entry (E1-T10, `YEO-122`).
+ *
+ * The same acceptance criterion as `lib/save-page.db.test.ts`'s — "fails with
+ * a stated reason, not a write" — and the same two assertions, because a
+ * status alone would pass an implementation that refused after writing.
+ *
+ * What is different here is how easy this is to *reach*. The tombstone keeps
+ * the history tab working on purpose, every row of that history links to a
+ * revision, and every revision links to a restore confirmation. So this is not
+ * the direct-POST case: it is where a reader following the obvious path from a
+ * retired entry ends up. The confirmation refuses before the button as well
+ * (`app/wiki/[slug]/history/[revisionId]/restore/page.tsx`), but that is a
+ * render and this is the boundary.
+ */
+describe("a retired entry", () => {
+  async function retire() {
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, PAGE));
+  }
+
+  it("refuses the restore, and says which refusal it is", async () => {
+    const [oldest] = await readRevisions();
+    await retire();
+
+    await expect(
+      restoreRevision({
+        slug: SLUG,
+        revisionId: oldest.id,
+        restoredBy: RESTORER,
+      }),
+    ).resolves.toEqual({ status: "retired" });
+  });
+
+  it("writes nothing at all", async () => {
+    const [oldest] = await readRevisions();
+    const before = await readPage();
+    const revisionsBefore = await readRevisions();
+
+    await retire();
+    await restoreRevision({
+      slug: SLUG,
+      revisionId: oldest.id,
+      restoredBy: RESTORER,
+    });
+
+    const after = await readPage();
+
+    expect(after.title).toBe(before.title);
+    expect(after.bodyHtml).toBe(before.bodyHtml);
+    expect(after.updatedBy).toBe(before.updatedBy);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+
+    // The history is the thing this whole ticket exists to protect, so the
+    // strongest version of the assertion is the right one: not one row was
+    // appended, and not one row changed.
+    expect(await readRevisions()).toEqual(revisionsBefore);
+  });
+
+  it("restores again once the entry is back", async () => {
+    const [oldest] = await readRevisions();
+
+    await retire();
+    await restoreRevision({
+      slug: SLUG,
+      revisionId: oldest.id,
+      restoredBy: RESTORER,
+    });
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(eq(schema.pages.id, PAGE));
+
+    const result = await restoreRevision({
+      slug: SLUG,
+      revisionId: oldest.id,
+      restoredBy: RESTORER,
+    });
+
+    expect(result.status).toBe("restored");
+    expect((await readPage()).bodyHtml).toBe(V1.bodyHtml);
+  });
+});

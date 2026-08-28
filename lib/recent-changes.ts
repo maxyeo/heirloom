@@ -2,6 +2,7 @@ import { asc, desc, gt, isNull } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { individualAuthorEmail } from "@/lib/individual-author";
+import { LIVE_PAGES } from "@/lib/live-pages";
 import { formatPersonName } from "@/lib/person-format";
 import {
   mergeRecentChanges,
@@ -58,10 +59,26 @@ export async function listRecentChanges(
  *
  * ## Why this uses `pages_updated_at_idx`
  *
- * `updated_at` descending leads the `ORDER BY`, there is no `WHERE`, no join
- * and no aggregate, and the `LIMIT` is small. So a B-tree on `(updated_at)`
- * answers the ordering directly: Postgres walks the index from its high end
- * rather than reading the table and sorting it.
+ * `updated_at` descending leads the `ORDER BY`, the only `WHERE` is the one
+ * the index is itself keyed on, there is no join and no aggregate, and the
+ * `LIMIT` is small. So a B-tree on `(updated_at)` answers the ordering
+ * directly: Postgres walks the index from its high end rather than reading the
+ * table and sorting it.
+ *
+ * That `WHERE` is `LIVE_PAGES` (E1-T10, `YEO-122`), and the way it was added
+ * is the part worth reading. An earlier draft of this paragraph said "there is
+ * no `WHERE`", and the db test beside it warned in as many words that "a query
+ * with a `WHERE` on another column … could not" be answered from this index —
+ * which is exactly what filtering retired entries would have made this. The
+ * answer was not to accept a sequential scan but to make the index **partial**
+ * on the same predicate (`db/schema.ts`), so the rows in it are precisely the
+ * rows this query can return and the filter costs nothing at all.
+ *
+ * The useful consequence is that the filter cannot be forgotten. A partial
+ * index is unusable by a query that does not repeat its predicate, so a future
+ * edit that drops `LIVE_PAGES` from here does not quietly start listing retired
+ * entries in the feed — it falls off the index, and
+ * `lib/recent-changes.db.test.ts` goes red on the plan.
  *
  * The honest half, the same one `lib/people.ts` states for
  * `individuals_surname_idx`: on today's data — a family's few hundred entries
@@ -120,6 +137,7 @@ async function listRecentlyChangedEntries(
       updatedBy: schema.pages.updatedBy,
     })
     .from(schema.pages)
+    .where(LIVE_PAGES)
     .orderBy(desc(schema.pages.updatedAt), asc(schema.pages.id))
     .limit(limit);
 

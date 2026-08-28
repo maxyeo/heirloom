@@ -165,6 +165,36 @@ export default async function RevisionHistoryPage({
         <Link href={`/wiki/${slug}`}>Return to the current version</Link>
       </p>
 
+      {page.deletedAt === null ? null : (
+        /*
+          The entry has been retired (E1-T10, `YEO-122`), and this page goes on
+          working — which is the acceptance criterion, and also the reason the
+          banner is needed rather than optional.
+
+          A reader arriving here from a bookmark sees a complete, ordinary
+          history and has no way to tell that `/wiki/<slug>` now answers with a
+          tombstone. Saying so here is what stops the two pages from
+          contradicting each other, and it is why the restore links below are
+          left in place rather than hidden: they lead to a confirmation that
+          explains the same thing and offers the way out. See
+          `history/[revisionId]/restore/page.tsx`.
+
+          The same panel language the tombstone itself uses.
+        */
+        <div className="mb-6 rounded-panel border border-rule bg-wash px-4 py-3 text-caption">
+          <p>
+            This entry has been retired. Its history is kept in full, and
+            nothing below has been changed.
+          </p>
+          <p className="mt-2">
+            <Link href={`/wiki/${encodeURIComponent(slug)}`}>
+              Go to the entry to restore it
+            </Link>
+            .
+          </p>
+        </div>
+      )}
+
       {revisions.length === 0 ? (
         /**
          * A true empty state: no list, because there is nothing to list. This

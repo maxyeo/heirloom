@@ -182,7 +182,34 @@ export default async function RestoreRevisionPage({
         </p>
       </div>
 
-      {alreadyCurrent ? (
+      {page.deletedAt !== null ? (
+        /**
+         * The entry itself has been retired (E1-T10, `YEO-122`), so there is
+         * nothing to restore *into*.
+         *
+         * Refused here in the `alreadyCurrent` shape rather than by a 404, and
+         * rather than by a live button the action would reject. A 404 is the
+         * data-loss lie the read route argues against; a button that submits
+         * and comes back with the same sentence as a refusal is worse than
+         * saying it before it is pressed.
+         *
+         * This page is reachable by ordinary navigation on a retired entry —
+         * the tombstone keeps the history tab working on purpose, and every
+         * row of that history links here — so this is not a defensive branch.
+         * It is the branch a reader following the obvious path arrives at.
+         *
+         * Not the security boundary either: `restoreRevision` checks the same
+         * condition inside the transaction that would do the write, because
+         * this is a render and the action is a POST anybody can reach.
+         */
+        <p className="text-caption text-ink-muted">
+          This entry has been retired, so there is nothing to restore into.{" "}
+          <Link href={`/wiki/${encodeURIComponent(slug)}`}>
+            Restore the entry itself first
+          </Link>
+          , then restore this version.
+        </p>
+      ) : alreadyCurrent ? (
         /**
          * The common way to arrive here by accident: following the restore
          * link on the row the history list marks "(current version)". Refusing
