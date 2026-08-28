@@ -899,9 +899,10 @@ export type SchemaImport = {
   /** The specifier, as written — one of `SCHEMA_MODULES`. */
   module: string;
   /**
-   * What was imported: the export's own name, or `"*"` for a namespace
-   * import. An alias resolves to the name it was exported under, so
-   * `import { pages as p }` reports `pages` here and `p` below.
+   * What was imported: the export's own name, `"*"` for a namespace import,
+   * or `"default"` for a default one. An alias resolves to the name it was
+   * exported under, so `import { pages as p }` reports `pages` here and `p`
+   * below.
    */
   exported: string;
   /** The local name the import binds. */
@@ -992,10 +993,12 @@ export function schemaAccessOfSource(
       }
     };
 
-    // Neither module has a default export, so a default import here is a
-    // mistake rather than a door — recorded all the same, because a checker
-    // that silently drops what it does not expect is the shape of the hole
-    // this one was written to close.
+    // Neither module has a default export today, so nothing in the tree can
+    // reach this line. It is recorded rather than dropped because a checker
+    // that silently ignores what it does not expect is the shape of the hole
+    // this one was written to close — and, since `YEO-127`, `otherDoors` in
+    // `lib/pages.call-sites.test.ts` reports what it records, so the refusal
+    // to drop it buys a finding rather than an entry in a list nobody reads.
     if (clause.name) record("default", clause.name.text, clause.isTypeOnly);
 
     const named = clause.namedBindings;

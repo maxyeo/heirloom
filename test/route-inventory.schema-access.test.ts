@@ -77,6 +77,45 @@ describe("what a module imports from the schema", () => {
     ]);
   });
 
+  it("a default import, which neither schema module has to offer", () => {
+    // No file in the tree can be written this way, which is why the branch is
+    // tested here rather than trusted: nothing else executes it. What it
+    // records is a door in `otherDoors` (`YEO-127`), so the two halves have
+    // to agree on the spelling `"default"`.
+    const source = `import database from "@/db";`;
+    expect(schemaAccessOfSource(source).imports).toEqual([
+      {
+        module: "@/db",
+        exported: "default",
+        local: "database",
+        typeOnly: false,
+      },
+    ]);
+  });
+
+  it("a default import alongside the named ones, with both halves kept", () => {
+    // The order is not the property being tested — the grammar puts the
+    // default first and there is no other way to spell it. That *both* halves
+    // survive is: the default is recorded by one branch and the named
+    // bindings by the next, and a checker that took the first and stopped
+    // would report a module using both as importing only `database`.
+    const source = `import database, { schema } from "@/db";`;
+    expect(schemaAccessOfSource(source).imports).toEqual([
+      {
+        module: "@/db",
+        exported: "default",
+        local: "database",
+        typeOnly: false,
+      },
+      {
+        module: "@/db",
+        exported: "schema",
+        local: "schema",
+        typeOnly: false,
+      },
+    ]);
+  });
+
   it("both kinds of type-only import", () => {
     // Two spellings, one meaning, and a checker that understood only the
     // statement form would report the inline one as a live way into the
