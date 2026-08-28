@@ -93,10 +93,12 @@ describe("what a module imports from the schema", () => {
     ]);
   });
 
-  it("a default import alongside named ones, in source order", () => {
-    // The clause has two halves and the checker reads them in the order they
-    // are written, so a module using both is reported as one list rather than
-    // as a default import that displaced the names beside it.
+  it("a default import alongside the named ones, with both halves kept", () => {
+    // The order is not the property being tested — the grammar puts the
+    // default first and there is no other way to spell it. That *both* halves
+    // survive is: the default is recorded by one branch and the named
+    // bindings by the next, and a checker that took the first and stopped
+    // would report a module using both as importing only `database`.
     const source = `import database, { schema } from "@/db";`;
     expect(schemaAccessOfSource(source).imports).toEqual([
       {

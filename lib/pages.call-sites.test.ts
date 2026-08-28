@@ -222,10 +222,9 @@ function isTest(file: string): boolean {
  *
  * Every module of the application that reaches the schema at all binds it
  * this way today, which is why the scan above works. Requiring the *name*
- * rather than the
- * import is what closes the alias: `import { schema as s }` reaches the same
- * table through `s.pages`, and a rule about the module specifier alone would
- * wave it through.
+ * rather than the import is what closes the alias: `import { schema as s }`
+ * reaches the same table through `s.pages`, and a rule about the module
+ * specifier alone would wave it through.
  */
 const CANONICAL_BINDING = "schema";
 
@@ -570,7 +569,7 @@ describe("a module the spelling rule must leave alone", () => {
   });
 
   it("the schema without the client, which is `lib/live-pages.ts`", () => {
-    // `lib/live-pages.ts` line for line, and the module that makes the
+    // The opening of `lib/live-pages.ts`, and the module that makes the
     // sentence "the whole application imports `{ db, schema }`" false
     // (`YEO-127`). It has no use for the client because it exports predicates
     // rather than running queries. The rule asks what the schema is bound to,
