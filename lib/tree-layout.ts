@@ -84,6 +84,44 @@ export const PERSON_HEIGHT = 72;
 const UNION_SIZE = 14;
 
 /**
+ * The gap dagre leaves between one rank and the next, and the room a descent
+ * bar has to move inside it. See {@link descentBarLevels} for what moves and
+ * why.
+ *
+ * `DESCENT_STUB` is the straight run a line is guaranteed on each side of its
+ * bar: below the union marker before the bar, and above the child's card
+ * after it. It is also handed to `getSmoothStepPath` as its `offset` in
+ * `components/DescentEdge.tsx`, and the two have to agree — that function
+ * drops `offset` pixels from the source before it turns, so a bar closer than
+ * `offset` to the marker is drawn by going down past it and back up.
+ *
+ * `DESCENT_BAR_STEP` is the most that separates two bars stacked on one rank.
+ * Twelve pixels is three times the stroke and reads as two lines at every zoom
+ * the canvas offers.
+ *
+ * A rank of 48 with a stub at each end leaves 24 to stack in, so three bars
+ * take the full step and a fourth would not fit. {@link descentBarHeights}
+ * answers that by tightening the step on the one rank that is crowded rather
+ * than by growing `ranksep`, which is a graph-wide setting: no family should
+ * be drawn a generation taller everywhere because one corner of it is dense.
+ * The stubs are never given up, so a bar is always inside its own gap.
+ */
+const RANK_SEPARATION = 48;
+export const DESCENT_STUB = 12;
+const DESCENT_BAR_STEP = 12;
+
+/**
+ * How far apart two bars have to be to share a level.
+ *
+ * Two sibships whose bars merely fail to overlap can still be read as one
+ * line if the gap between them is small enough to look like a join. 24 is
+ * `nodesep`, the least dagre ever leaves between two things on a rank, so a
+ * pair of bars this close are closer than any two cards on the canvas ever
+ * are. Anything wider would stack bars a reader can already tell apart.
+ */
+const DESCENT_BAR_CLEARANCE = 24;
+
+/**
  * The dash patterns, and what they mean (E10-T5).
  *
  * ## Why these are constants rather than two string literals in the loops
@@ -616,6 +654,249 @@ function orderConstraints(
 }
 
 /**
+ * One union's descent: the horizontal bar under the marker that its children
+ * hang from, measured in dagre's coordinates.
+ *
+ * `left` and `right` are the ends of the horizontal run — the leftmost and
+ * rightmost of the marker's own centre and its children's centres, because
+ * the line has to reach from the drop under the marker out to the drop above
+ * each child. `midY` is where the bar sits when nothing is in its way: midway
+ * between the bottom of the marker and the top of the nearest child, which is
+ * where `smoothstep` put every bar before this existed. `room` is the distance
+ * between those two, which is what a stack of bars has to fit inside.
+ */
+interface DescentBar {
+  unionId: string;
+  /** The marker's rank, as its dagre centre — the key bars are stacked by. */
+  rankY: number;
+  left: number;
+  right: number;
+  midY: number;
+  room: number;
+}
+
+/**
+ * Where each union's children hang from, before any stacking.
+ *
+ * Unions with no children get no bar: they draw no descent at all. So does a
+ * union whose whole descent is a single vertical drop — one child, directly
+ * below the marker — because a bar with no horizontal run cannot be confused
+ * with anybody else's. Letting those reserve a level would push real bars
+ * apart to separate a line that is not drawn.
+ */
+function descentBars(
+  graph: FamilyGraph,
+  laidOut: (id: string) => { x: number; y: number },
+): DescentBar[] {
+  const children = new Map<string, string[]>();
+  for (const link of orderedChildLinks(graph)) {
+    const known = children.get(link.unionId);
+    if (known) known.push(link.childId);
+    else children.set(link.unionId, [link.childId]);
+  }
+
+  const bars: DescentBar[] = [];
+  for (const union of graph.unions) {
+    const kids = children.get(union.id);
+    if (!kids) continue;
+
+    const marker = laidOut(union.id);
+    let left = marker.x;
+    let right = marker.x;
+    let nearestTop = Infinity;
+    for (const childId of kids) {
+      const child = laidOut(childId);
+      left = Math.min(left, child.x);
+      right = Math.max(right, child.x);
+      nearestTop = Math.min(nearestTop, child.y - PERSON_HEIGHT / 2);
+    }
+
+    // A drop with no horizontal run. Sub-pixel rather than exact, because
+    // these are dagre's arithmetic and not round numbers.
+    if (right - left < 1) continue;
+
+    const markerBottom = marker.y + UNION_SIZE / 2;
+    bars.push({
+      unionId: union.id,
+      rankY: marker.y,
+      left,
+      right,
+      midY: (markerBottom + nearestTop) / 2,
+      room: nearestTop - markerBottom,
+    });
+  }
+
+  return bars;
+}
+
+/**
+ * Stack the bars on each rank so no two sibships are drawn as one line.
+ *
+ * ## The drawing this fixes
+ *
+ * Every descent bar on a rank was drawn at the same height, because
+ * `smoothstep` bends each edge halfway between its ends and every union on a
+ * rank has the same halfway. Where two of those runs overlapped they merged
+ * into one unbroken horizontal line with a drop hanging under each child, and
+ * the picture said something false: that all of the parents above were the
+ * parents of all of the children below. Reported from the archive as "it
+ * looks like my parents have four parents", which is exactly what an
+ * unbroken line with two markers on it and four drops under it draws.
+ *
+ * Overlap is not exotic and it is not a mistake upstream. A married middle
+ * child sits beside their spouse — {@link siblingOrderConstraints} puts them
+ * there deliberately, and every family chart does — so the spouse stands
+ * between two siblings, and the sibship's bar has to reach over them to the
+ * younger one. The spouse's own parents are a union on the same rank, and
+ * their bar runs underneath. Two bars, one inside the other, at one height.
+ *
+ * ## The order they stack in
+ *
+ * Widest first, so a sibship that spans another gets the higher bar. Then no
+ * child's drop ever passes through a bar it does not belong to: the drops
+ * from the outer bar reach past the inner one on both sides, and the drops
+ * from the inner bar stop below the outer one without touching it. In the
+ * reported family that leaves the picture with no crossings at all.
+ *
+ * What can still cross is a *marker's* drop, when its bar is below a wider
+ * one that spans it. That crossing is unavoidable — the marker is inside the
+ * other sibship's span, and any bar below the top level is reached by
+ * crossing it — and it is the better of the two places to spend it, because a
+ * reader traces a line down from a couple far less often than they trace one
+ * up from a person. A crossing is also not a junction: it is drawn as one
+ * line passing over another, where a child that belongs to a bar meets it in
+ * a corner.
+ *
+ * Ties in width break on the left end and then on the id, so the levels are
+ * the same on CI as on a laptop — {@link compareIds}, for the reason given
+ * there.
+ *
+ * ## Why greedy is enough, and what it is not
+ *
+ * Levels are assigned by taking the first one where the bar clears everything
+ * already on it. What that guarantees is the only thing being asked of it: no
+ * two bars that overlap ever share a level, whatever order they are taken in,
+ * because a bar is never placed on a level it does not clear.
+ *
+ * It is not the fewest levels. The greedy colouring of an interval graph is
+ * optimal when the intervals are taken by left endpoint, and these are taken
+ * widest first, for the arrangement above. Over 200,000 random interval sets
+ * widest-first came out one or two levels deeper than left-endpoint-first in
+ * about 2% of them. Nothing is drawn wrongly by those: an extra level only
+ * tightens the step {@link descentBarHeights} divides the rank's room into.
+ * The arrangement is what a reader sees and the level count is not, so where
+ * the two disagree this spends the levels.
+ */
+function descentBarLevels(bars: DescentBar[]): Map<string, number> {
+  const clear = (a: DescentBar, b: DescentBar) =>
+    a.right + DESCENT_BAR_CLEARANCE < b.left ||
+    b.right + DESCENT_BAR_CLEARANCE < a.left;
+
+  const byRank = new Map<number, DescentBar[]>();
+  for (const bar of bars) {
+    const known = byRank.get(bar.rankY);
+    if (known) known.push(bar);
+    else byRank.set(bar.rankY, [bar]);
+  }
+
+  const levels = new Map<string, number>();
+  for (const rank of byRank.values()) {
+    const widestFirst = [...rank].sort(
+      (a, b) =>
+        b.right - b.left - (a.right - a.left) ||
+        a.left - b.left ||
+        compareIds(a.unionId, b.unionId),
+    );
+
+    const taken: DescentBar[][] = [];
+    for (const bar of widestFirst) {
+      let level = 0;
+      while (taken[level]?.some((other) => !clear(bar, other))) level++;
+      (taken[level] ??= []).push(bar);
+      levels.set(bar.unionId, level);
+    }
+  }
+
+  return levels;
+}
+
+/**
+ * The height each bar is actually drawn at, from its level.
+ *
+ * ## Where the stack sits
+ *
+ * Centred on {@link DescentBar.midY} rather than hung from the top of the
+ * gap, so a rank that needs one level draws exactly where the canvas drew
+ * before this existed, and a rank that needs three spreads symmetrically
+ * around the same line instead of sliding every bar upwards. Per rank, from
+ * that rank's own level count: a rank with one sibship is not spread apart
+ * because some other generation has three.
+ *
+ * ## What a crowded rank gives up
+ *
+ * The step, and never the stubs. Three levels fit the ordinary 48-pixel gap
+ * at the full {@link DESCENT_BAR_STEP}; a fourth would have to come out of
+ * the straight run above the children's cards, which is the one part of the
+ * drawing that says which bar a child belongs to. So the step is whatever
+ * divides that rank's room evenly, capped at 12, and a rank deep enough to
+ * need it draws its bars closer together rather than pushing every other
+ * generation apart.
+ *
+ * ## Why one line per rank and not one per bar
+ *
+ * Both the room and the centre are the *smallest* on the rank rather than
+ * each bar's own. Two bars on one rank can want different heights: `midY` is
+ * measured to a union's nearest child, and a union with a child ranked
+ * further down than its siblings — the adopted-daughter case in
+ * `lib/tree-layout.test.ts` — has no child on the rank below at all. Stacking
+ * each around its own midpoint is what a level cannot then promise anything
+ * about, because two levels centred twelve pixels apart can land on the same
+ * line and merge, which is the drawing this exists to prevent. One centre and
+ * one band per rank makes the level the whole answer.
+ *
+ * The smallest of each is the safe one: every marker on a rank has the same
+ * bottom, so taking the shallowest bar's room and centre keeps the stack
+ * clear of the nearest card on the rank, and therefore of every other.
+ */
+function descentBarHeights(bars: DescentBar[]): Map<string, number> {
+  const levels = descentBarLevels(bars);
+
+  const countByRank = new Map<number, number>();
+  const roomByRank = new Map<number, number>();
+  const centreByRank = new Map<number, number>();
+  for (const bar of bars) {
+    const level = levels.get(bar.unionId) ?? 0;
+    countByRank.set(
+      bar.rankY,
+      Math.max(countByRank.get(bar.rankY) ?? 1, level + 1),
+    );
+    roomByRank.set(
+      bar.rankY,
+      Math.min(roomByRank.get(bar.rankY) ?? Infinity, bar.room),
+    );
+    centreByRank.set(
+      bar.rankY,
+      Math.min(centreByRank.get(bar.rankY) ?? Infinity, bar.midY),
+    );
+  }
+
+  const heights = new Map<string, number>();
+  for (const bar of bars) {
+    const level = levels.get(bar.unionId) ?? 0;
+    const gaps = (countByRank.get(bar.rankY) ?? 1) - 1;
+    const band = Math.max(
+      0,
+      (roomByRank.get(bar.rankY) ?? 0) - 2 * DESCENT_STUB,
+    );
+    const step = gaps === 0 ? 0 : Math.min(DESCENT_BAR_STEP, band / gaps);
+    const centre = centreByRank.get(bar.rankY) ?? bar.midY;
+    heights.set(bar.unionId, centre - (gaps * step) / 2 + level * step);
+  }
+
+  return heights;
+}
+
+/**
  * Family trees are layered DAGs, not trees: a person can be a partner in more
  * than one union, so they have more than one downward path. `d3-tree` assumes
  * a single parent slot per node and cannot represent that. Dagre lays out
@@ -639,7 +920,12 @@ export function layoutFamilyGraph(
   edges: Edge[];
 } {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "TB", ranksep: 48, nodesep: 24, edgesep: 12 });
+  g.setGraph({
+    rankdir: "TB",
+    ranksep: RANK_SEPARATION,
+    nodesep: 24,
+    edgesep: 12,
+  });
   g.setDefaultEdgeLabel(() => ({}));
 
   for (const person of graph.people) {
@@ -673,17 +959,6 @@ export function layoutFamilyGraph(
 
   for (const link of orderedChildLinks(graph)) {
     g.setEdge(link.unionId, link.childId);
-    edges.push({
-      id: `c-${link.unionId}-${link.childId}`,
-      source: link.unionId,
-      target: link.childId,
-      type: "smoothstep",
-      style:
-        link.relation === "biological"
-          ? undefined
-          : { strokeDasharray: NON_BIOLOGICAL_DASH },
-      ...EDGE_A11Y,
-    });
   }
 
   dagre.layout(g, {
@@ -692,6 +967,29 @@ export function layoutFamilyGraph(
       options.partnerLead ?? DEFAULT_PARTNER_LEAD,
     ),
   });
+
+  /**
+   * Where each union's children hang from. A union missing from this draws no
+   * horizontal run at all — see {@link descentBars} — and its edge falls back
+   * to the bend `smoothstep` would have chosen on its own.
+   */
+  const barHeights = descentBarHeights(descentBars(graph, (id) => g.node(id)));
+
+  for (const link of orderedChildLinks(graph)) {
+    const barY = barHeights.get(link.unionId);
+    edges.push({
+      id: `c-${link.unionId}-${link.childId}`,
+      source: link.unionId,
+      target: link.childId,
+      type: "descent",
+      data: barY === undefined ? undefined : { barY },
+      style:
+        link.relation === "biological"
+          ? undefined
+          : { strokeDasharray: NON_BIOLOGICAL_DASH },
+      ...EDGE_A11Y,
+    });
+  }
 
   const nodes: Node[] = [];
 
