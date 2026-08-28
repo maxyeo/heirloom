@@ -84,6 +84,16 @@ export type GraphUnion = {
   endDatePrecision: DatePrecision;
   endDateUpper: string | null;
   endDateUpperPrecision: DatePrecision;
+  /**
+   * Whatever the family remembers about this union that no column holds — the
+   * chapel, the second ceremony, who was not invited.
+   *
+   * Carried for the same reason `GraphPerson.notes` is, and it was an omission
+   * that it was not: the canvas is where a union is corrected, and a field the
+   * add-spouse form can write but no edit form can prefill is a field that can
+   * only be fixed by deleting the union that holds it.
+   */
+  notes: string | null;
 };
 
 export type GraphChildLink = {
@@ -171,6 +181,7 @@ export async function getFamilyGraph(
       endDatePrecision: u.endDatePrecision,
       endDateUpper: u.endDateUpper,
       endDateUpperPrecision: u.endDateUpperPrecision,
+      notes: u.notes,
     })),
     childLinks,
   };

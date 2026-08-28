@@ -52,7 +52,7 @@ import { reorderUnions } from "@/lib/reorder-unions";
 import { addChild } from "@/lib/save-child";
 import { setParents } from "@/lib/set-parents";
 import { createIndividual, updateIndividual } from "@/lib/save-individual";
-import { addSpouse } from "@/lib/save-union";
+import { addSpouse, updateUnion } from "@/lib/save-union";
 import { requireSession, UnauthorizedError } from "@/lib/session";
 import {
   type SpouseFormState,
@@ -60,7 +60,17 @@ import {
   spouseInvalidState,
   spouseSavedState,
 } from "@/lib/spouse-form-state";
-import { addSpouseInputFromFormData } from "@/lib/union-input";
+import {
+  type UnionEditState,
+  unionEditFailedState,
+  unionInvalidState,
+  unionSavedState,
+  unionUnchangedState,
+} from "@/lib/union-edit-state";
+import {
+  addSpouseInputFromFormData,
+  editUnionInputFromFormData,
+} from "@/lib/union-input";
 import { reorderInputFromFormData } from "@/lib/union-order";
 import {
   failedUnionOrderState,
@@ -279,6 +289,72 @@ export async function addSpouseAction(
        */
       revalidateTree();
       return spouseSavedState(result.unionId);
+  }
+}
+
+/**
+ * Correct a union that is already recorded (for the edit-union form).
+ *
+ * The union is named by a hidden `unionId` field — a reference the form is
+ * entitled to send, exactly as the edit-person form sends an `id`. Everything
+ * else is the author's change. The id's shape is checked, and the row looked
+ * up, inside `updateUnion` rather than here, for the same reason validation
+ * is: a guard on one door is a guard somebody forgets to fit to the next.
+ *
+ * No author is required, unlike the three actions above it: this writes no
+ * `individuals` row, and `unions` records no authorship of its own. The
+ * session is still checked, because a `"use server"` export is a POST endpoint
+ * whether or not a form is rendered in front of it.
+ *
+ * @param _previous the last state; unused, since each submission stands alone
+ * @param form the submitted fields, including the hidden `unionId`
+ * @returns a state to render: the union's id, or what to fix
+ */
+export async function updateUnionAction(
+  _previous: UnionEditState,
+  form: FormData,
+): Promise<UnionEditState> {
+  await requireSession();
+
+  const { unionId, union } = editUnionInputFromFormData(form);
+
+  // A form field is a `File` when the form posts one and null when the field
+  // is absent. Neither is a reference to a union, and neither comes from this
+  // form — so this is a caller error rather than something to show an author.
+  if (typeof unionId !== "string") {
+    throw new TypeError("updateUnionAction expects a unionId field, as text.");
+  }
+
+  const result = await updateUnion(unionId, union);
+
+  switch (result.status) {
+    case "invalid":
+      return unionInvalidState(result.issues);
+
+    case "not-found":
+      /**
+       * One message for both "no such union" and "that is not a union id at
+       * all", matching the single status `updateUnion` folds them into. Said
+       * as a fact about the tree rather than as an error, and it names the two
+       * ordinary ways to reach it: a form left open in one tab while E3-T8
+       * detached a partner or E3-T10 merged this union into another.
+       */
+      return unionEditFailedState(
+        "That union is no longer in the tree. It may have been removed, or merged into another.",
+      );
+
+    case "unchanged":
+      /**
+       * Not a failure, and deliberately not revalidated: nothing moved, so
+       * discarding a good cache entry would buy a refetch of the same diagram.
+       * The id comes back exactly as for `updated`, so a form that closes on
+       * success needs no special case for the author who pressed save twice.
+       */
+      return unionUnchangedState(result.unionId);
+
+    case "updated":
+      revalidateTree();
+      return unionSavedState(result.unionId);
   }
 }
 

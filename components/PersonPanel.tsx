@@ -85,6 +85,18 @@ export interface PersonPanelProps {
    */
   onAddSpouse?: () => void;
   /**
+   * Correct one of the unions this person belongs to.
+   *
+   * The fourth of the same kind of prop as `onAddSpouse` — a route in, not a
+   * form. It is per-row rather than one button at the foot of the panel
+   * because the thing being corrected is *this* marriage: the author is
+   * looking at the line that reads "Married, 1921" knowing it should say 1912,
+   * and a footer control would ask them to name again the union they are
+   * already pointing at. What the form contains, and that changing the partner
+   * is not part of it, is the canvas's business rather than this file's.
+   */
+  onEditUnion?: (unionId: string) => void;
+  /**
    * Start recording a child for this person (E3-T5).
    *
    * The same kind of prop as `onAddSpouse` and for the same reasons: a route
@@ -128,6 +140,7 @@ export function PersonPanel({
   footer,
   entryLink,
   onAddSpouse,
+  onEditUnion,
   onAddChild,
   onSetParents,
   returnFocus,
@@ -291,6 +304,9 @@ export function PersonPanel({
               key={spouse.unionId}
               spouse={spouse}
               onSelectPerson={onSelectPerson}
+              onEdit={
+                onEditUnion ? () => onEditUnion(spouse.unionId) : undefined
+              }
             />
           ))}
         </Section>
@@ -422,9 +438,11 @@ function ParentRow({
 function SpouseRow({
   spouse,
   onSelectPerson,
+  onEdit,
 }: {
   spouse: SpouseLink;
   onSelectPerson: (personId: string) => void;
+  onEdit?: () => void;
 }) {
   return (
     <li>
@@ -436,7 +454,41 @@ function SpouseRow({
         // more useful than dropping the union from the list.
         <span className="text-ink-muted">Unknown partner</span>
       )}
-      <p className="text-note text-ink-muted">{describeUnion(spouse)}</p>
+      {/*
+        The date line and the way to correct it, on one row. The button is
+        beside the sentence it edits rather than under it, so a person with
+        three marriages gets three lines rather than six.
+      */}
+      <p className="flex items-baseline gap-2 text-note text-ink-muted">
+        <span>{describeUnion(spouse)}</span>
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            /*
+              How the canvas finds this button again when the dialogue it opens
+              closes. The panel does not know a dialogue exists — it hands out
+              a route in and nothing more — and the canvas does not know which
+              row it came from, so the union's id is the one thing they both
+              hold. The same shape as the node lookup that returns focus when
+              the panel itself closes.
+            */
+            data-edit-union={spouse.unionId}
+            /*
+              Named for what it edits. "Edit" alone would be the fourth
+              unqualified "Edit" on this panel and, read out of context by a
+              screen reader moving through the spouse list, would not say which
+              of three marriages it belongs to — `describeUnion` above is the
+              only thing that distinguishes them, and it is not part of the
+              button.
+            */
+            aria-label={`Edit this union with ${spouse.person?.name ?? "an unrecorded partner"}`}
+            className="shrink-0 text-link hover:underline"
+          >
+            Edit
+          </button>
+        ) : null}
+      </p>
     </li>
   );
 }

@@ -10,6 +10,7 @@ import {
   setParentsAction,
   unlinkPersonEntryAction,
   updateIndividualAction,
+  updateUnionAction,
 } from "@/app/tree/actions";
 import { AddPersonPanel } from "@/components/AddPersonPanel";
 import { DeepLinkedFamilyTree } from "@/components/DeepLinkedFamilyTree";
@@ -123,6 +124,14 @@ export default async function TreePage() {
             always sorted on and nothing has ever written.
           */
           reorderUnionsAction={reorderUnionsAction}
+          /*
+            And the edit-union action, for the correction dialogue the panel's
+            spouse rows open: the dates on a marriage were writable from the
+            first day the add-spouse form existed and were not changeable
+            until this one, so a mistyped year could only be repaired by
+            deleting the union and every child link hanging off it.
+          */
+          updateUnionAction={updateUnionAction}
           /*
             And the entry link (E2-T2): the entries themselves, plus the three
             actions that set and clear `individuals.page_id`. One prop for the

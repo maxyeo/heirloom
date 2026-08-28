@@ -4,6 +4,8 @@ import { MAX_NOTES_LENGTH } from "@/lib/field-input";
 import {
   type AddSpouseInput,
   addSpouseInputFromFormData,
+  EDITABLE_UNION_FIELD_NAMES,
+  editUnionInputFromFormData,
   MAX_UNION_SEQUENCE,
   PARTNER_MODES,
   UNION_END_REASONS,
@@ -14,6 +16,7 @@ import {
   unionInputFromFormData,
   validateAddSpouse,
   validateUnion,
+  validateUnionEdit,
 } from "@/lib/union-input";
 
 /**
@@ -26,6 +29,9 @@ import {
 /** Two ids that are shaped like the `uuid` primary keys the schema uses. */
 const ROSE = "11111111-2222-4333-8444-555555555555";
 const THOMAS = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+
+/** A union id, for the edit flow's hidden reference field. */
+const UNION = "9d8c7b6a-5e4f-4a3b-8c2d-1e0f9a8b7c66";
 const WALTER = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
 
 /** The smallest input that passes, for tests that vary one field. */
@@ -363,6 +369,7 @@ describe("date ranges (YEO-88)", () => {
       endDate: "1938-01-01",
       endDateUpper: "1939-01-01",
       endDateUpperPrecision: "year",
+      notes: null,
       endReason: "divorce",
     });
 
@@ -787,5 +794,112 @@ describe("addSpouseInputFromFormData", () => {
       sequence: null,
       notes: null,
     });
+  });
+});
+
+describe("reading a correction to a union that already exists", () => {
+  it("ignores partner and sequence fields a hand-made POST slipped in", () => {
+    const form = new FormData();
+    form.set("unionId", UNION);
+    form.set("type", "marriage");
+    // None of these come from the edit form. A POST that invents them is not
+    // refused — it is simply not listened to.
+    form.set("partnerAId", THOMAS);
+    form.set("partnerBId", THOMAS);
+    form.set("sequence", "7");
+
+    const { unionId, union } = editUnionInputFromFormData(form);
+
+    expect(unionId).toBe(UNION);
+    expect(union).not.toHaveProperty("partnerAId");
+    expect(union).not.toHaveProperty("partnerBId");
+    expect(union).not.toHaveProperty("sequence");
+  });
+
+  it("keeps the stored partners, whatever the submission said", () => {
+    const form = new FormData();
+    form.set("unionId", UNION);
+    form.set("type", "marriage");
+    form.set("partnerBId", ROSE);
+    form.set("sequence", "7");
+
+    const { union } = editUnionInputFromFormData(form);
+    const result = validateUnionEdit(union, {
+      partnerAId: ROSE,
+      partnerBId: THOMAS,
+    });
+    if (!result.ok) throw new Error("expected valid");
+
+    /*
+      Half the safety property of the edit flow, checked where it is decided:
+      changing who is in a union is `detachPartner`'s job, and it is not
+      reachable by posting to this one.
+    */
+    expect(result.value.partnerAId).toBe(ROSE);
+    expect(result.value.partnerBId).toBe(THOMAS);
+  });
+
+  it("states no sequence at all, so nothing downstream can write one", () => {
+    const form = new FormData();
+    form.set("unionId", UNION);
+    form.set("type", "marriage");
+    form.set("sequence", "7");
+
+    const { union } = editUnionInputFromFormData(form);
+    const result = validateUnionEdit(union, {
+      partnerAId: ROSE,
+      partnerBId: THOMAS,
+    });
+    if (!result.ok) throw new Error("expected valid");
+
+    /*
+      The other half, and it is an absence rather than a value. `null` here is
+      `validateUnion`'s "not stated" — which on the insert path means "place
+      this union last" and would be a destructive thing to write onto a row
+      that already has a place. `updateUnion` writes only
+      `EDITABLE_UNION_FIELD_NAMES`, so it never reaches the column at all; this
+      is the assertion that fails if somebody later writes the whole value.
+    */
+    expect(result.value.sequence).toBeNull();
+    expect(EDITABLE_UNION_FIELD_NAMES).not.toContain("sequence");
+  });
+
+  it("applies every rule `validateUnion` applies", () => {
+    const form = new FormData();
+    form.set("unionId", UNION);
+    form.set("startDate", "1947-01-01");
+    form.set("endDate", "1912-01-01");
+    form.set("endReason", "divorce");
+
+    const { union } = editUnionInputFromFormData(form);
+    const result = validateUnionEdit(union, {
+      partnerAId: ROSE,
+      partnerBId: THOMAS,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.field)).toContain("endDate");
+  });
+
+  it("keeps a union with one partner valid, which is how half of them are recorded", () => {
+    const form = new FormData();
+    form.set("unionId", UNION);
+    form.set("type", "marriage");
+    // As `DateField` posts it: the anchor, plus the precision that says how
+    // much of it the author actually knew.
+    form.set("startDate", "1912-01-01");
+    form.set("startDatePrecision", "year");
+
+    const { union } = editUnionInputFromFormData(form);
+    const result = validateUnionEdit(union, {
+      partnerAId: ROSE,
+      partnerBId: null,
+    });
+    if (!result.ok) throw new Error("expected valid");
+
+    expect(result.value.partnerBId).toBeNull();
+    expect(result.value.startDate).toBe("1912-01-01");
+    expect(result.value.startDatePrecision).toBe("year");
   });
 });

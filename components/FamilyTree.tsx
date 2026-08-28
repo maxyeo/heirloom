@@ -25,6 +25,7 @@ import type { IndividualFormAction } from "@/components/AddPersonPanel";
 import { AddSpouseForm } from "@/components/AddSpouseForm";
 import { DescentEdge } from "@/components/DescentEdge";
 import { EditPerson } from "@/components/EditPersonForm";
+import { EditUnionForm } from "@/components/EditUnionForm";
 import { PersonEntry } from "@/components/PersonEntry";
 import { PersonPanel } from "@/components/PersonPanel";
 import { PersonPortrait } from "@/components/PersonPortrait";
@@ -41,8 +42,9 @@ import { type EntryLink, findEntry, unlinkedEntries } from "@/lib/entry-link";
 import type { PersonEntryActions } from "@/lib/entry-link-state";
 import type { FamilyGraph } from "@/lib/family-graph";
 import type { SetParentsFormAction } from "@/lib/parents-form-state";
-import { derivePersonDetail } from "@/lib/person-detail";
+import { derivePersonDetail, type PersonDetail } from "@/lib/person-detail";
 import type { AddSpouseFormAction } from "@/lib/spouse-form-state";
+import type { UpdateUnionFormAction } from "@/lib/union-edit-state";
 import type { ReorderUnionsFormAction } from "@/lib/union-order-state";
 import { PERSON_WIDTH, layoutFamilyGraph } from "@/lib/tree-layout";
 import { treeLegend } from "@/lib/tree-legend";
@@ -199,6 +201,12 @@ export interface FamilyTreeProps {
    */
   createIndividualAction?: IndividualFormAction;
   /**
+   * The edit-union action, for the correction dialogue the detail panel's
+   * spouse rows open. Optional for the same reason as every action around it:
+   * a canvas given none lists the unions without offering to fix them.
+   */
+  updateUnionAction?: UpdateUnionFormAction;
+  /**
    * The union reorder action (E3-T7), for the sequence editor in the detail
    * panel's footer. Optional for the same reason as every action above it: a
    * canvas given none is read-only, and the panel simply has no ordering
@@ -244,6 +252,7 @@ export function FamilyTree({
   addChildAction,
   setParentsAction,
   updateIndividualAction,
+  updateUnionAction,
   createIndividualAction,
   reorderUnionsAction,
   personLink,
@@ -273,6 +282,7 @@ export function FamilyTree({
         setParentsAction={setParentsAction}
         reorderUnionsAction={reorderUnionsAction}
         updateIndividualAction={updateIndividualAction}
+        updateUnionAction={updateUnionAction}
         personLink={personLink}
         entries={entries}
         entryActions={entryActions}
@@ -288,6 +298,7 @@ function FamilyTreeCanvas({
   setParentsAction,
   reorderUnionsAction,
   updateIndividualAction,
+  updateUnionAction,
   personLink,
   entries = EMPTY_ENTRIES,
   entryActions,
@@ -429,6 +440,24 @@ function FamilyTreeCanvas({
     addingSpouseFor !== null && addingSpouseFor === selectedId;
 
   /**
+   * Which union's correction dialogue is open, by id.
+   *
+   * An id rather than a boolean for the reason `addingSpouseFor` is one, with
+   * one addition: the union has to be *found* in the graph on every render, so
+   * a union deleted or merged away in another tab closes this dialogue when
+   * the revalidation lands rather than leaving a form open over a row that is
+   * no longer there. The lookup below is the whole of that behaviour.
+   */
+  const [editingUnionId, setEditingUnionId] = useState<string | null>(null);
+  const editingUnion = useMemo(
+    () =>
+      editingUnionId === null
+        ? null
+        : (graph.unions.find((union) => union.id === editingUnionId) ?? null),
+    [graph.unions, editingUnionId],
+  );
+
+  /**
    * The same again for the add-child flow (E3-T5), held as its own id rather
    * than as a mode of the one above. Two independent pieces of state cannot
    * both be open — the render below picks one — and keeping them apart means
@@ -506,6 +535,39 @@ function FamilyTreeCanvas({
     () => (selectedId === null ? null : nodeElement(selectedId)),
     [selectedId, nodeElement],
   );
+
+  /**
+   * "Focus returns to the Edit button the correction dialogue came from."
+   *
+   * Without it a keyboard author closes the dialogue and lands on `<body>`,
+   * behind the very panel they were reading, with no way back but tabbing in
+   * from the top of the document — the gap `EditPersonForm` closes by holding
+   * a ref to its own trigger. This one cannot: the trigger belongs to
+   * `PersonPanel`, which renders a route in and knows nothing about the
+   * dialogue behind it. So the button is found the way a node is, by the id
+   * they both hold.
+   *
+   * Resolved when the dialogue goes rather than held as an element, because
+   * the panel behind it re-renders on every revalidation and the button that
+   * opened this is not the same DOM node it was.
+   *
+   * Scanned and compared rather than interpolated into an attribute selector,
+   * for the reason `nodeElement` gives above: an id reaches this from the
+   * database, and building a selector out of one means escaping it correctly
+   * forever. `CSS.escape` would be the escape, and jsdom implements no `CSS`
+   * at all — so the version of this that read well was one that threw
+   * `TypeError` in every test that closed the dialogue, which is to say in
+   * every test anybody would write for this behaviour. Reading
+   * `dataset.editUnion` off each candidate has nothing to escape.
+   */
+  const returnFocusToEditButton = useCallback((): HTMLElement | null => {
+    if (editingUnionId === null) return null;
+    const buttons = document.querySelectorAll<HTMLElement>("[data-edit-union]");
+    for (const button of buttons) {
+      if (button.dataset.editUnion === editingUnionId) return button;
+    }
+    return null;
+  }, [editingUnionId]);
 
   /**
    * Selecting somebody takes the add-person panel off the right-hand column.
@@ -856,6 +918,7 @@ function FamilyTreeCanvas({
           onAddSpouse={
             addSpouseAction ? () => setAddingSpouseFor(detail.id) : undefined
           }
+          onEditUnion={updateUnionAction ? setEditingUnionId : undefined}
           onAddChild={
             addChildAction ? () => setAddingChildFor(detail.id) : undefined
           }
@@ -864,6 +927,58 @@ function FamilyTreeCanvas({
           }
         />
       )}
+
+      {/*
+        The correction dialogue, a sibling of the panel rather than something
+        the panel renders. It is a modal over the whole canvas — the same
+        surface `EditPerson` opens — and the panel is deliberately a read-only
+        record that offers routes in rather than growing forms (see
+        `components/PersonPanel.tsx`).
+
+        Rendered outside the three-way branch above, so that opening it does
+        not replace the record the author is correcting *from*: the union's
+        dates stay legible behind the backdrop, which is what the author is
+        checking their correction against.
+
+        `editingUnion` is looked up from the graph on every render, so a
+        revalidation that removes the union — a partner detached, two unions
+        merged, in this tab or another — takes this dialogue with it rather
+        than leaving a form open over a row that has gone. `detail` is required
+        for the same reason `addingSpouseFor` is compared against `selectedId`:
+        a dialogue is about the record it was opened from, and closing that
+        record closes it.
+      */}
+      {detail && editingUnion && updateUnionAction ? (
+        <EditUnionForm
+          /*
+            A different union is a different record to correct, so the form
+            starts over rather than carrying one union's half-finished edits
+            onto another.
+          */
+          key={editingUnion.id}
+          union={editingUnion}
+          title={unionTitle(detail, editingUnion.id)}
+          action={updateUnionAction}
+          onClose={() => setEditingUnionId(null)}
+          returnFocus={returnFocusToEditButton}
+        />
+      ) : null}
     </div>
   );
+}
+
+/**
+ * How the correction dialogue names the union it is about: "Rose and Walter",
+ * or "Rose and an unrecorded partner".
+ *
+ * Built from the detail the panel is already showing rather than from the
+ * graph, because the panel is what the author is looking at — the names in the
+ * heading are the names in the list they clicked. A union that has somehow
+ * left the list falls back to the person whose panel this is, which is the one
+ * name that is certainly still true.
+ */
+function unionTitle(detail: PersonDetail, unionId: string): string {
+  const spouse = detail.spouses.find((link) => link.unionId === unionId);
+  if (!spouse) return `${detail.name}'s union`;
+  return `${detail.name} and ${spouse.person?.name ?? "an unrecorded partner"}`;
 }

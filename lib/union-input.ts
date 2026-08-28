@@ -821,3 +821,174 @@ export function validateAddSpouse(input: AddSpouseInput): AddSpouseValidation {
     union: unionChecked.value,
   };
 }
+
+/**
+ * The fields the edit-union flow lets an author change.
+ *
+ * `UnionFields` minus the three references nobody types into a form. That is
+ * not a convenience — it is the whole safety property of the edit flow, and it
+ * is stated as a type so the compiler keeps it:
+ *
+ * - **`partnerAId` / `partnerBId`** — who is in a union is not an edit, it is
+ *   a different union. Changing a partner would silently move every child
+ *   hanging off the row to a family they were not born into, which is what
+ *   `detachPartner` and `lib/union-merge.ts` exist to do deliberately and with
+ *   a confirmation in front of them.
+ * - **`sequence`** — the display order belongs to E3-T7's reorder control,
+ *   which restates one person's whole list at once so the numbers stay
+ *   coherent. A form posting a single number would renumber a union out from
+ *   under the sibling it was ordered against.
+ *
+ * A form that simply omitted them would be worse than one that excludes them:
+ * `unionInputFromFormData` reads every key it knows, and a missing input is
+ * `null` rather than absent — so an edit submission run through it would
+ * *clear* both partners and reset the order, and `validateUnion` would refuse
+ * it with "a union needs at least one partner" against a field the author
+ * cannot see. Naming the editable set is what stops that being possible.
+ */
+export type EditableUnionField = Exclude<
+  UnionField,
+  "partnerAId" | "partnerBId" | "sequence"
+>;
+
+/** A union's editable details as they arrive: every value `unknown`. */
+export type EditableUnionInput = {
+  [Field in EditableUnionField]?: unknown;
+};
+
+/**
+ * Every field an edit is entitled to write, for the callers that have to
+ * enumerate them: the no-op check and the update statement in
+ * `lib/save-union.ts`.
+ *
+ * Written as the keys of a `Record` rather than as a bare array so that it is
+ * exhaustive *by construction*: the object literal cannot omit an
+ * `EditableUnionField` and cannot invent one, both of which `satisfies`
+ * reports as type errors here. A plain list would compile perfectly well while
+ * quietly no longer looking at a column somebody added — and the symptom would
+ * be an edit that reports "nothing changed" and discards itself, or one that
+ * silently declines to save a field the form is showing.
+ *
+ * The cast is `Object.keys` returning `string[]`, a known gap in its
+ * signature; the literal is right above it, so the narrower type is a fact
+ * rather than a hope.
+ */
+export const EDITABLE_UNION_FIELD_NAMES = Object.keys({
+  type: true,
+  startDate: true,
+  startDateQualifier: true,
+  startDatePrecision: true,
+  startDateUpper: true,
+  startDateUpperPrecision: true,
+  endDate: true,
+  endDateQualifier: true,
+  endDatePrecision: true,
+  endDateUpper: true,
+  endDateUpperPrecision: true,
+  endReason: true,
+  notes: true,
+} satisfies Record<EditableUnionField, true>) as EditableUnionField[];
+
+/**
+ * One submission of the edit-union form, still untrusted.
+ *
+ * `unionId` is a reference the form is entitled to send — the row being
+ * corrected, exactly as the edit-person form sends an `id`. Everything else is
+ * the author's change. Whether the id names a union that still exists is a
+ * database question and belongs in `lib/save-union.ts`.
+ */
+export type EditUnionInput = {
+  /** The union being corrected. */
+  unionId: unknown;
+  /** Its editable fields. */
+  union: EditableUnionInput;
+};
+
+/**
+ * Who is in the union, read from the row as it stands.
+ *
+ * Supplied by `lib/save-union.ts` from the stored union rather than by the
+ * submission, which is what makes "an edit cannot change who is in a union" a
+ * property of the code rather than of the form's markup.
+ *
+ * They are here because they are *validated* — "a union needs at least one
+ * partner" has to be asked of the record that would actually exist, and the
+ * request does not carry the partners at all. They are not here to be written:
+ * `updateUnion` writes only `EDITABLE_UNION_FIELD_NAMES`, so a partner
+ * detached in another tab between this form opening and its save landing is
+ * not resurrected by a correction to a date.
+ *
+ * `sequence` is deliberately not among them, and that is a change of mind
+ * worth recording. Passing it through the validator ran
+ * `MAX_UNION_SEQUENCE` — a ceiling on what an *author may type* — over a
+ * number the author cannot see and did not choose, which
+ * `resequenceUnions` is documented as being allowed to exceed
+ * (`lib/union-order.ts`). The effect would have been that a person with more
+ * than a thousand unions could never have any of them corrected again, refused
+ * over a field with no control on screen. The edit flow neither reads nor
+ * writes the column, so the honest thing is for it not to mention it.
+ */
+export type UnionAnchors = Pick<UnionFields, "partnerAId" | "partnerBId">;
+
+/**
+ * Pull one edit-union submission out of a form.
+ *
+ * Reads only the editable fields, so a hand-made POST that includes
+ * `partnerAId` or `sequence` is not refused — it is simply not listened to.
+ * `validateUnionEdit` then puts the stored values back in their place.
+ */
+export function editUnionInputFromFormData(form: FormData): EditUnionInput {
+  return {
+    unionId: form.get("unionId"),
+    union: {
+      type: form.get("type"),
+      startDate: form.get("startDate"),
+      startDateQualifier: form.get("startDateQualifier"),
+      startDatePrecision: form.get("startDatePrecision"),
+      startDateUpper: form.get("startDateUpper"),
+      startDateUpperPrecision: form.get("startDateUpperPrecision"),
+      endDate: form.get("endDate"),
+      endDateQualifier: form.get("endDateQualifier"),
+      endDatePrecision: form.get("endDatePrecision"),
+      endDateUpper: form.get("endDateUpper"),
+      endDateUpperPrecision: form.get("endDateUpperPrecision"),
+      endReason: form.get("endReason"),
+      notes: form.get("notes"),
+    },
+  };
+}
+
+/**
+ * Check one correction to a union that already exists.
+ *
+ * Every rule is `validateUnion`'s — this adds none and relaxes none. A
+ * marriage that ends before it starts is refused here for the same reason and
+ * in the same words as one entered that way in the first place, and a rule
+ * added there arrives here without this function being touched. What this does
+ * is decide *what a union being edited consists of*: the author's five fields,
+ * plus the two partner columns taken from the row rather than from the
+ * request.
+ *
+ * The anchors go last in the spread, so a hand-made POST that smuggles a
+ * `partnerBId` into `input` is overridden rather than believed.
+ *
+ * `sequence` comes back `null` here — "not stated" — because nothing supplies
+ * one and nothing asks. That null means "place this union last" on the
+ * *insert* path and would be a destructive thing to write onto an existing
+ * row; it is never written, because `updateUnion` writes only
+ * `EDITABLE_UNION_FIELD_NAMES` and compares only those. Anything that starts
+ * writing the whole of this value has to answer for the column first.
+ *
+ * Pure, like everything else in this module: the anchors are passed in, not
+ * looked up.
+ *
+ * @param input the editable fields as they arrived, untrusted and untyped
+ * @param anchors the partner columns, read from the stored row
+ * @returns the cleaned record, or every problem found
+ */
+export function validateUnionEdit(
+  input: EditableUnionInput,
+  anchors: UnionAnchors,
+): UnionValidation {
+  return validateUnion({ ...input, ...anchors });
+}

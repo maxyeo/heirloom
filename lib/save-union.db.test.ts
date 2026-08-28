@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db, schema } from "@/db";
 import { createIndividual } from "@/lib/save-individual";
-import { addSpouse } from "@/lib/save-union";
+import { addSpouse, updateUnion } from "@/lib/save-union";
 import type { AddSpouseInput } from "@/lib/union-input";
 import { FIXTURE_MEMBER } from "@/test/people-fixtures";
 
@@ -414,6 +414,7 @@ describe("date ranges (YEO-88)", () => {
           endDatePrecision: "month",
           endDateUpper: "1939-01-01",
           endDateUpperPrecision: "year",
+          notes: null,
           endReason: "divorce",
         },
       }),
@@ -435,6 +436,7 @@ describe("date ranges (YEO-88)", () => {
       endDatePrecision: "month",
       endDateUpper: "1939-01-01",
       endDateUpperPrecision: "year",
+      notes: null,
       endReason: "divorce",
     });
   });
@@ -465,6 +467,254 @@ describe("date ranges (YEO-88)", () => {
       startDateUpperPrecision: "day",
       endDateUpper: null,
       endDateUpperPrecision: "day",
+      notes: null,
     });
+  });
+});
+
+/**
+ * Database tests for correcting a union.
+ *
+ * The rules are `validateUnion`'s and are tested without a database in
+ * `lib/union-input.test.ts`; the form is tested in
+ * `components/EditUnionForm.test.tsx`. What is left here is what only Postgres
+ * can settle, and it is most of what the flow is actually promising:
+ *
+ * - a corrected date is on the row afterwards, and the row is the *same* row —
+ *   nothing about repairing a marriage year may cost a union its identity, and
+ *   with it the children hanging off it;
+ * - the partners and the sequence survive a submission that tries to move
+ *   them, which is what makes "an edit cannot change who is in a union" true
+ *   of any caller rather than of one form's markup;
+ * - a submission that changes nothing is reported as changing nothing, which
+ *   is what stops a form opened and closed from throwing a cache entry away;
+ * - a union deleted between the form opening and the save landing is a status
+ *   rather than an update that silently matches no rows.
+ */
+describe("updateUnion", () => {
+  /** Marry two fresh fixture people and hand back the union's id. */
+  async function marriage(union: AddSpouseInput["union"] = {}) {
+    const rose = await makePerson("Rose");
+    const thomas = await makePerson("Thomas");
+    const { unionId } = await add(
+      submission({ personId: rose, partnerId: thomas, union }),
+    );
+    return { rose, thomas, unionId };
+  }
+
+  async function read(unionId: string) {
+    const [row] = await db
+      .select()
+      .from(schema.unions)
+      .where(eq(schema.unions.id, unionId));
+    return row;
+  }
+
+  it("corrects a marriage year in place, without writing a new union", async () => {
+    const { unionId } = await marriage({
+      type: "marriage",
+      startDate: "1921-06-04",
+      endReason: "ongoing",
+    });
+
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      startDate: "1912-06-04",
+      endReason: "ongoing",
+    });
+
+    expect(result).toEqual({ status: "updated", unionId });
+
+    const row = await read(unionId);
+    expect(row.startDate).toBe("1912-06-04");
+    // The same row, which is the whole reason this exists rather than a
+    // delete and a re-add: every `union_children` link points at this id.
+    expect(row.id).toBe(unionId);
+  });
+
+  it("keeps a date's qualifier and precision together with it", async () => {
+    const { unionId } = await marriage({ startDate: "1912-06-04" });
+
+    await updateUnion(unionId, {
+      startDate: "1912-01-01",
+      startDateQualifier: "about",
+      startDatePrecision: "year",
+      endReason: "ongoing",
+    });
+
+    const row = await read(unionId);
+    expect(row).toMatchObject({
+      startDate: "1912-01-01",
+      startDateQualifier: "about",
+      startDatePrecision: "year",
+    });
+  });
+
+  it("records a cleared date as unknown rather than as blank", async () => {
+    const { unionId } = await marriage({
+      startDate: "1912-06-04",
+      endDate: "1947-06-11",
+      endReason: "death",
+    });
+
+    await updateUnion(unionId, {
+      startDate: "1912-06-04",
+      endDate: "",
+      endReason: "death",
+    });
+
+    const row = await read(unionId);
+    expect(row.endDate).toBeNull();
+    // The reason survives the date going: the family remembers he died long
+    // after the year is lost, which is the ordinary state of an old record.
+    expect(row.endReason).toBe("death");
+  });
+
+  it("refuses to move the partners, whatever the caller sends", async () => {
+    const { rose, thomas, unionId } = await marriage({ type: "marriage" });
+    const walter = await makePerson("Walter");
+
+    await updateUnion(unionId, {
+      type: "marriage",
+      endReason: "ongoing",
+      // Not fields of `EditableUnionInput`, so this is what a hand-made POST
+      // looks like rather than what the form can do.
+      ...({ partnerAId: walter, partnerBId: walter, sequence: 9 } as object),
+    });
+
+    const row = await read(unionId);
+    expect(row.partnerAId).toBe(rose);
+    expect(row.partnerBId).toBe(thomas);
+    expect(row.sequence).toBe(0);
+  });
+
+  it("leaves a second marriage's place in the order alone", async () => {
+    const rose = await makePerson("Rose");
+    const first = await makePerson("Thomas");
+    const second = await makePerson("Walter");
+
+    await add(submission({ personId: rose, partnerId: first, union: {} }));
+    const { unionId } = await add(
+      submission({ personId: rose, partnerId: second, union: {} }),
+    );
+
+    await updateUnion(unionId, { type: "marriage", endReason: "ongoing" });
+
+    const [earlier, later] = await unionsFor(rose);
+    expect(earlier.sequence).toBe(0);
+    expect(later.sequence).toBe(1);
+    expect(later.id).toBe(unionId);
+  });
+
+  it("leaves a sequence it could never have produced exactly where it is", async () => {
+    const { unionId } = await marriage({ type: "marriage" });
+
+    /*
+      Above `MAX_UNION_SEQUENCE`, which `resequenceUnions` is documented as
+      being allowed to exceed for somebody with more than a thousand and one
+      unions (`lib/union-order.ts`). The schema permits it and nobody has had
+      it — but it is the shape that catches two things at once, and both were
+      real:
+
+      - a correction that round-tripped the column through the validator ran a
+        ceiling on *what an author may type* over a number the author cannot
+        see, so this union could never have been corrected again — refused
+        over a field with no control on screen;
+      - a correction that restated the column from the row it read would, in
+        the window between its own two statements, write back whatever
+        `reorderUnions` or `mergeUnions` had changed underneath it.
+
+      `updateUnion` names thirteen columns and this is not one of them, which
+      is what makes both impossible rather than unlikely. The interleaving
+      itself cannot be staged from here — `updateUnion` owns its transaction —
+      so what is asserted is the property that removes the race.
+    */
+    await db
+      .update(schema.unions)
+      .set({ sequence: 1500 })
+      .where(eq(schema.unions.id, unionId));
+
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      startDate: "1912-06-04",
+      endReason: "ongoing",
+    });
+
+    expect(result).toEqual({ status: "updated", unionId });
+
+    const row = await read(unionId);
+    expect(row.startDate).toBe("1912-06-04");
+    expect(row.sequence).toBe(1500);
+  });
+
+  it("reports a submission that would not move the row", async () => {
+    const { unionId } = await marriage({
+      type: "marriage",
+      startDate: "1912-06-04",
+      endReason: "ongoing",
+    });
+
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      startDate: "1912-06-04",
+      endReason: "ongoing",
+    });
+
+    expect(result).toEqual({ status: "unchanged", unionId });
+  });
+
+  it("counts a note cleared back to blank as unchanged", async () => {
+    const { unionId } = await marriage({ type: "marriage" });
+
+    // The note was never set, so an empty box is the value that is already
+    // stored — an edit form opened and closed must not report a save.
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      endReason: "ongoing",
+      notes: "   ",
+    });
+
+    expect(result.status).toBe("unchanged");
+  });
+
+  it("refuses a correction that contradicts itself, and writes nothing", async () => {
+    const { unionId } = await marriage({
+      type: "marriage",
+      startDate: "1912-06-04",
+      endReason: "ongoing",
+    });
+
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      startDate: "1947-06-11",
+      endDate: "1912-06-04",
+      endReason: "divorce",
+    });
+
+    expect(result.status).toBe("invalid");
+
+    const row = await read(unionId);
+    expect(row.startDate).toBe("1912-06-04");
+    expect(row.endDate).toBeNull();
+  });
+
+  it("reports a union that has been deleted rather than updating nothing", async () => {
+    const { unionId } = await marriage({ type: "marriage" });
+    await db.delete(schema.unions).where(eq(schema.unions.id, unionId));
+
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      endReason: "ongoing",
+    });
+
+    expect(result).toEqual({ status: "not-found" });
+  });
+
+  it("reports an id that is not a union id at all, rather than throwing", async () => {
+    // A non-UUID reaches Postgres as `invalid input syntax for type uuid` —
+    // a thrown error rather than a query returning no rows. See `isRowId`.
+    const result = await updateUnion("not-a-uuid", { type: "marriage" });
+
+    expect(result).toEqual({ status: "not-found" });
   });
 });

@@ -122,6 +122,7 @@ function union(
     endDatePrecision: "day",
     endDateUpper: null,
     endDateUpperPrecision: "day",
+    notes: null,
     ...overrides,
   } satisfies FamilyGraph["unions"][number];
 }
