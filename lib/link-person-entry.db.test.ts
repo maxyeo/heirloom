@@ -321,3 +321,74 @@ describe("deleting an entry", () => {
     expect(person.pageId).toBeNull();
   });
 });
+
+/**
+ * Retired entries and the person link (E1-T10, `YEO-122`).
+ *
+ * Two halves, and they point in opposite directions on purpose:
+ *
+ *   - **`setPersonEntry` refuses.** A retired entry is not one to attach
+ *     somebody to. `listEntryLinks` already keeps it out of the picker, so
+ *     nothing on screen offers it — which is exactly why the refusal has to be
+ *     in the transaction too: a panel opened before the retirement, or a direct
+ *     POST, is a caller the picker never saw.
+ *   - **A retirement leaves an existing link alone.** That is the ticket's last
+ *     acceptance criterion, and the reassuring half of the confirmation copy:
+ *     the person's link survives the retirement and comes back with it.
+ *
+ * The second is a property of the write rather than of anything here — one
+ * `UPDATE` against two columns of `pages` cannot reach `individuals` — but it
+ * is the kind of property that is asserted by the *absence* of something, so
+ * it is worth an assertion rather than a sentence.
+ */
+describe("a retired entry", () => {
+  async function retire(pageId: string) {
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, pageId));
+  }
+
+  it("cannot be linked to a person", async () => {
+    await retire(LOOSE_PAGE);
+
+    await expect(
+      setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE }),
+    ).resolves.toEqual({ status: "entry-not-found" });
+
+    // And nothing was written on the way to the refusal.
+    expect((await readPerson(ROSE)).pageId).toBeNull();
+  });
+
+  it("keeps a link it already had, and gives it back on a restore", async () => {
+    const linked = await setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE });
+    expect(linked.status).toBe("linked");
+
+    await retire(LOOSE_PAGE);
+
+    // The criterion: `individuals.page_id` is left alone.
+    expect((await readPerson(ROSE)).pageId).toBe(LOOSE_PAGE);
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(eq(schema.pages.id, LOOSE_PAGE));
+
+    // And it comes back with the entry, because it never went anywhere.
+    expect((await readPerson(ROSE)).pageId).toBe(LOOSE_PAGE);
+  });
+
+  it("can still be unlinked from, so nobody is stuck to a tombstone", async () => {
+    // The direction that must keep working. `setPersonEntry(null)` touches
+    // `pages` not at all, so a retirement cannot strand a person on an entry
+    // they no longer want to be attached to.
+    await setPersonEntry({ personId: ROSE, pageId: LOOSE_PAGE });
+    await retire(LOOSE_PAGE);
+
+    await expect(
+      setPersonEntry({ personId: ROSE, pageId: null }),
+    ).resolves.toEqual({ status: "unlinked" });
+
+    expect((await readPerson(ROSE)).pageId).toBeNull();
+  });
+});

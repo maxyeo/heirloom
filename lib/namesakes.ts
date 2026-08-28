@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { NAMESAKE_LIMIT, type NamesakePerson } from "@/lib/hatnote";
+import { LIVE_PAGES } from "@/lib/live-pages";
 
 /**
  * Who else is called this (E11-T9, `YEO-79`) — the read behind the automatic
@@ -58,6 +59,26 @@ export const NO_NAMESAKES: Namesakes = { people: [], extra: 0 };
  * hide — they are exactly the person a red link should invite somebody to
  * write about.
  *
+ * ## A retired entry joins to nothing (E1-T10, `YEO-122`)
+ *
+ * `LIVE_PAGES` sits in the `ON` clause of that left join, and that is the one
+ * placement which gives the right answer rather than merely the right rows.
+ * The hatnote is a claim about *people*, not about entries: "For other people
+ * named Rose Whitfield, see…" is still true of a Rose whose entry has been
+ * retired, so she goes on being named. What she loses is the link — and a left
+ * join that finds no live row hands back a null `slug`, which is byte for byte
+ * the shape a namesake nobody has written about arrives in, and which
+ * `lib/hatnote.ts` already knows how to render as plain text.
+ *
+ * In the `WHERE` it would happen to work, for a reason nobody reading it could
+ * safely rely on: `deleted_at is null` is *true* of the all-null row a left
+ * join miss produces, so the never-written-about namesake would survive by
+ * null propagation rather than by intent. One rewrite of the predicate into a
+ * comparison, or one change of this join to an inner one, and every namesake
+ * with no entry at all would silently disappear from every hatnote. The `ON`
+ * clause says what is actually meant: join me this person's entry, if it is a
+ * live one.
+ *
  * ## Why the match is exact, when search is not
  *
  * `lib/people-search.ts` tolerates spelling — "Catherine" finds a recorded
@@ -106,7 +127,10 @@ export async function findNamesakes(
       slug: schema.pages.slug,
     })
     .from(schema.individuals)
-    .leftJoin(schema.pages, eq(schema.individuals.pageId, schema.pages.id))
+    .leftJoin(
+      schema.pages,
+      and(eq(schema.individuals.pageId, schema.pages.id), LIVE_PAGES),
+    )
     .where(
       and(
         eq(schema.individuals.givenName, subject.givenName),

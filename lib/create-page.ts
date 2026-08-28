@@ -1,5 +1,8 @@
+import { and, eq } from "drizzle-orm";
+
 import { db, schema } from "@/db";
 import { RESERVED_SLUGS, slugCandidate, slugFromTitle } from "@/lib/entry-slug";
+import { RETIRED_PAGES } from "@/lib/live-pages";
 import { type Transaction, writeRevision } from "@/lib/save-page";
 
 /**
@@ -39,14 +42,40 @@ export type CreatePageInput = {
 /**
  * Every way creating an entry can end.
  *
- * There is no `slug-taken` case, deliberately — the ticket is explicit that a
- * URL needing disambiguation is disambiguated silently, so a collision is not
- * an outcome the author is ever shown. `empty-title` is the only refusal, and
- * it is one the form can prevent.
+ * There is no `slug-taken` case, deliberately — E1-T8 is explicit that a URL
+ * needing disambiguation is disambiguated silently, so an ordinary collision
+ * is not an outcome the author is ever shown.
  */
 export type CreatePageResult =
   | { status: "created"; pageId: string; slug: string; revisionId: string }
-  | { status: "empty-title" };
+  | { status: "empty-title" }
+  | {
+      /**
+       * There is a **retired** entry at the address this title derives (§4 of
+       * E1-T10, `YEO-122`), so nothing was created, and the author is offered
+       * that entry back instead.
+       *
+       * This is the one exception to the rule above, and it is an exception
+       * because it is not really a collision. An ordinary one is two different
+       * subjects wanting one address — Rose Hall the house and Rose Hall the
+       * person — and disambiguating silently is right, because both entries
+       * should exist and both will. A retired entry at the address is the
+       * *same subject*, already written, one press away from coming back with
+       * its whole history. Minting `rose-whitfield-2` beside it would hand the
+       * author a near-twin of something they cannot see, were never told
+       * about, and would go on not knowing about while they wrote the entry a
+       * second time.
+       *
+       * It carries the retired entry's own title rather than the one just
+       * typed, so the offer can name what is actually there. Those two can
+       * differ — an entry renamed after it was created keeps its original
+       * address — and which of them is true is exactly the fact that decides
+       * whether the author wants it back.
+       */
+      status: "retired-entry-exists";
+      slug: string;
+      title: string;
+    };
 
 /**
  * How many addresses to try before giving up.
@@ -104,6 +133,57 @@ export async function createPageIn(
   if (!title) return { status: "empty-title" };
 
   const base = slugFromTitle(title);
+
+  /**
+   * Before the loop, and asked about `base` alone (§4 of E1-T10, `YEO-122`).
+   *
+   * **Before**, because the loop's whole design is not to look first: the
+   * unique index decides whether an address is free, and a `select` in front
+   * of an `insert` is the race the note below exists to avoid. That argument
+   * is about *whether the insert will succeed*, and this question is a
+   * different one — is the author about to write a second copy of an entry
+   * that already exists? — with a different answer if it is wrong. A lost race
+   * here costs a duplicate that is refused a moment later by the index;
+   * the retired row it might miss is not a correctness problem but a missed
+   * offer, and the author lands in an editor either way. So this is a plain
+   * read, inside the caller's transaction, and the loop's race-free insert is
+   * untouched behind it.
+   *
+   * **`base` alone**, and not each candidate the loop goes on to try. A
+   * retired entry at `rose-whitfield-2` is not the entry somebody typing "Rose
+   * Whitfield" is about to duplicate — it is a *third* Rose, disambiguated
+   * away from two others at some point in the past, and offering to restore it
+   * would be offering back something the author has never seen and did not ask
+   * about. The collision worth naming is the one at the address the title
+   * actually derives.
+   *
+   * A *live* entry at `base` is the ordinary collision and is not this: it
+   * falls through, the insert is refused by the index, and the loop finds the
+   * next address exactly as it always has.
+   *
+   * **The window, stated rather than hidden.** This read takes no lock, so a
+   * retirement that commits between it and the insert below still produces
+   * `rose-whitfield-2`. That is acceptable, and it is worth writing down why:
+   * the offer is a courtesy in the sense `lib/restore-preview.ts` uses the
+   * word, and the worst it can do by losing the race is behave exactly as this
+   * function behaved before E1-T10 existed. Nothing is corrupted and no
+   * constraint is at risk — the insert is still the index's decision. Closing
+   * the window would mean locking a row that may not exist, on every creation,
+   * to improve a suggestion.
+   */
+  const [retired] = await tx
+    .select({ slug: schema.pages.slug, title: schema.pages.title })
+    .from(schema.pages)
+    .where(and(eq(schema.pages.slug, base), RETIRED_PAGES))
+    .limit(1);
+
+  if (retired) {
+    return {
+      status: "retired-entry-exists",
+      slug: retired.slug,
+      title: retired.title,
+    };
+  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const slug = slugCandidate(base, attempt);

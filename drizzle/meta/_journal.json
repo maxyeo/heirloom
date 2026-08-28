@@ -92,6 +92,13 @@
       "when": 1787781249420,
       "tag": "0012_revision_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787886772169,
+      "tag": "0013_retire_entry",
+      "breakpoints": true
     }
   ]
 }

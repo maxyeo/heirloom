@@ -264,3 +264,144 @@ describe("createPage", () => {
     });
   });
 });
+
+/**
+ * The retired entry at the derived address (§4 of E1-T10, `YEO-122`).
+ *
+ * ## What this is protecting against
+ *
+ * A tombstone keeps its address — that is what makes a restore put the entry
+ * back where it was — and the `slug` unique constraint stayed. So without this
+ * check, an author who retires "Rose Whitfield" and later starts an entry with
+ * that title again walks into the collision loop above, which does its job
+ * silently and correctly and produces `rose-whitfield-2`. They are then
+ * writing a near-twin of an entry that is still in the database, one press
+ * from coming back with its whole history, and nothing has told them so.
+ *
+ * The second assertion in each case is the one that matters as much as the
+ * status: **no row is inserted**. A refusal that had already minted the
+ * duplicate before reporting would satisfy the first half and leave the exact
+ * mess this exists to prevent.
+ */
+describe("a retired entry at the address", () => {
+  /** Create an entry, then retire it in place, and hand back its slug. */
+  async function retiredEntry(suffix: string): Promise<string> {
+    const created = await createPage({
+      title: title(suffix),
+      createdBy: AUTHOR,
+    });
+    expect(created.status).toBe("created");
+    if (created.status !== "created") throw new Error("unreachable");
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, created.pageId));
+
+    return created.slug;
+  }
+
+  /** How many entries this file's prefix currently holds. */
+  async function fixtureCount(): Promise<number> {
+    const rows = await db
+      .select({ id: schema.pages.id })
+      .from(schema.pages)
+      .where(like(schema.pages.slug, `${PREFIX}%`));
+    return rows.length;
+  }
+
+  it("offers the retired entry back instead of minting a near-twin", async () => {
+    const slug = await retiredEntry("Rose Whitfield");
+
+    const again = await createPage({
+      title: title("Rose Whitfield"),
+      createdBy: AUTHOR,
+    });
+
+    // Named by the retired entry's *own* title, which is what lets the offer
+    // say what is actually there — see `CreatePageResult`.
+    expect(again).toEqual({
+      status: "retired-entry-exists",
+      slug,
+      title: title("Rose Whitfield"),
+    });
+  });
+
+  it("inserts nothing when it refuses", async () => {
+    await retiredEntry("Rose Whitfield");
+    const before = await fixtureCount();
+
+    await createPage({ title: title("Rose Whitfield"), createdBy: AUTHOR });
+
+    // Specifically: no `-2`. This is the failure the whole check exists to
+    // prevent, and a status alone would not have caught it.
+    expect(await fixtureCount()).toBe(before);
+  });
+
+  it("names the retired entry's title, not the one just typed", async () => {
+    // The two can differ: an entry renamed after it was created keeps its
+    // original address, and which title is true is the fact that decides
+    // whether the author wants it back.
+    const slug = await retiredEntry("Rose Whitfield");
+    await db
+      .update(schema.pages)
+      .set({ title: title("Rose Whitfield of Hale") })
+      .where(eq(schema.pages.slug, slug));
+
+    const again = await createPage({
+      title: title("Rose Whitfield"),
+      createdBy: AUTHOR,
+    });
+
+    expect(again).toMatchObject({
+      status: "retired-entry-exists",
+      title: title("Rose Whitfield of Hale"),
+    });
+  });
+
+  it("still disambiguates silently around a live entry", async () => {
+    // The ordinary collision is untouched: two different subjects wanting one
+    // address is exactly the case E1-T8 disambiguates without asking, and the
+    // new branch must not have swallowed it.
+    await createPage({ title: title("Rose Hall"), createdBy: AUTHOR });
+
+    const second = await createPage({
+      title: title("Rose Hall"),
+      createdBy: AUTHOR,
+    });
+
+    expect(second.status).toBe("created");
+    if (second.status !== "created") return;
+    expect(second.slug).toBe(`${slugFromTitle(title("Rose Hall"))}-2`);
+  });
+
+  it("ignores a retired entry at a disambiguated address", async () => {
+    /**
+     * `rose-hall` live, `rose-hall-2` retired, and a third "Rose Hall"
+     * started. The author is writing about a *third* Rose, and the retired
+     * `-2` is a second one they have never seen — offering to restore it would
+     * be offering back somebody else's entry because a suffix matched. Only
+     * the base address is asked about; see `createPageIn`.
+     */
+    await createPage({ title: title("Rose Hall"), createdBy: AUTHOR });
+    const second = await createPage({
+      title: title("Rose Hall"),
+      createdBy: AUTHOR,
+    });
+    if (second.status !== "created") throw new Error("unreachable");
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, second.pageId));
+
+    const third = await createPage({
+      title: title("Rose Hall"),
+      createdBy: AUTHOR,
+    });
+
+    expect(third.status).toBe("created");
+    if (third.status !== "created") return;
+    expect(third.slug).toBe(`${slugFromTitle(title("Rose Hall"))}-3`);
+  });
+});

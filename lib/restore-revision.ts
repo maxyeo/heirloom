@@ -103,6 +103,16 @@ export type RestoreRevisionResult =
     }
   | { status: "unchanged"; pageId: string }
   | { status: "empty-title" }
+  | {
+      /**
+       * The entry exists and has been retired (E1-T10, `YEO-122`), so this
+       * restore wrote nothing. The same member, with the same name and the
+       * same argument, as `SavePageResult`'s — the two write paths into an
+       * entry refuse the same condition, and refusing it under two different
+       * names would be two sentences for the copy to keep in step.
+       */
+      status: "retired";
+    }
   | { status: "not-found" };
 
 /**
@@ -151,13 +161,41 @@ export async function restoreRevision(
         title: schema.pages.title,
         bodyHtml: schema.pages.bodyHtml,
         hatnote: schema.pages.hatnote,
+        deletedAt: schema.pages.deletedAt,
       })
       .from(schema.pages)
       .where(eq(schema.pages.slug, input.slug))
       .for("update");
 
-    // The slug holds no row: deleted, or POSTed at directly.
+    // The slug holds no row at all: never written, or POSTed at directly.
+    // Since `YEO-122` this no longer covers the case the comment here used to
+    // call "deleted" — an entry is retired rather than deleted, so its row is
+    // still here and the branch below is the one that catches it.
     if (!page) return { status: "not-found" };
+
+    /**
+     * The entry is there and has been retired (E1-T10, `YEO-122`).
+     *
+     * Inside the lock, beside the branch above, and refusing for the same
+     * reason `savePage` refuses: restoring writes a revision and rewrites the
+     * live row, so it is a save arrived at from the history rather than from
+     * the editor, and neither belongs in a tombstone.
+     *
+     * The narrow reason this matters more here than the save path's version of
+     * it: the tombstone renders the history tab, and the history tab links to
+     * every revision, and each of those links to a restore confirmation. So
+     * this is not only reachable by a direct POST — it is reachable by
+     * ordinary, sensible navigation from the page the retirement itself sends
+     * somebody to. Refusing here, and not merely hiding the link, is what
+     * makes that navigation safe to leave working.
+     *
+     * A `retired` status of its own rather than `not-found`, matching
+     * `SavePageResult` and unlike the cross-entry guard below it, for the
+     * argument `lib/save-page.ts` sets out at length: there is nothing to
+     * conceal from a signed-in editor about an entry they are standing on, and
+     * the vague answer would hide the one thing they can do about it.
+     */
+    if (page.deletedAt !== null) return { status: "retired" };
 
     /**
      * The cross-entry guard, and the reason this function takes a slug as well

@@ -164,10 +164,36 @@ export function EntryEditForm({
         case "empty-title":
           setError("An entry needs a title. Add one and save again.");
           return;
-        case "not-found":
-          // The row was deleted while this tab had it open.
+        case "retired":
+          /**
+           * Somebody retired this entry while the editor was open (E1-T10,
+           * `YEO-122`) — and since an entry can no longer be deleted at all,
+           * this is now the likely way an open editor loses its target.
+           *
+           * The sentence names the way out rather than only the refusal,
+           * because there is one and the author is two clicks from it: the
+           * entry is still at its address, showing a tombstone with a Restore
+           * button on it. What is deliberately *not* done is restoring it
+           * automatically and saving anyway — the author asked to save an
+           * edit, not to reverse somebody else's decision about whether the
+           * entry should exist at all, and those are two intentions that
+           * happen to arrive through one button.
+           *
+           * Nothing typed is thrown away: this sets an error and returns, so
+           * the editor keeps its state and the same save works once the entry
+           * is back.
+           */
           setError(
-            "This entry no longer exists. It may have been deleted in another tab.",
+            "This entry has been retired, so nothing was saved. Open it to restore it, then save again.",
+          );
+          return;
+        case "not-found":
+          // No row at this address at all. Since `YEO-122` that no longer
+          // means "deleted in another tab" — retiring is the branch above and
+          // it leaves the row exactly where it was — so what is left is an
+          // address that never held an entry, or a slug changed by hand.
+          setError(
+            "There is no entry at this address any more. It may have been moved.",
           );
           return;
       }

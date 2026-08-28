@@ -100,6 +100,35 @@ describe("what counts as an orphan", () => {
     expect(orphanKeys(plan([listed(key(1))], referenced))).toEqual([]);
   });
 
+  it("spares an image only a retired entry's body contains", () => {
+    /**
+     * E1-T10 (`YEO-122`), one level out from the revision case above, and the
+     * same trap: retiring an entry is reversible, so its body goes on
+     * referring to its photographs exactly as a superseded revision's does.
+     *
+     * What this file can and cannot say about that is worth being honest
+     * about. `planImageSweep` is pure and sees storage keys, never rows — a
+     * retirement is invisible from here, and this test is a statement about
+     * the *composition*: whatever `readReferencedImageKeys` decides to scan is
+     * what the sweep spares, so the whole question is whether that scan keeps
+     * reading retired entries. It does, deliberately, and
+     * `lib/image-references.db.test.ts` is where that is asserted against real
+     * rows — including this same `planImageSweep` call over a real census, so
+     * the acceptance criterion ("the sweep reports nothing new to delete after
+     * an entry is retired") is proved end to end rather than in two halves
+     * that only meet in a comment.
+     *
+     * What this one adds is the vocabulary. Somebody reading this file to find
+     * out what the sweep spares should find retirement in the list, next to
+     * the revision case it is a sibling of, rather than have to know to look
+     * in a `.db.test.ts`.
+     */
+    const retiredBody = imgTag(key(1));
+    const referenced = collectImageReferences({ html: [retiredBody] });
+
+    expect(orphanKeys(plan([listed(key(1))], referenced))).toEqual([]);
+  });
+
   it("spares an image referenced only by a portrait column", () => {
     // E5-T4 put keys on `individuals` directly. A portrait appears in no
     // body anywhere, so a sweep that scanned only HTML would find every

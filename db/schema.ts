@@ -261,6 +261,64 @@ export const pages = pgTable(
       .defaultNow(),
     updatedBy: text("updated_by"),
     /**
+     * When this entry was retired (E1-T10, `YEO-122`), or null for as long as
+     * it is a live entry.
+     *
+     * ## Why a column and not a `DELETE`
+     *
+     * `revisions.page_id` is `on delete cascade`, so `delete from pages` takes
+     * the entry's whole history with it — the one thing the append-only model
+     * exists to keep. And it is quietly a photograph deletion too:
+     * `lib/image-references.ts` counts an image as referenced if any body *or
+     * revision* mentions it, so dropping both makes every picture that entry
+     * ever held unreferenced, and the next `npm run db:images-sweep --delete`
+     * reclaims files the nightly backup does not carry (docs/backups.md).
+     * Nothing on screen would say so, and there is nothing to restore them
+     * from — the dump carries the rows that point at images and never the
+     * images themselves.
+     *
+     * So an entry is *retired*, never deleted — the same shape, and the same
+     * argument, as {@link gedcomImports.releasedAt} (`YEO-95`). The row stays,
+     * the revisions stay, `individuals.page_id` goes on pointing at it, every
+     * image stays referenced, and the operation is undone by an `UPDATE`
+     * rather than by a restore from a backup.
+     *
+     * ## Why a timestamp rather than a boolean
+     *
+     * The same reason `released_at` is one: *whether* an entry was retired is
+     * half of what somebody looking at a tombstone needs, and the other half —
+     * when, and by whom — is the difference between "retired this morning by
+     * mistake" and a decision taken years ago that nobody remembers. `null` is
+     * not a missing timestamp here; it is the live state, and it is the value
+     * every reader's predicate and the partial index below are keyed on.
+     *
+     * ## What reads it, and the two things that must not
+     *
+     * A dozen modules issue SQL against this table, and getting one of them
+     * wrong is silent — a retired entry that goes on appearing in search, or a
+     * photograph the sweep reclaims. `LIVE_PAGES` in `lib/live-pages.ts` is the
+     * one predicate they share, and `lib/pages.call-sites.test.ts` is the
+     * tripwire that no module names this table without it. Two are exempt on
+     * purpose and say so there: `lib/image-references.ts`, which must keep
+     * scanning a retired entry's body so its photographs stay referenced, and
+     * `lib/export-full.ts`, which must carry retired rows *and this column* or
+     * a restore from the archive resurrects every entry anybody retired.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /**
+     * Who retired it, alongside {@link pages.deletedAt} — the same shape and
+     * the same nullability as `updatedBy` above, and null for the same two
+     * reasons: an entry nobody has retired has nobody to name, and a row
+     * retired by a hand-run `UPDATE` has no session to read one from.
+     *
+     * Recorded because the tombstone says it out loud. `/wiki/[slug]` on a
+     * retired entry renders who retired it and when rather than a 404, on the
+     * grounds that everybody who can reach this wiki is already a full editor
+     * (`lib/allowed-emails.ts`), and an accidental retirement that looks like
+     * data loss is worse than one that names its author and offers a button.
+     */
+    deletedBy: text("deleted_by"),
+    /**
      * What full-text search over entries matches against (E8-T1, `YEO-55`).
      *
      * **A generated column, not a trigger.** The two are the options Postgres
@@ -311,7 +369,25 @@ export const pages = pgTable(
     ),
   },
   (t) => [
-    index("pages_updated_at_idx").on(t.updatedAt),
+    /**
+     * The recently-changed feed's access path (E8-T4), and since `YEO-122` a
+     * **partial** one — the same change, made for the same reason, that
+     * `gedcom_imports_live_digest_idx` makes over there.
+     *
+     * `listRecentlyChangedEntries` now asks for the *live* entries in
+     * `updated_at` order, and a plain index on `updated_at` alone can only
+     * answer that by walking rows it then throws away. Keyed on the predicate
+     * as well, the index holds exactly the rows the feed can return, so the
+     * filter is free and a wiki whose retired entries come to outnumber its
+     * live ones does not slow its own front page down. It is also what keeps
+     * that query answerable from an index at all — the criterion
+     * `lib/recent-changes.db.test.ts` checks as a query plan rather than as a
+     * claim in a comment, and which a `WHERE` on an unindexed column is
+     * exactly what its own note warned would break.
+     */
+    index("pages_updated_at_idx")
+      .on(t.updatedAt)
+      .where(sql`${t.deletedAt} is null`),
     /**
      * GIN rather than GiST: GIN is the index Postgres's own documentation
      * recommends for `tsvector` search, and its trade — slower to update,

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
 import { EntryEditForm } from "@/components/EntryEditForm";
@@ -78,6 +78,30 @@ export default async function EntryEditPage({
   // An entry cannot be edited into existence here — creating one is
   // `/wiki/new`, and `savePage` refuses an unknown slug for the same reason.
   if (!entry) notFound();
+
+  /**
+   * A retired entry has no editor (E1-T10, `YEO-122`).
+   *
+   * `redirect`, and specifically not `notFound()`: the read route argues at
+   * length why answering 404 for a retired entry makes an accidental
+   * retirement look like data loss, and that argument does not stop applying
+   * because the URL ends in `/edit`. The tombstone this sends the author to
+   * says what happened, who did it, and carries the button that undoes it.
+   *
+   * And specifically not a refusal *rendered inside the editor*, which was the
+   * other option. `savePage` refuses the write regardless — that is where the
+   * boundary is, since this page is a render and the action is a POST endpoint
+   * anybody can reach — so an editor that loads and cannot save is a trap:
+   * somebody would type into it first and find out afterwards. It would also
+   * be a second copy of the "this entry is retired" sentence, in a second
+   * place, to keep true.
+   *
+   * The one thing a redirect could cost is an author's unsaved work, and here
+   * it cannot: this runs before the editor mounts.
+   */
+  if (entry.deletedAt !== null) {
+    redirect(`/wiki/${encodeURIComponent(slug)}`);
+  }
 
   /**
    * The link button's entry list (E2-T5, `YEO-28`).

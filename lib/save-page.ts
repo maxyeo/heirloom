@@ -229,6 +229,18 @@ export type SavePageResult =
     }
   | { status: "unchanged"; pageId: string }
   | { status: "empty-title" }
+  | {
+      /**
+       * The entry exists and has been retired (E1-T10, `YEO-122`), so this
+       * save wrote nothing.
+       *
+       * Distinct from `not-found` on purpose — see the branch that returns it
+       * for the argument, which is that the author is looking at an entry that
+       * is really there and the useful thing to tell them is what actually
+       * happened to it.
+       */
+      status: "retired";
+    }
   | { status: "not-found" };
 
 /**
@@ -279,6 +291,7 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
         title: schema.pages.title,
         bodyHtml: schema.pages.bodyHtml,
         hatnote: schema.pages.hatnote,
+        deletedAt: schema.pages.deletedAt,
       })
       .from(schema.pages)
       .where(eq(schema.pages.slug, input.slug))
@@ -287,6 +300,35 @@ export async function savePage(input: SavePageInput): Promise<SavePageResult> {
     // Creating a page is E1-T8's job, not this action's. A slug with no row
     // means it was deleted, or that someone POSTed here directly.
     if (!page) return { status: "not-found" };
+
+    /**
+     * And a row that is there but retired (E1-T10, `YEO-122`).
+     *
+     * **Inside the lock, beside the branch above, and not in the route.** The
+     * row is held by `FOR UPDATE` at this point, so "is this entry retired" and
+     * "what does it currently say" are one answer rather than two that can
+     * disagree — which is the same reason the no-op comparison below is here
+     * rather than in the editor. The race this closes is an ordinary one on a
+     * wiki several people are reading: an editor opened before somebody
+     * retired the entry, saved after. Checked in the route, that save would
+     * read "live", block on the lock, and then write into a tombstone.
+     *
+     * A status of its own rather than folding into `not-found`, which is the
+     * opposite of the choice `restoreRevision` makes for a revision belonging
+     * to another entry. There the vagueness is the point — a distinct status
+     * would confirm a guessed id to somebody probing. Here there is nothing to
+     * conceal: everybody who can reach this action is a full editor
+     * (`lib/allowed-emails.ts`), the author is standing in front of an entry
+     * they can see, and "this entry has been retired" is a fact they can act
+     * on. Told `not-found`, they would go looking for an entry that is right
+     * there, and the one thing they should be offered — restore it, then save
+     * — is exactly what the vague answer hides.
+     *
+     * The refusal is a value rather than a throw, on the same terms as every
+     * other member of `SavePageResult`: this is somebody's ordinary Tuesday,
+     * not a fault.
+     */
+    if (page.deletedAt !== null) return { status: "retired" };
 
     /**
      * Comparison is against the values that would actually be written, after

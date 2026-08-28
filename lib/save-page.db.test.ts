@@ -677,3 +677,120 @@ describe("savePage", () => {
     });
   });
 });
+
+/**
+ * Saving into a retired entry (E1-T10, `YEO-122`).
+ *
+ * The acceptance criterion is "fails with a stated reason, **not a write**",
+ * and that is two assertions rather than one. A status alone would pass for an
+ * implementation that refused *after* writing, or that appended a revision on
+ * the way to refusing — so the second half re-reads the row and the history and
+ * checks that nothing moved at all.
+ *
+ * Checked here rather than in the route, because the refusal is inside the
+ * `for("update")` transaction rather than in front of it. The race that makes
+ * that placement matter is the ordinary one on a wiki several people read: an
+ * editor opened before somebody retired the entry, saved after. A check in the
+ * route would read "live", block on the lock, and then write into a tombstone.
+ */
+describe("a retired entry", () => {
+  /** Retire the fixture in place, the way `retirePage` does. */
+  async function retire() {
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, PAGE));
+  }
+
+  it("refuses the save, and says which refusal it is", async () => {
+    await retire();
+
+    await expect(
+      savePage({
+        slug: SLUG,
+        title: "Rewritten",
+        bodyHtml: "<p>After.</p>",
+        editedBy: EDITOR,
+      }),
+    ).resolves.toEqual({ status: "retired" });
+  });
+
+  it("writes nothing at all", async () => {
+    const before = await readPage();
+    const revisionsBefore = await readRevisions();
+
+    await retire();
+    await savePage({
+      slug: SLUG,
+      title: "Rewritten",
+      bodyHtml: "<p>After.</p>",
+      editedBy: EDITOR,
+    });
+
+    const after = await readPage();
+
+    // The content, the author and the timestamp are all where they were —
+    // `updated_at` included, which is the one a refusal-after-a-partial-write
+    // would have moved.
+    expect(after.title).toBe(before.title);
+    expect(after.bodyHtml).toBe(before.bodyHtml);
+    expect(after.updatedBy).toBe(before.updatedBy);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+
+    // And no history row was appended on the way to the refusal.
+    expect(await readRevisions()).toEqual(revisionsBefore);
+  });
+
+  it("is a different answer from not-found, on purpose", async () => {
+    // The distinction the author acts on. Told `not-found`, somebody would go
+    // looking for an entry that is sitting right there with a Restore button
+    // on it; told `retired`, they know what to do. `lib/save-page.ts` argues
+    // why this is the opposite choice from `restoreRevision`'s deliberate
+    // folding of three cases into one.
+    await retire();
+
+    const retired = await savePage({
+      slug: SLUG,
+      title: "Rewritten",
+      bodyHtml: "<p>After.</p>",
+      editedBy: EDITOR,
+    });
+    const missing = await savePage({
+      slug: `${SLUG}-nonexistent`,
+      title: "Rewritten",
+      bodyHtml: "<p>After.</p>",
+      editedBy: EDITOR,
+    });
+
+    expect(retired).toEqual({ status: "retired" });
+    expect(missing).toEqual({ status: "not-found" });
+  });
+
+  it("saves again once the entry is restored", async () => {
+    // The refusal is about the entry's state, not about the edit — so the
+    // same call works the moment the state changes. Without this, a refusal
+    // that had (say) poisoned the no-op comparison would look identical.
+    await retire();
+    await savePage({
+      slug: SLUG,
+      title: "Rewritten",
+      bodyHtml: "<p>After.</p>",
+      editedBy: EDITOR,
+    });
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(eq(schema.pages.id, PAGE));
+
+    const result = await savePage({
+      slug: SLUG,
+      title: "Rewritten",
+      bodyHtml: "<p>After.</p>",
+      editedBy: EDITOR,
+    });
+
+    expect(result.status).toBe("saved");
+    expect((await readPage()).title).toBe("Rewritten");
+  });
+});

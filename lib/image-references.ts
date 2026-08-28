@@ -38,6 +38,37 @@ import { scanEntryImages } from "@/lib/entry-images";
  * Kind 3 is the one that would have gone missing quietly, and it is why this
  * module exists rather than the two callers each writing a loop.
  *
+ * ## Retired entries count, and this is the trap E1-T10 is mostly about
+ *
+ * `YEO-122` gave `pages` a `deleted_at`, and a dozen modules now filter on it
+ * through `LIVE_PAGES`. **This one must not**, and it is registered as a named
+ * exemption in `lib/pages.call-sites.test.ts` so that adding the filter here
+ * fails a test rather than passing review.
+ *
+ * The reasoning is kind 2's, one level further out. Retiring an entry is
+ * reversible — that is the whole of the feature — so a retired entry's body
+ * and hatnote refer to their photographs exactly as much as a superseded
+ * revision's do. Filter them out and the sequence is: somebody retires an
+ * entry; every photograph in it becomes unreferenced; the next `npm run
+ * db:images-sweep --delete` reclaims them; months later somebody restores the
+ * entry and gets the paragraphs back with broken `<img>` tags in them —
+ * baked, by then, into append-only revision rows that can never be edited. The
+ * files are not recoverable, because the nightly backup carries the rows that
+ * point at images and never the images themselves
+ * (docs/backups.md#what-is-not-in-these-backups).
+ *
+ * Every property of that failure is one this module already exists to prevent:
+ * silent, delayed, and landing on the feature the reversibility is for. So the
+ * `pages` read below asks for every row, and the acceptance criterion is that
+ * `npm run db:images-sweep` reports nothing new to delete after an entry is
+ * retired — asserted in `lib/image-sweep.test.ts` rather than left standing as
+ * this paragraph.
+ *
+ * The asymmetry three paragraphs down settles it if the argument ever feels
+ * finely balanced: counting a retired entry's images as referenced costs a few
+ * kilobytes nobody reclaims until somebody purges the entry properly. Not
+ * counting them deletes a family's photographs.
+ *
  * ## What is deliberately *not* shared
  *
  * Which keys each caller puts in, because the two want opposite tie-breaks
@@ -166,6 +197,15 @@ export async function readReferencedImageKeys(
         bodyHtml: schema.pages.bodyHtml,
         hatnote: schema.pages.hatnote,
       })
+      /**
+       * **No `LIVE_PAGES` here, and that is load-bearing** (E1-T10,
+       * `YEO-122`). A retired entry's body still refers to its photographs,
+       * because the retirement is undoable and the restore would otherwise
+       * bring back a body pointing at files the sweep had reclaimed. See the
+       * module docblock for the full sequence, and
+       * `lib/pages.call-sites.test.ts`, which registers this file as one of
+       * the two exemptions from the filter so that adding one here goes red.
+       */
       .from(schema.pages),
     reader
       .select({

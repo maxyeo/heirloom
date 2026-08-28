@@ -1,4 +1,4 @@
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import { SEARCH_TEXT_CONFIG } from "@/db/schema";
@@ -9,6 +9,7 @@ import {
   toEntryMatches,
 } from "@/lib/entry-search";
 import type { EntryLink } from "@/lib/entry-link";
+import { LIVE_PAGES } from "@/lib/live-pages";
 import { compareEntriesByTitle } from "@/lib/page-index";
 
 /**
@@ -45,6 +46,30 @@ export type WikiEntry = {
   title: string;
   bodyHtml: string;
   hatnote: string;
+  /**
+   * When this entry was retired, or null while it is live (E1-T10,
+   * `YEO-122`).
+   *
+   * This is the one field on this type that is not content and not identity,
+   * and it is here because `getPageBySlug` is the one reader that deliberately
+   * does **not** filter retired rows out. Every route that loads an entry has
+   * to decide what to do with a retired one, and a lookup that answered
+   * `undefined` would make that decision for all of them — as a 404, which is
+   * the answer this ticket argues against at length. Carrying the timestamp
+   * turns "is this retired" into something the caller can see rather than
+   * something it can only infer from an absence.
+   */
+  deletedAt: Date | null;
+  /**
+   * Who retired it, or null — both while it is live, and for a row retired by
+   * a hand-run `UPDATE` with no session behind it.
+   *
+   * Carried alongside `deletedAt` rather than fetched by the one route that
+   * renders it, because the tombstone states both in one sentence and a second
+   * query for the second half of a sentence is not a saving. See
+   * `app/wiki/[slug]/page.tsx`.
+   */
+  deletedBy: string | null;
 };
 
 /**
@@ -59,6 +84,31 @@ export type WikiEntry = {
  * Returns `undefined` rather than throwing when nothing matches. "No such
  * entry" is an ordinary outcome of a wiki read — a link that has outrun its
  * page — and it is the caller's job to turn it into a 404, not this module's.
+ *
+ * ## Why this one does not apply `LIVE_PAGES` (E1-T10, `YEO-122`)
+ *
+ * It is the deliberate exception among the reads in this file, and the reason
+ * `WikiEntry` carries `deletedAt` at all. Every other function here answers a
+ * question about the *set* of entries — what is in the index, what a search
+ * matches, which of these links lead somewhere — and a retired entry is not in
+ * any of those sets. This one answers a question about one address, and there
+ * are five routes standing behind it that each want a different thing from a
+ * retired row: the article renders a tombstone, the history list goes on
+ * working, the editor refuses.
+ *
+ * Filtering here would make all five of them a 404, which is the outcome §3 of
+ * the ticket argues against: on a wiki where everybody signed in is a full
+ * editor (`lib/allowed-emails.ts`), hiding the history from the only people
+ * who can reach it buys nothing, and an accidental retirement that answers 404
+ * is indistinguishable from data loss. So the row comes back with the
+ * timestamp on it, and the decision belongs to the route.
+ *
+ * The one thing that could go wrong with that is a route forgetting to look.
+ * That is why the field is `deletedAt: Date | null` on the returned type rather
+ * than something a caller has to ask a second question to discover — a route
+ * that never mentions it renders a retired entry as an article, which is
+ * visible the moment anybody retires one, rather than a photograph quietly
+ * disappearing months later.
  */
 export async function getPageBySlug(
   slug: string,
@@ -72,6 +122,8 @@ export async function getPageBySlug(
       title: schema.pages.title,
       bodyHtml: schema.pages.bodyHtml,
       hatnote: schema.pages.hatnote,
+      deletedAt: schema.pages.deletedAt,
+      deletedBy: schema.pages.deletedBy,
     })
     .from(schema.pages)
     .where(eq(schema.pages.slug, slug))
@@ -110,8 +162,24 @@ export async function getPageBySlug(
  * `getPageBySlug`: there is no RLS under this database and one role for
  * everyone.
  *
+ * ## A retired entry does not exist, for this question (E1-T10, `YEO-122`)
+ *
+ * `LIVE_PAGES` here is what makes "links to it render red" true, and it is
+ * worth naming as a decision rather than reading as one filter among six.
+ * A link to a retired entry is not a broken link that wants fixing; it is
+ * precisely the invitation this feature exists to produce. The entry was
+ * retired because somebody decided it should not have been written, so the
+ * red link and its "write this entry" title are the correct thing to say to
+ * the next reader who meets one — the same sentence a link to a page nobody
+ * has written yet gets, arrived at from the other direction.
+ *
+ * The alternative — leaving such links blue — would have every one of them
+ * lead to a tombstone, which is a worse page to be sent to than a red link is
+ * to be shown. The tombstone is a place you arrive at *deliberately*, from the
+ * address bar or from the history, not somewhere prose should point.
+ *
  * @param slugs the slugs to check, in any order, duplicates allowed
- * @returns the subset that exists, as a set
+ * @returns the subset that exists *and has not been retired*, as a set
  */
 export async function findExistingSlugs(
   slugs: Iterable<string>,
@@ -124,7 +192,7 @@ export async function findExistingSlugs(
   const rows = await db
     .select({ slug: schema.pages.slug })
     .from(schema.pages)
-    .where(inArray(schema.pages.slug, wanted));
+    .where(and(inArray(schema.pages.slug, wanted), LIVE_PAGES));
 
   return new Set(rows.map((row) => row.slug));
 }
@@ -184,7 +252,14 @@ export type WikiEntrySummary = {
  * identical everywhere and testable under `npm test`, where CI can see it.
  * See `lib/page-index.ts`.
  *
- * @returns every entry, alphabetically by title
+ * ## Why the whole table is still not quite the whole table (`YEO-122`)
+ *
+ * `LIVE_PAGES`. The index is the wiki's list of what has been written, and a
+ * retired entry is the one thing that has been written and is not on it — that
+ * is most of what retiring means, and the first acceptance criterion of
+ * E1-T10.
+ *
+ * @returns every live entry, alphabetically by title
  */
 export async function listPages(): Promise<WikiEntrySummary[]> {
   const entries = await db
@@ -193,7 +268,8 @@ export async function listPages(): Promise<WikiEntrySummary[]> {
       title: schema.pages.title,
       updatedAt: schema.pages.updatedAt,
     })
-    .from(schema.pages);
+    .from(schema.pages)
+    .where(LIVE_PAGES);
 
   // Sorting in place is safe: `entries` is an array Drizzle built for this
   // call, and nothing else holds a reference to it.
@@ -226,7 +302,18 @@ export async function listPages(): Promise<WikiEntrySummary[]> {
  * question about language rather than about collation, and the answer has to
  * be the application's rather than the database's. See `lib/page-index.ts`.
  *
- * @returns every entry, alphabetically by title
+ * ## And retired entries are not linkable (`YEO-122`)
+ *
+ * `LIVE_PAGES`, for a sharper reason than the index's. This list is what the
+ * canvas offers as *destinations*: the panel's "read the entry" link, and the
+ * picker that hands `individuals.page_id` a target. Leaving a retired entry in
+ * it would put a live-looking link to a tombstone on every relative's panel,
+ * and would let somebody attach a person to an entry that has been retired —
+ * a write, not merely a misleading read. `lib/link-person-entry.ts` refuses
+ * that at the transaction as well, because a picker is a convenience and not a
+ * boundary.
+ *
+ * @returns every live entry, alphabetically by title
  */
 export async function listEntryLinks(): Promise<EntryLink[]> {
   const entries = await db
@@ -235,7 +322,8 @@ export async function listEntryLinks(): Promise<EntryLink[]> {
       slug: schema.pages.slug,
       title: schema.pages.title,
     })
-    .from(schema.pages);
+    .from(schema.pages)
+    .where(LIVE_PAGES);
 
   // Sorting in place is safe: `entries` is an array Drizzle built for this
   // call, and nothing else holds a reference to it.
@@ -337,7 +425,20 @@ export async function searchEntries(
       snippet: sql<string>`ts_headline(${SEARCH_TEXT_CONFIG}::regconfig, ${schema.pages.bodyHtml}, ${tsquery}, ${SNIPPET_OPTIONS})`,
     })
     .from(schema.pages)
-    .where(sql`${schema.pages.searchVector} @@ ${tsquery}`)
+    /**
+     * Two predicates, and the second one is `LIVE_PAGES` (`YEO-122`).
+     *
+     * The `@@` is still the only thing `pages_search_vector_idx` has to
+     * answer — Postgres applies the GIN index to the match and filters the
+     * handful of rows it returns on `deleted_at`, rather than the other way
+     * round — so the ranking argument above is untouched. What changes is that
+     * a retired entry cannot be the answer to a search, which is the second
+     * acceptance criterion of E1-T10 and the one most likely to be noticed:
+     * search is how somebody finds an entry they cannot remember the address
+     * of, and an entry that has been retired is one nobody should be handed
+     * back with a snippet of its prose under it.
+     */
+    .where(and(sql`${schema.pages.searchVector} @@ ${tsquery}`, LIVE_PAGES))
     .orderBy(
       desc(sql`ts_rank(${schema.pages.searchVector}, ${tsquery})`),
       desc(schema.pages.updatedAt),

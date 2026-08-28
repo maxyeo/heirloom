@@ -460,10 +460,32 @@ describe("the entries query and pages_updated_at_idx", () => {
       sequential scan, so asserting the plan it picks by default would assert
       the size of the fixture set. Turning the alternative off asks the
       question this criterion is actually about: given the choice, can this
-      query be answered from `pages_updated_at_idx`? A query with a `WHERE` on
-      another column, or a join onto `revisions` to find each entry's author,
-      could not — and both are the natural next edits here, which is why this
-      is worth pinning down.
+      query be answered from `pages_updated_at_idx`? A join onto `revisions`
+      to find each entry's author could not — which is the natural next edit
+      here, and why this is worth pinning down.
+
+      ## The `where` is not decoration, and this note used to warn against it
+
+      Until `YEO-122` this paragraph said a `WHERE` on another column would
+      take the query off the index, and it was right: E1-T10 needed exactly
+      that clause, to keep retired entries out of the feed. What it did *not*
+      do was accept the sequential scan. `pages_updated_at_idx` is now a
+      **partial** index keyed on the same predicate (`db/schema.ts`), so the
+      rows in it are precisely the rows this query can return, and the filter
+      is free.
+
+      That change is what makes this assertion load-bearing in both
+      directions, and it is why the `where` had to be added *here* as well as
+      in `lib/recent-changes.ts`. This `EXPLAIN` is hand-written SQL rather
+      than the Drizzle query, so the two do not track each other
+      automatically — and with a plain index they would not have needed to:
+      the plan would have gained a `Filter`, `pages_updated_at_idx` and
+      `Index Scan Backward` would both still have appeared, and this test
+      would have gone on passing green while asserting a query the application
+      no longer issues. A partial index removes that comfort. Drop
+      `LIVE_PAGES` from either side and the index becomes unusable, the
+      disabled sequential scan is all that is left, and the last assertion in
+      this test fires.
 
       `set local` inside a transaction, because postgres.js pools connections:
       a bare `SET` could land on a different connection than the `EXPLAIN` and
@@ -476,6 +498,7 @@ describe("the entries query and pages_updated_at_idx", () => {
       const rows = await tx.execute<{ "QUERY PLAN": string }>(sql`
         explain select slug, title, updated_at, updated_by
         from pages
+        where deleted_at is null
         order by updated_at desc, id asc
         limit 10
       `);
@@ -588,5 +611,45 @@ describe("ties", () => {
     // rather than of the plan.
     expect(first).toEqual(second);
     expect(first).toEqual([TIED_IDS[0], TIED_IDS[1]]);
+  });
+});
+
+/**
+ * Retired entries and the feed (E1-T10, `YEO-122`).
+ *
+ * The plan assertion above proves the *query* is answerable from the partial
+ * index. This proves the filter does what it is for, which is a different
+ * claim and the one a reader would notice: an entry somebody retired must stop
+ * appearing in "recently changed", where it would otherwise sit at the top for
+ * having been touched most recently.
+ */
+describe("a retired entry", () => {
+  it("drops out of the feed, and its neighbour stays", async () => {
+    const before = await listRecentChanges();
+    expect(
+      before.map((change) => change.kind === "entry-changed" && change.slug),
+    ).toContain(SLUG_RECENT);
+
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, ENTRY_RECENT));
+
+    try {
+      const after = await listRecentChanges();
+      const slugs = after.flatMap((change) =>
+        change.kind === "entry-changed" ? [change.slug] : [],
+      );
+
+      expect(slugs).not.toContain(SLUG_RECENT);
+      // The other fixture entry is untouched, so this is a filter rather than
+      // the query having stopped returning entries altogether.
+      expect(slugs).toContain(SLUG_OLDER);
+    } finally {
+      await db
+        .update(schema.pages)
+        .set({ deletedAt: null, deletedBy: null })
+        .where(eq(schema.pages.id, ENTRY_RECENT));
+    }
   });
 });

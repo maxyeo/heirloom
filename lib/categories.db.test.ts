@@ -391,3 +391,76 @@ describe("reading", () => {
     ).toBeUndefined();
   });
 });
+
+/**
+ * A retired entry leaves the listings it is filed under (E1-T10, `YEO-122`),
+ * and its filing survives the retirement.
+ *
+ * Two assertions rather than one, because the second is what makes the first
+ * safe. Unfiling an entry on the way out would empty the listings just as
+ * well, and would mean a restore put the entry back filed under nothing, with
+ * no record anywhere of what it used to be filed under. The `page_categories`
+ * rows are therefore left exactly where they are — the same decision
+ * `individuals.page_id` gets, for the same reason — and only the *read*
+ * filters.
+ */
+describe("a retired entry", () => {
+  /** Retire one of this file's two fixture pages, in place. */
+  async function retire(pageId: string) {
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: new Date(), deletedBy: "rose@example.com" })
+      .where(eq(schema.pages.id, pageId));
+  }
+
+  async function emigrated() {
+    const category = await getCategoryBySlug(
+      `${CATEGORY_SLUG_PREFIX}-emigrated`,
+    );
+    expect(category).toBeDefined();
+    return category;
+  }
+
+  it("drops out of the listing, and its neighbour stays", async () => {
+    await file(PAGE, [name("Emigrated")]);
+    await file(OTHER_PAGE, [name("Emigrated")]);
+
+    const category = await emigrated();
+    if (!category) return;
+
+    // Both there first, so the assertion below is about the retirement rather
+    // than about the fixture.
+    expect(await listEntriesInCategory(category.id)).toHaveLength(2);
+
+    await retire(PAGE);
+
+    expect(
+      (await listEntriesInCategory(category.id)).map((entry) => entry.slug),
+    ).toEqual([OTHER_SLUG]);
+  });
+
+  it("keeps its filing row, so a restore puts it back on the list", async () => {
+    await file(PAGE, [name("Emigrated")]);
+    await retire(PAGE);
+
+    // The row is still there while the entry is retired — asserted through
+    // `readEntryCategories`, which is keyed by page id and answers what the
+    // entry is filed under rather than what a reader can see.
+    expect((await readEntryCategories(PAGE)).map((c) => c.name)).toEqual([
+      name("Emigrated"),
+    ]);
+
+    // And the listing has it back the moment the entry does.
+    await db
+      .update(schema.pages)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(eq(schema.pages.id, PAGE));
+
+    const category = await emigrated();
+    if (!category) return;
+
+    expect(
+      (await listEntriesInCategory(category.id)).map((entry) => entry.slug),
+    ).toEqual([SLUG]);
+  });
+});

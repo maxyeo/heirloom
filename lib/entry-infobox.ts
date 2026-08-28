@@ -1,8 +1,9 @@
-import { inArray } from "drizzle-orm";
+import { and, inArray } from "drizzle-orm";
 
 import { db, schema } from "@/db";
 import type { EntryPerson } from "@/lib/entry-person";
 import { type FamilyGraph, getFamilyGraph } from "@/lib/family-graph";
+import { LIVE_PAGES } from "@/lib/live-pages";
 import { derivePersonInfobox, type PersonInfobox } from "@/lib/person-infobox";
 
 /**
@@ -92,6 +93,24 @@ export async function readEntryInfobox(
  * Narrowed to the ids actually held rather than reading the whole `pages`
  * table: an entry about a place or an heirloom is nobody's address, and a
  * family wiki has more of those than it has people.
+ *
+ * ## A retired entry is absent from the map, not present and red (`YEO-122`)
+ *
+ * `LIVE_PAGES` here, and the shape of the answer is what makes this the right
+ * place for it. This map says *what address a person has* — the docblock above
+ * is explicit that "does it exist" is `entryLinkProps`'s question and not this
+ * one. Somebody whose entry has been retired has no address the box should
+ * offer, so they fall out of the map and are rendered exactly like a relative
+ * nobody has written about yet: a name, with a red link inviting somebody to
+ * write one.
+ *
+ * The alternative — leaving the slug in and letting `findExistingSlugs` paint
+ * it red — reaches the same pixels by a route that is wrong twice over. It
+ * would put the retired entry's address in the `href` of that red link, so
+ * following the invitation to write about Rose would land on the tombstone of
+ * the entry about Rose somebody has just retired; and it would spend one of
+ * the slugs in the route's single `findExistingSlugs` call re-asking a
+ * question this query has already answered.
  */
 async function readPageSlugs(graph: FamilyGraph): Promise<Map<string, string>> {
   const pageIds = [
@@ -110,7 +129,7 @@ async function readPageSlugs(graph: FamilyGraph): Promise<Map<string, string>> {
   const rows = await db
     .select({ id: schema.pages.id, slug: schema.pages.slug })
     .from(schema.pages)
-    .where(inArray(schema.pages.id, pageIds));
+    .where(and(inArray(schema.pages.id, pageIds), LIVE_PAGES));
 
   return new Map(rows.map((row) => [row.id, row.slug]));
 }
