@@ -7,6 +7,7 @@ import { RetiredEntryNotice } from "@/components/RetiredEntryNotice";
 import { RevisionCategories } from "@/components/RevisionCategories";
 import { categorySlug, compareCategoriesByName } from "@/lib/category-name";
 import { getPageBySlug } from "@/lib/pages";
+import { describeDivergenceFromCurrent } from "@/lib/retirement-copy";
 import {
   formatRevisionAuthor,
   formatRevisionTimestamp,
@@ -150,6 +151,16 @@ export default async function RevisionDetailPage({
     .sort(compareCategoriesByName)
     .map(({ name }) => name);
 
+  /**
+   * The banner's second sentence, or `null` on a retired entry (`YEO-126`).
+   *
+   * Read here beside the other things the page derives before it renders, and
+   * written where `lib/retirement-copy.ts` keeps the sentences whose accuracy
+   * is the safety mechanism — this one had gone on promising a current version
+   * to a reader looking at an entry that no longer has one.
+   */
+  const divergence = describeDivergenceFromCurrent(page.deletedAt);
+
   return (
     <main className="mx-auto max-w-content px-4 py-8 sm:px-6 sm:py-10">
       {page.deletedAt === null ? null : (
@@ -186,6 +197,11 @@ export default async function RevisionDetailPage({
         the fill, `border-rule` for the frame, `rounded-panel` for the corner
         radius, matching the panel language the rest of the skin uses for
         anything that is not article prose.
+
+        Only the first sentence is unconditional. The second is a claim about a
+        current version, and on a retired entry there is none to make it about
+        — see `describeDivergenceFromCurrent` in `lib/retirement-copy.ts`
+        (`YEO-126`), which is also where the wording is asserted.
       */}
       <div className="mb-6 rounded-panel border border-rule bg-wash px-4 py-3">
         <p>
@@ -193,8 +209,15 @@ export default async function RevisionDetailPage({
           <time dateTime={revisionTimestampIso(revision.createdAt)}>
             {formatRevisionTimestamp(revision.createdAt)}
           </time>{" "}
-          by {formatRevisionAuthor(revision.createdBy)}. It may differ
-          significantly from the current version.
+          by {formatRevisionAuthor(revision.createdBy)}.
+          {/*
+            Appended with its own space rather than written into the text
+            above, so that a retired entry's banner ends at the full stop
+            instead of at a gap. JSX drops the whitespace around this
+            expression because it spans a newline; the space in the template
+            is the only one, and it goes when the sentence does.
+          */}
+          {divergence === null ? null : ` ${divergence}`}
         </p>
 
         {restoredFrom ? (

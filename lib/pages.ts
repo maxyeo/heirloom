@@ -102,7 +102,8 @@ export type WikiEntry = {
  *   - `/wiki/[slug]/history` goes on listing every version, under a notice
  *     saying the entry itself is retired;
  *   - `/wiki/[slug]/history/[revisionId]` carries the same notice above one
- *     version, and stops calling the address beside it "the current version";
+ *     version, and stops calling the address beside it "the current version" —
+ *     in the banner as well as on the link (`YEO-126`);
  *   - `/wiki/[slug]/history/compare` carries it above a diff of two;
  *   - `/wiki/[slug]/history/[revisionId]/restore` refuses, because there is
  *     nothing to restore *into* until the entry itself is back.

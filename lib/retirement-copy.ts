@@ -1,8 +1,14 @@
 import type { RetirementPreview } from "@/lib/retirement-preview";
 
 /**
- * What the retirement confirmation *says* (E1-T10, `YEO-122`), as plain
- * strings.
+ * The sentences retirement makes true or false (E1-T10, `YEO-122`;
+ * `YEO-126`), as plain strings.
+ *
+ * Most of them are the retirement confirmation's, which is where this module
+ * started and what the reasoning below is about. The last of them belongs to a
+ * page that outlives the retirement rather than to the button that causes it,
+ * and it is here for the same reason the rest are: see
+ * {@link describeDivergenceFromCurrent}.
  *
  * ## Why the sentences are a module and not JSX
  *
@@ -154,4 +160,57 @@ export function describeWhatIsKept(preview: RetirementPreview): string {
   parts.push("It can be restored at any time, at this same address.");
 
   return parts.join(" ");
+}
+
+/**
+ * What the historical banner on `/wiki/[slug]/history/[revisionId]` says about
+ * the version this one is not (`YEO-126`) — or nothing, when there is no such
+ * version.
+ *
+ * The one sentence here that belongs to a page rather than to the button.
+ * Retiring an entry does not only change what the confirmation has to promise;
+ * it changes what the three pages that outlive the retirement are entitled to
+ * say. Most of that is `components/RetiredEntryNotice.tsx`'s job — markup with
+ * a slot for one sentence. This is the remainder: a claim already written into
+ * a page, which retirement quietly turns into a lie.
+ *
+ * The sentence is MediaWiki's, and it is the one `YEO-123` was filed over:
+ * "It may differ significantly from the current version", above a retired
+ * entry, promises an article at an address that now answers with a tombstone.
+ * `YEO-123` put the retirement notice above the banner and stopped the link
+ * below it calling that tombstone a version, and left the sentence between
+ * them saying what it had always said — three panels, two of which knew about
+ * the retirement.
+ *
+ * ## Why it is dropped rather than reworded
+ *
+ * Because the banner's first sentence is still exactly true — this *is* an old
+ * revision, saved then, by them — and it is the whole of what the banner has
+ * to say once there is no current version to be measured against. Any
+ * replacement clause would be a third statement of the retirement on one page,
+ * directly under a panel that has just made it and directly above a link that
+ * was renamed for it. Returning `null` is the difference between a banner that
+ * has stopped promising something and a banner that has started explaining
+ * itself.
+ *
+ * ## Why it is a function here rather than a ternary there
+ *
+ * For the reason the rest of this module gives. The claim is about the
+ * database, the route rendering it is an async Server Component that nothing
+ * in `npm test` can mount, and docs/testing.md's "prefer no DOM" says a
+ * decision that can be a plain value should be one.
+ * `lib/pages.route-decisions.test.ts` can see that the route reads
+ * `deletedAt`; only an assertion on this can see what it then says.
+ *
+ * `app/wiki/[slug]/history/compare/page.tsx` was checked for the same sentence
+ * and has none: it names its two ends and makes no claim about a third
+ * version, so `YEO-123`'s relabelled link was the whole of what it said about
+ * the live address.
+ */
+export function describeDivergenceFromCurrent(
+  deletedAt: Date | null,
+): string | null {
+  if (deletedAt !== null) return null;
+
+  return "It may differ significantly from the current version.";
 }
