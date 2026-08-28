@@ -3,7 +3,7 @@
  * mockup puts there, in the order it puts them, plus "New entry" — the one
  * link in this list the mockup does not draw.
  *
- * A list rather than hand-written `<li>`s because two entries are the
+ * A list rather than hand-written `<li>`s because one entry is the
  * interesting case: the destination does not exist yet. Keeping that as data
  * means the sidebar renders a placeholder without an `if` per item, and means
  * the wiring is checkable without a DOM — see `lib/site-nav.test.ts`.
