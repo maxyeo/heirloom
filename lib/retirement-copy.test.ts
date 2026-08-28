@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   describeDeparture,
+  describeDivergenceFromCurrent,
   describeIncomingLinks,
   describeWhatIsKept,
 } from "@/lib/retirement-copy";
@@ -183,6 +184,51 @@ describe("what is kept", () => {
     // deliberately do not cost the same.
     expect(describeWhatIsKept(preview())).toMatch(
       /It can be restored at any time, at this same address\.$/,
+    );
+  });
+});
+
+/**
+ * The other end of the same feature (`YEO-126`): not what the confirmation
+ * promises before the write, but what a page goes on saying after it.
+ *
+ * `YEO-123` fixed two of the three panels on `/wiki/[slug]/history/[revisionId]`
+ * — it put `components/RetiredEntryNotice.tsx` above the historical banner and
+ * stopped the link below it offering a tombstone as "the current version" —
+ * and left the banner between them ending "It may differ significantly from
+ * the current version" on an entry that has none. This is the assertion the
+ * route cannot carry itself: it is an async Server Component, so nothing in
+ * `npm test` can mount it, and `lib/pages.route-decisions.test.ts` can only
+ * see that it reads `deletedAt`, never what it then says.
+ */
+describe("what the historical banner says about the current version", () => {
+  const retired = new Date("2026-02-11T09:30:00Z");
+
+  it("warns a reader of a live entry that it may have moved on", () => {
+    // The whole point of the banner, and the reason it is MediaWiki's wording:
+    // somebody who arrived from a search result or a bookmark has to be told
+    // that what they are reading is not what the entry says now.
+    expect(describeDivergenceFromCurrent(null)).toContain(
+      "may differ significantly from the current version",
+    );
+  });
+
+  it("says nothing once the entry itself is retired", () => {
+    // Dropped rather than reworded. "This is an old revision of this entry,
+    // saved <date> by <author>." is still true and is the whole of what the
+    // banner has to say when the address it would compare against answers with
+    // a tombstone — and the panel directly above it has already said the rest.
+    expect(describeDivergenceFromCurrent(retired)).toBeNull();
+  });
+
+  it("never promises a current version to a retired entry", () => {
+    // The acceptance criterion itself, written so that it outlives the
+    // decision above: if a later change gives the retired case a sentence of
+    // its own, that sentence still may not offer a version at an address that
+    // is a tombstone. This is the assertion that would have failed on the code
+    // `YEO-123` left behind.
+    expect(describeDivergenceFromCurrent(retired) ?? "").not.toContain(
+      "current version",
     );
   });
 });
