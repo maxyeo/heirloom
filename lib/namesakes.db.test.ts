@@ -155,11 +155,9 @@ describe("findNamesakes", () => {
      *
      * This is also the regression guard for the `ON`-versus-`WHERE` trap that
      * `lib/namesakes.ts` documents. The predicate lives in the `left join`'s
-     * `ON` clause; written into the `WHERE` it would still pass the second
-     * assertion here — `deleted_at is null` is true of the all-null row a join
-     * miss produces — but the *elder* would vanish from the result entirely
-     * rather than merely losing her address. So both are asserted: she is
-     * still there, and her slug is null.
+     * `ON` clause; written into the `WHERE` the *elder* would vanish from the
+     * result entirely rather than merely losing her address. So both halves of
+     * her are asserted: she is still there, and her slug is null.
      */
     await db
       .update(schema.pages)
@@ -172,8 +170,13 @@ describe("findNamesakes", () => {
     expect(elder).toBeDefined();
     expect(elder?.slug).toBeNull();
 
-    // And the namesake with no entry at all is untouched by the change, which
-    // is the half a `WHERE` would have taken down with it.
+    // And the namesake nobody has written about arrives exactly as she always
+    // did. She is not what discriminates the two placements: `deleted_at is
+    // null` is true of the all-null row a join miss produces, so a `WHERE`
+    // would leave her alone. The one a `WHERE` takes down is the retired
+    // namesake, which is what the two assertions above are for. This one pins
+    // the shape those two are comparing her against — a name with a null slug,
+    // reached by two different routes and rendered the same way.
     expect(people.map((person) => person.id)).toContain(YOUNGER);
   });
 

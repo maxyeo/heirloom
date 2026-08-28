@@ -31,6 +31,9 @@ import type { Transaction } from "@/lib/save-page";
  * `FamilyGraph`.
  */
 
+/** Anything that can run a `select` — the pool, or a transaction. */
+type CategoryReader = Pick<typeof db, "select">;
+
 /**
  * What an entry is filed under, alphabetically (E11-T8).
  *
@@ -48,12 +51,16 @@ import type { Transaction } from "@/lib/save-page";
  * `compareCategoriesByName`.
  *
  * @param pageId the entry
+ * @param reader the pool by default; a transaction when the caller has one.
+ *   `lib/retire-page.ts` passes the transaction it is retiring inside, so that
+ *   the filing its confirmation reports is the filing the write saw
  * @returns its categories, alphabetically; empty when it has none
  */
 export async function readEntryCategories(
   pageId: string,
+  reader: CategoryReader = db,
 ): Promise<NamedCategory[]> {
-  const rows = await db
+  const rows = await reader
     .select({
       slug: schema.categories.slug,
       name: schema.categories.name,

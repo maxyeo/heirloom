@@ -108,6 +108,21 @@ describe("what is kept", () => {
     expect(describeWhatIsKept(preview())).toMatch(/^Nothing is deleted\./);
   });
 
+  it("says nothing about versions when the row has none", () => {
+    // Not reachable through this application — `createPageIn` writes the first
+    // revision with the entry — but reachable by a row that arrived another
+    // way, and "All 0 of its saved versions are kept" is both ungrammatical
+    // and a promise about nothing. "Nothing is deleted." is the whole truth
+    // for a row with no history, so the clause is dropped rather than
+    // reworded.
+    const text = describeWhatIsKept(preview({ revisionCount: 0 }));
+
+    expect(text).not.toContain("saved version");
+    expect(text).not.toContain("All 0");
+    expect(text).not.toContain("history");
+    expect(text).toMatch(/^Nothing is deleted\./);
+  });
+
   it("says one version in the singular", () => {
     const text = describeWhatIsKept(preview({ revisionCount: 1 }));
 
