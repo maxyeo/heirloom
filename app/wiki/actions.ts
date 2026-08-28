@@ -699,8 +699,6 @@ export async function retireEntryAction(
    * rather than on this action's arguments.
    */
   revalidatePath("/wiki/category/[slug]", "page");
-  // And the index of every category, whose counts have moved.
-  revalidatePath("/wiki/category");
   /**
    * And the tree, whose panels link to entries: `listEntryLinks` no longer
    * offers this one, and a person linked to it now shows a red link where a
@@ -802,7 +800,6 @@ export async function restoreEntryAction(
   revalidatePath("/");
   revalidatePath("/wiki/[slug]", "page");
   revalidatePath("/wiki/category/[slug]", "page");
-  revalidatePath("/wiki/category");
   revalidatePath("/tree");
 
   /**
