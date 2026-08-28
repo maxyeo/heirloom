@@ -8,6 +8,8 @@ import { individualExists } from "@/lib/save-individual";
 import type { Transaction } from "@/lib/save-page";
 import {
   type AddSpouseInput,
+  EDITABLE_UNION_FIELD_NAMES,
+  type EditableUnionField,
   type EditableUnionInput,
   type UnionFields,
   type UnionValidationIssue,
@@ -265,41 +267,6 @@ export type UpdateUnionResult =
   | { status: "invalid"; issues: UnionValidationIssue[] };
 
 /**
- * Every column a correction is compared against, for the no-op check below.
- *
- * Written as the keys of a `Record` rather than as a bare array so that it is
- * exhaustive *by construction*: the object literal cannot omit a field of
- * `UnionFields` and cannot invent one, both of which `satisfies` reports as
- * type errors here. A plain list would compile perfectly well while quietly no
- * longer looking at a column somebody added — and the symptom would be an edit
- * that reports "nothing changed" and discards itself. The same guard, for the
- * same reason, as `FIELD_NAMES` in `lib/save-individual.ts`.
- *
- * The three anchors are in the list even though a form cannot move them: they
- * are read from the stored row and written back, so including them costs
- * nothing and means a future flow that *does* change one is not silently
- * reported as a no-op.
- */
-const UNION_FIELD_NAMES = Object.keys({
-  partnerAId: true,
-  partnerBId: true,
-  type: true,
-  startDate: true,
-  startDateQualifier: true,
-  startDatePrecision: true,
-  startDateUpper: true,
-  startDateUpperPrecision: true,
-  endDate: true,
-  endDateQualifier: true,
-  endDatePrecision: true,
-  endDateUpper: true,
-  endDateUpperPrecision: true,
-  endReason: true,
-  sequence: true,
-  notes: true,
-} satisfies Record<keyof UnionFields, true>) as (keyof UnionFields)[];
-
-/**
  * Correct a union that already exists.
  *
  * ## Why this could not be `addSpouse` with an id
@@ -315,17 +282,28 @@ const UNION_FIELD_NAMES = Object.keys({
  * may edit every person, because `ALLOWED_EMAILS` is the whole membership
  * model (see `lib/session.ts`).
  *
- * ## Why the partners and the sequence come from the row
+ ## Why it writes thirteen columns and not sixteen
  *
- * They are read inside the transaction and written straight back, so the
- * statement below always sets the full record and there is no partial-update
- * shape for a caller to get wrong. It also makes "an edit cannot change who is
- * in a union" true of any caller, not only of the form: a hand-made POST
- * naming a different `partnerBId` is validated against the *stored* one and
- * writes the stored one. Moving a partner is `detachPartner`; merging two
- * unions is `lib/merge-unions.ts`; reordering is `lib/reorder-unions.ts`. Each
- * has a confirmation in front of it because each is destructive in a way
- * correcting a year is not.
+ * `partner_a_id`, `partner_b_id` and `sequence` are not this flow's to write,
+ * so it does not write them — the statement below sets exactly the columns the
+ * form puts on screen. Restating them from the row would look harmless and is
+ * not: the read and the write are two statements, Postgres runs at READ
+ * COMMITTED, and any value captured by the first can be stale by the second.
+ * A correction to a date saved from a tab opened five minutes ago would then
+ * quietly revert whatever had happened in between — `reorderUnions` moving
+ * this union in the list, `mergeUnions` resequencing it, `detachPartner`
+ * removing a partner, none of which the author touched or could see. Not
+ * naming a column is the only way to be sure of not moving it.
+ *
+ * The partners are still *read*, because they are validated: "a union needs at
+ * least one partner" has to be asked of the record that would actually exist,
+ * and the request does not carry them. That is also what makes "an edit cannot
+ * change who is in a union" true of any caller rather than of one form's
+ * markup — a hand-made POST naming a different `partnerBId` is overridden by
+ * the stored one and then not written at all. Moving a partner is
+ * `detachPartner`; merging two unions is `lib/merge-unions.ts`; reordering is
+ * `lib/reorder-unions.ts`. Each has a confirmation in front of it because each
+ * is destructive in a way correcting a year is not.
  *
  * ## Why it validates rather than trusting the caller
  *
@@ -369,9 +347,18 @@ export async function updateUnion(
     const checked = validateUnionEdit(input, {
       partnerAId: existing.partnerAId,
       partnerBId: existing.partnerBId,
-      sequence: existing.sequence,
     });
     if (!checked.ok) return { status: "invalid", issues: checked.issues };
+
+    /**
+     * The columns this flow owns, and the only ones it compares or writes.
+     * `checked.value` is a whole `UnionFields` because that is what
+     * `validateUnion` returns to every caller; narrowing it here is what keeps
+     * the three columns above out of both statements below.
+     */
+    const changes = Object.fromEntries(
+      EDITABLE_UNION_FIELD_NAMES.map((field) => [field, checked.value[field]]),
+    ) as Pick<UnionFields, EditableUnionField>;
 
     /**
      * Compared against the values that would actually be written — after
@@ -381,33 +368,41 @@ export async function updateUnion(
      * stops a form that was opened and closed from reporting a save and
      * throwing a good cache entry away.
      *
-     * The select above is checked by this loop rather than by inspection: a
-     * column left out of it makes `existing[field]` a type error, so the query
-     * and the field set cannot drift apart.
+     * Over the same thirteen columns the write covers, necessarily: a
+     * comparison wider than the statement it guards would report a row as
+     * moved by a column the statement does not touch.
+     *
+     * `date` columns come back from Drizzle as `YYYY-MM-DD` strings (no
+     * `{ mode: "date" }` on the schema), which is exactly what `readDate`
+     * produces, so `===` compares like with like on every field here.
      */
-    const unchanged = UNION_FIELD_NAMES.every(
-      (field) => existing[field] === checked.value[field],
+    const unchanged = EDITABLE_UNION_FIELD_NAMES.every(
+      (field) => existing[field] === changes[field],
     );
     if (unchanged) return { status: "unchanged", unionId: id };
 
     /**
      * `returning` rather than a bare `update`, so the answer comes from the
-     * statement that did the work instead of from the read above it. Inside
-     * one transaction the row cannot be deleted between the two, which is what
-     * this buys over `updateIndividual`'s two independent statements — but the
-     * `returning` stays, because a bare `update` reporting success against
-     * zero rows is a failure mode worth being unable to have.
+     * statement that did the work instead of from the read above it.
      *
-     * `checked.value` rather than a spread of the author's fields: it is the
-     * whole record including the three anchors read above, so every column is
-     * stated and none is left to a partial update. `sequence` is restated from
-     * the row on top of it because `UnionFields` types it `number | null` —
-     * the null being `addSpouse`'s "place this one last", which is not an
-     * answer a correction can give and not a value this column accepts.
+     * The transaction does *not* make that check redundant. Postgres runs at
+     * READ COMMITTED unless told otherwise and nothing here tells it
+     * otherwise, so each statement takes its own snapshot and a delete
+     * committed between the two is visible to the second — being inside one
+     * transaction buys no more here than `updateIndividual`'s two independent
+     * statements do. What the `returning` catches is exactly that: a bare
+     * `update` reports success against zero rows, telling the author their
+     * correction was saved onto a union that no longer exists.
+     *
+     * Still no `FOR UPDATE`, and now nothing that wants one. The lock would
+     * have been for the columns this used to restate from the row; writing
+     * only what the form owns removes the race rather than ordering it, and
+     * what is left is last-write-wins between two people correcting the same
+     * date at once, which a lock resolves no better.
      */
     const [updated] = await tx
       .update(schema.unions)
-      .set({ ...checked.value, sequence: existing.sequence })
+      .set(changes)
       .where(eq(schema.unions.id, id))
       .returning({ id: schema.unions.id });
 

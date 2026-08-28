@@ -283,7 +283,6 @@ describe("what a submission carries", () => {
     const checked = validateUnionEdit(union, {
       partnerAId: marriage.partnerAId,
       partnerBId: marriage.partnerBId,
-      sequence: marriage.sequence,
     });
 
     expect(checked.ok).toBe(true);
@@ -304,7 +303,6 @@ describe("what a submission carries", () => {
     const checked = validateUnionEdit(union, {
       partnerAId: marriage.partnerAId,
       partnerBId: marriage.partnerBId,
-      sequence: marriage.sequence,
     });
 
     expect(checked.ok).toBe(true);
@@ -335,7 +333,6 @@ describe("what a submission carries", () => {
     const checked = validateUnionEdit(union, {
       partnerAId: marriage.partnerAId,
       partnerBId: marriage.partnerBId,
-      sequence: marriage.sequence,
     });
 
     expect(checked.ok).toBe(true);
@@ -347,7 +344,6 @@ describe("what a submission carries", () => {
     */
     expect(checked.value.partnerAId).toBe(marriage.partnerAId);
     expect(checked.value.partnerBId).toBe(marriage.partnerBId);
-    expect(checked.value.sequence).toBe(0);
   });
 });
 

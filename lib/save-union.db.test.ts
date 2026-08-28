@@ -606,6 +606,47 @@ describe("updateUnion", () => {
     expect(later.id).toBe(unionId);
   });
 
+  it("leaves a sequence it could never have produced exactly where it is", async () => {
+    const { unionId } = await marriage({ type: "marriage" });
+
+    /*
+      Above `MAX_UNION_SEQUENCE`, which `resequenceUnions` is documented as
+      being allowed to exceed for somebody with more than a thousand and one
+      unions (`lib/union-order.ts`). The schema permits it and nobody has had
+      it — but it is the shape that catches two things at once, and both were
+      real:
+
+      - a correction that round-tripped the column through the validator ran a
+        ceiling on *what an author may type* over a number the author cannot
+        see, so this union could never have been corrected again — refused
+        over a field with no control on screen;
+      - a correction that restated the column from the row it read would, in
+        the window between its own two statements, write back whatever
+        `reorderUnions` or `mergeUnions` had changed underneath it.
+
+      `updateUnion` names thirteen columns and this is not one of them, which
+      is what makes both impossible rather than unlikely. The interleaving
+      itself cannot be staged from here — `updateUnion` owns its transaction —
+      so what is asserted is the property that removes the race.
+    */
+    await db
+      .update(schema.unions)
+      .set({ sequence: 1500 })
+      .where(eq(schema.unions.id, unionId));
+
+    const result = await updateUnion(unionId, {
+      type: "marriage",
+      startDate: "1912-06-04",
+      endReason: "ongoing",
+    });
+
+    expect(result).toEqual({ status: "updated", unionId });
+
+    const row = await read(unionId);
+    expect(row.startDate).toBe("1912-06-04");
+    expect(row.sequence).toBe(1500);
+  });
+
   it("reports a submission that would not move the row", async () => {
     const { unionId } = await marriage({
       type: "marriage",

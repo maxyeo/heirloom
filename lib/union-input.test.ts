@@ -4,6 +4,7 @@ import { MAX_NOTES_LENGTH } from "@/lib/field-input";
 import {
   type AddSpouseInput,
   addSpouseInputFromFormData,
+  EDITABLE_UNION_FIELD_NAMES,
   editUnionInputFromFormData,
   MAX_UNION_SEQUENCE,
   PARTNER_MODES,
@@ -815,7 +816,7 @@ describe("reading a correction to a union that already exists", () => {
     expect(union).not.toHaveProperty("sequence");
   });
 
-  it("writes the stored partners and order, whatever the submission said", () => {
+  it("keeps the stored partners, whatever the submission said", () => {
     const form = new FormData();
     form.set("unionId", UNION);
     form.set("type", "marriage");
@@ -826,18 +827,41 @@ describe("reading a correction to a union that already exists", () => {
     const result = validateUnionEdit(union, {
       partnerAId: ROSE,
       partnerBId: THOMAS,
-      sequence: 2,
     });
     if (!result.ok) throw new Error("expected valid");
 
     /*
-      The whole safety property of the edit flow, checked where it is decided:
-      changing who is in a union is `detachPartner`'s job and reordering it is
-      `reorderUnions`', and neither is reachable by posting to this one.
+      Half the safety property of the edit flow, checked where it is decided:
+      changing who is in a union is `detachPartner`'s job, and it is not
+      reachable by posting to this one.
     */
     expect(result.value.partnerAId).toBe(ROSE);
     expect(result.value.partnerBId).toBe(THOMAS);
-    expect(result.value.sequence).toBe(2);
+  });
+
+  it("states no sequence at all, so nothing downstream can write one", () => {
+    const form = new FormData();
+    form.set("unionId", UNION);
+    form.set("type", "marriage");
+    form.set("sequence", "7");
+
+    const { union } = editUnionInputFromFormData(form);
+    const result = validateUnionEdit(union, {
+      partnerAId: ROSE,
+      partnerBId: THOMAS,
+    });
+    if (!result.ok) throw new Error("expected valid");
+
+    /*
+      The other half, and it is an absence rather than a value. `null` here is
+      `validateUnion`'s "not stated" — which on the insert path means "place
+      this union last" and would be a destructive thing to write onto a row
+      that already has a place. `updateUnion` writes only
+      `EDITABLE_UNION_FIELD_NAMES`, so it never reaches the column at all; this
+      is the assertion that fails if somebody later writes the whole value.
+    */
+    expect(result.value.sequence).toBeNull();
+    expect(EDITABLE_UNION_FIELD_NAMES).not.toContain("sequence");
   });
 
   it("applies every rule `validateUnion` applies", () => {
@@ -851,7 +875,6 @@ describe("reading a correction to a union that already exists", () => {
     const result = validateUnionEdit(union, {
       partnerAId: ROSE,
       partnerBId: THOMAS,
-      sequence: 0,
     });
 
     expect(result.ok).toBe(false);
@@ -872,7 +895,6 @@ describe("reading a correction to a union that already exists", () => {
     const result = validateUnionEdit(union, {
       partnerAId: ROSE,
       partnerBId: null,
-      sequence: 0,
     });
     if (!result.ok) throw new Error("expected valid");
 

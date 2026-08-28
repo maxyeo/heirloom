@@ -14,6 +14,10 @@ import {
 } from "@/lib/entry-link-state";
 import type { FamilyGraph } from "@/lib/family-graph";
 import { emptyIndividualFormState } from "@/lib/individual-form-state";
+import {
+  emptyUnionEditState,
+  type UpdateUnionFormAction,
+} from "@/lib/union-edit-state";
 import { removedState } from "@/lib/removal-state";
 import {
   type AddSpouseFormAction,
@@ -86,6 +90,7 @@ function render(
   addSpouseAction?: AddSpouseFormAction,
   createIndividualAction?: IndividualFormAction,
   updateIndividualAction?: IndividualFormAction,
+  updateUnionAction?: UpdateUnionFormAction,
 ): HTMLElement {
   return mount(
     <FamilyTree
@@ -93,6 +98,7 @@ function render(
       addSpouseAction={addSpouseAction}
       createIndividualAction={createIndividualAction}
       updateIndividualAction={updateIndividualAction}
+      updateUnionAction={updateUnionAction}
     />,
   );
 }
@@ -1083,6 +1089,74 @@ describe("reaching the edit form", () => {
     expect(
       host.querySelector<HTMLInputElement>('[name="givenName"]')?.value,
     ).toBe("Walter");
+  });
+});
+
+describe("reaching the union edit form", () => {
+  /** A correction action that records nothing and refuses nothing. */
+  const inertUpdate: UpdateUnionFormAction = async () => emptyUnionEditState;
+
+  function editButton(host: HTMLElement): HTMLElement {
+    const found = host.querySelector<HTMLElement>('[data-edit-union="u1"]');
+    if (!found) throw new Error("no way in to the union edit form");
+    return found;
+  }
+
+  it("offers nothing when the canvas was given no action", () => {
+    const host = render(graph());
+    open(host, "rose");
+
+    expect(host.querySelector("[data-edit-union]")).toBeNull();
+  });
+
+  it("opens from the spouse row, naming the couple", () => {
+    const host = render(graph(), undefined, undefined, undefined, inertUpdate);
+    open(host, "rose");
+
+    click(editButton(host));
+
+    const dialog = host.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("Rose Hale and Walter Hale");
+    // The hidden reference is what makes this a correction rather than a
+    // second marriage, so it is worth asserting from the outside as well.
+    expect(
+      host.querySelector<HTMLInputElement>('input[name="unionId"]')?.value,
+    ).toBe("u1");
+  });
+
+  /**
+   * The assertion that would have caught the first version of this.
+   *
+   * `returnFocus` was written as an attribute selector built with
+   * `CSS.escape`, which jsdom does not implement — so closing the dialogue
+   * threw `TypeError` rather than moving focus, and nothing noticed because
+   * nothing closed it. Every exit from a surface on this canvas is expected to
+   * put focus somewhere deliberate; this is that expectation for this one.
+   */
+  it("puts focus back on the Edit button it came from", () => {
+    const host = render(graph(), undefined, undefined, undefined, inertUpdate);
+    open(host, "rose");
+
+    click(editButton(host));
+    pressEscape();
+
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(editButton(host));
+  });
+
+  it("closes when the record it was opened from closes", () => {
+    const host = render(graph(), undefined, undefined, undefined, inertUpdate);
+    open(host, "rose");
+    click(editButton(host));
+
+    // Escape leaves the dialogue; a second one leaves the panel under it. A
+    // dialogue about a union is about the record it was opened from.
+    pressEscape();
+    pressEscape();
+
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(panelLabel(host)).toBeNull();
   });
 });
 

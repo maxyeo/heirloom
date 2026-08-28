@@ -550,16 +550,24 @@ function FamilyTreeCanvas({
    * Resolved when the dialogue goes rather than held as an element, because
    * the panel behind it re-renders on every revalidation and the button that
    * opened this is not the same DOM node it was.
+   *
+   * Scanned and compared rather than interpolated into an attribute selector,
+   * for the reason `nodeElement` gives above: an id reaches this from the
+   * database, and building a selector out of one means escaping it correctly
+   * forever. `CSS.escape` would be the escape, and jsdom implements no `CSS`
+   * at all — so the version of this that read well was one that threw
+   * `TypeError` in every test that closed the dialogue, which is to say in
+   * every test anybody would write for this behaviour. Reading
+   * `dataset.editUnion` off each candidate has nothing to escape.
    */
-  const returnFocusToEditButton = useCallback(
-    () =>
-      editingUnionId === null
-        ? null
-        : document.querySelector<HTMLElement>(
-            `[data-edit-union="${CSS.escape(editingUnionId)}"]`,
-          ),
-    [editingUnionId],
-  );
+  const returnFocusToEditButton = useCallback((): HTMLElement | null => {
+    if (editingUnionId === null) return null;
+    const buttons = document.querySelectorAll<HTMLElement>("[data-edit-union]");
+    for (const button of buttons) {
+      if (button.dataset.editUnion === editingUnionId) return button;
+    }
+    return null;
+  }, [editingUnionId]);
 
   /**
    * Selecting somebody takes the add-person panel off the right-hand column.

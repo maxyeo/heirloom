@@ -160,16 +160,18 @@ export function EditUnionForm({
    * A failure with no input on screen to sit under.
    *
    * `error` is the union having been deleted or merged away in another tab.
-   * The three field messages folded in beside it belong to columns this form
-   * deliberately does not render — only a hand-made POST can get any of them
-   * refused, since `updateUnion` writes all three from the stored row, but a
-   * message with nowhere to go is a message nobody ever sees.
+   * The two partner messages folded in beside it belong to columns this form
+   * deliberately does not render, and one of them is genuinely reachable: a
+   * union whose partners have both become null fails "a union needs at least
+   * one partner", against a field the author cannot see. A message with
+   * nowhere to go is a message nobody ever sees.
+   *
+   * `sequence` is not folded in, because it cannot fire. Nothing reads it out
+   * of the form and nothing supplies it as an anchor, so `validateUnion` finds
+   * it unstated and has nothing to object to — see `UnionAnchors`.
    */
   const generalError =
-    state.error ??
-    state.unionErrors.partnerAId ??
-    state.unionErrors.partnerBId ??
-    state.unionErrors.sequence;
+    state.error ?? state.unionErrors.partnerAId ?? state.unionErrors.partnerBId;
 
   /**
    * The row was written, so this dialogue has nothing left to show.
