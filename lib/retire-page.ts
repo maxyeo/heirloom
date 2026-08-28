@@ -268,6 +268,16 @@ type Reader = Pick<typeof db, "select">;
  * after another on the one connection, which is the correct behaviour there —
  * a transaction is a single session — and costs nothing this page's render
  * budget notices.
+ *
+ * All four, including the two that live in other modules. `readEntryCategories`
+ * and `getEntryPerson` take a reader for the same reason `getFamilyGraph` does
+ * (`lib/family-graph.ts`): passing the transaction in is all it takes, and it
+ * is what makes "recomputed inside the writing transaction" true of the whole
+ * preview rather than of the half that happens to be written here. It also
+ * closes a shape that was latent rather than harmful — a `retirePage`
+ * transaction holding one pooled connection while waiting on a second cannot
+ * make progress if every connection in the pool is a transaction doing the
+ * same, and postgres.js defaults that pool to ten.
  */
 async function readRetirementPreviewIn(
   reader: Reader,
@@ -306,8 +316,8 @@ async function readRetirementPreviewIn(
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.revisions)
       .where(eq(schema.revisions.pageId, entry.id)),
-    readEntryCategories(entry.id),
-    getEntryPerson(entry.id),
+    readEntryCategories(entry.id, reader),
+    getEntryPerson(entry.id, reader),
   ]);
 
   return previewRetirement({

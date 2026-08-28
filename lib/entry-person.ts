@@ -41,6 +41,9 @@ import type { DatePrecision, DateQualifier } from "@/lib/family-graph";
  * deliberate omission and is argued at the field below.
  */
 
+/** Anything that can run a `select` — the pool, or a transaction. */
+type PersonReader = Pick<typeof db, "select">;
+
 /**
  * The person an entry is about, the dates that place them, and their face.
  *
@@ -109,11 +112,15 @@ export type EntryPerson = {
  * way.
  *
  * @param pageId the entry's `pages.id`
+ * @param reader the pool by default; a transaction when the caller has one.
+ *   `lib/retire-page.ts` passes the transaction it is retiring inside, so that
+ *   the subject its confirmation names is the subject the write saw
  */
 export async function getEntryPerson(
   pageId: string,
+  reader: PersonReader = db,
 ): Promise<EntryPerson | undefined> {
-  const [person] = await db
+  const [person] = await reader
     .select({
       id: schema.individuals.id,
       givenName: schema.individuals.givenName,

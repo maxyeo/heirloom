@@ -159,7 +159,13 @@ The harness is deliberately small, and one thing is simply not set up:
 
   The rule that falls out: **a Client Component that a test may want to mount
   should take its action, not import it.** `NewEntryForm` and `EntryEditForm`
-  predate this and still import theirs; neither is mounted by anything.
+  predate this and still import theirs. `CategoryRemoval`, `EntryRetirement`
+  and `EntryRestoration` came after it and import theirs too — each is a
+  confirmation and a button rather than a form with state worth asserting —
+  and none of the five is mounted by anything. Where the sentences beside such
+  a button _are_ worth asserting, the cheaper way out is to move them rather
+  than to rewire the component: `lib/retirement-copy.ts` is what that looks
+  like, and `lib/retirement-copy.test.ts` is the suite it buys.
 
   E2-T4 hit the same wall from a third direction, and the rule generalises:
   **take it, do not import it** — whatever "it" is. There the module that

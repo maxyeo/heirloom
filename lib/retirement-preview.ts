@@ -119,7 +119,15 @@ export type RetirementPreview = {
    * them there is something to find.
    */
   incomingLinks: TitledEntry[];
-  /** How many saved versions are kept. Never zero for an entry this app made. */
+  /**
+   * How many saved versions are kept.
+   *
+   * Never zero for an entry this app made: `createPageIn` writes the first
+   * revision in the same transaction as the entry, and `db/seed.ts` mirrors
+   * it. Zero is still reachable by a row that arrived another way, so
+   * `describeWhatIsKept` has a case for it rather than offering to keep all 0
+   * of them.
+   */
   revisionCount: number;
   /** The listings it leaves, alphabetically by name. */
   categories: NamedCategory[];
