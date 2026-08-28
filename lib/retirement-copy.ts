@@ -20,8 +20,9 @@ import type { RetirementPreview } from "@/lib/retirement-preview";
  * cannot carry them. It imports `retireEntryAction`, so mounting it drags a
  * `"use server"` module — and behind it Auth.js and `@/db` — into a suite that
  * has no `AUTH_*` and no `DATABASE_URL`. docs/testing.md names that trap and
- * names these components as the ones that still fall into it
- * (`NewEntryForm`, `EntryEditForm`, and `CategoryRemoval` beside them).
+ * keeps the list of components that fall into it; this one and
+ * `EntryRestoration` are on it, with `NewEntryForm`, `EntryEditForm` and
+ * `CategoryRemoval` beside them.
  *
  * Rather than restructure three components to fix it, the decision here is the
  * one this codebase makes everywhere else: the part worth testing is not the
@@ -109,11 +110,32 @@ export function describeIncomingLinks(preview: RetirementPreview): string {
 export function describeWhatIsKept(preview: RetirementPreview): string {
   const parts = ["Nothing is deleted."];
 
-  parts.push(
-    preview.revisionCount === 1
-      ? "Its one saved version is kept, and its history stays readable."
-      : `All ${preview.revisionCount} of its saved versions are kept, and its history stays readable.`,
-  );
+  /**
+   * Silent at zero, the same way the photographs clause below is silent at
+   * zero. "All 0 of its saved versions are kept" is ungrammatical, and "its
+   * history stays readable" would be a promise about an empty tab; "Nothing is
+   * deleted." already says the whole of what is true of a row with no history.
+   *
+   * No path through this application produces one — `createPageIn` writes the
+   * first revision in the same transaction as the entry, and `db/seed.ts`
+   * deliberately does the same so that the seeded database keeps the invariant
+   * the application maintains. The case is handled anyway because this module
+   * renders whatever the read hands it: a row can arrive another way (a
+   * hand-run `INSERT`, a restore that brought `pages` back without
+   * `revisions`, and every `.db.test.ts` fixture here that inserts `pages`
+   * directly), and `readRetirementPreviewIn` already defaults its aggregate to
+   * `0`. A count this sentence assumed rather than checked is the exact drift
+   * the copy exists to prevent. See {@link RetirementPreview.revisionCount}.
+   */
+  if (preview.revisionCount === 1) {
+    parts.push(
+      "Its one saved version is kept, and its history stays readable.",
+    );
+  } else if (preview.revisionCount > 1) {
+    parts.push(
+      `All ${preview.revisionCount} of its saved versions are kept, and its history stays readable.`,
+    );
+  }
 
   if (preview.imageCount === 1) {
     parts.push("The photograph in it stays exactly where it is.");
