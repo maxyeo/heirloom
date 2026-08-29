@@ -43,6 +43,32 @@ import {
  * docblocks under `app/wiki/` that quote a `/wiki/…` address in prose stay
  * prose.
  *
+ * ## The `revalidatePath` exemption that used to be here (`YEO-131`)
+ *
+ * `YEO-128` waved `revalidatePath` through by callee, on the grounds that it
+ * "operates on the route file structure, not the URL visible to users" and
+ * that nothing it takes is a link a reader can follow. That left nine calls in
+ * `app/wiki/actions.ts` interpolating the slug raw with no argument written
+ * beside them, which is what `YEO-131` was opened to settle.
+ *
+ * It settled the other way. `revalidatePath` does match a canonicalised form
+ * of the pathname, and a raw `#`, `?` or `/` in a slug misses it — the entry
+ * goes on serving stale content after an edit, silently. The nine now go
+ * through `entryCachePath` and `categoryCachePath`, which encode by Next's
+ * rule rather than by `encodeURIComponent`'s (`lib/wiki-paths.ts` carries the
+ * reading of the runtime, `lib/wiki-paths.cache-tags.test.ts` holds Next to
+ * it), and nothing under `/wiki` assembles a path of either kind by hand any
+ * more.
+ *
+ * So the exemption is **gone** rather than annotated. The `revalidatePath`
+ * calls that remain as literals are route *patterns* — `"/wiki/[slug]"` with a
+ * `"page"` type — which have no substitution in them and were never findings
+ * here. An exemption is a licence, and the argument for keeping this one had
+ * become "there is nothing it lets through", which is the argument for
+ * deleting it. `WikiPathExpression.callee` stays on the type; the next rule
+ * that needs to tell one call from another will want it, and
+ * `test/route-inventory.wiki-paths.test.ts` still covers it.
+ *
  * ## Where it looks
  *
  * `SOURCE_DIRS` — `app`, `components` and `lib`. An href is not only rendered
@@ -67,23 +93,6 @@ import {
 function isTest(file: string): boolean {
   return file.endsWith(".test.ts") || file.endsWith(".test.tsx");
 }
-
-/**
- * The one call that takes a `/wiki/…` string and does not mean a URL.
- *
- * `revalidatePath` names a **route file**, not an address: Next's own
- * reference says it "operates on the route file structure, not the URL visible
- * to users", which is also why `app/wiki/actions.ts` passes it patterns like
- * `/wiki/[slug]` beside the literal paths. Whether a literal path handed to it
- * should be percent-encoded is a real question with a different answer from
- * this one, and it is not this ticket's — nothing about it is a link a reader
- * can follow to the wrong page.
- *
- * Exempted by **callee** rather than by file, which is the distinction worth
- * keeping: `app/wiki/actions.ts` also holds four `redirect` calls, and those
- * are addresses. A file-level exemption would have waved all five through.
- */
-const ROUTE_PATTERN_CALL = "revalidatePath";
 
 /**
  * file -> why it builds an address without the helper.
@@ -139,17 +148,23 @@ describe("addresses under /wiki", () => {
     const offenders = built
       .filter(({ file }) => !(file in EXEMPT))
       .flatMap(({ file, expressions }) =>
-        expressions
-          .filter(({ callee }) => callee !== ROUTE_PATTERN_CALL)
-          .map(({ text }) => `${file}: ${text}`),
+        expressions.map(({ text }) => `${file}: ${text}`),
       );
 
-    // A line reaching this list is an href — or a `redirect`, or a
-    // `router.push` — that interpolates a value into a URL. Where that value
-    // is a slug, `pages.slug` is a `text` column and a `#`, a `?` or a space
-    // in it truncates or re-points the address with no error anywhere:
-    // `/wiki/rose?hall/history` is a live request for `/wiki/rose`. Build it
-    // with `entryPath` or `categoryPath` from `@/lib/wiki-paths`.
+    // A line reaching this list interpolates a value into a `/wiki/…` path.
+    // Where that value is a slug, `pages.slug` is a `text` column and a `#`, a
+    // `?` or a space in it goes wrong with no error anywhere — which way
+    // depends on what the path is *for*, and that is the whole of the choice
+    // between the two builders:
+    //
+    //   - an **href** — a `Link`, a `redirect`, a `router.push`. Build it with
+    //     `entryPath` or `categoryPath`. `/wiki/rose?hall/history` is a live
+    //     request for `/wiki/rose`.
+    //   - a **`revalidatePath` argument**. Build it with `entryCachePath` or
+    //     `categoryCachePath` (`YEO-131`). An href would not match here: the
+    //     cache key keeps a space decoded, so `entryPath` misses it.
+    //
+    // Both are in `@/lib/wiki-paths`, which argues the difference at length.
     expect(offenders).toEqual([]);
   });
 
@@ -189,17 +204,5 @@ describe("the exemptions", () => {
     for (const reason of Object.values(EXEMPT)) {
       expect(reason.length).toBeGreaterThan(0);
     }
-  });
-
-  it("leaves the route-pattern call reachable", () => {
-    // The other exemption, in the same direction. If `app/wiki/actions.ts`
-    // stops calling `revalidatePath` with an interpolated path, the `callee`
-    // filter above has quietly become a rule about nothing — and the next
-    // person to add one gets waved through by a clause nobody re-argued.
-    const patterns = built.flatMap(({ expressions }) =>
-      expressions.filter(({ callee }) => callee === ROUTE_PATTERN_CALL),
-    );
-
-    expect(patterns.length).toBeGreaterThan(0);
   });
 });

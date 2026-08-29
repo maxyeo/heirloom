@@ -1081,9 +1081,19 @@ export type WikiPathExpression = {
    * `null` where it is not an argument at all.
    *
    * Reported rather than filtered, on `schemaAccess`'s reasoning: not every
-   * `/wiki/…` string is an href, `revalidatePath` takes a route-file pattern
-   * rather than a URL, and which of those is exempt is a rule about this
-   * application that belongs beside the assertion applying it.
+   * `/wiki/…` string is an href, and which of those is exempt is a rule about
+   * this application that belongs beside the assertion applying it rather than
+   * here.
+   *
+   * That reasoning is worth keeping even though the one exemption it was
+   * written for is gone. `YEO-128` used this field to wave `revalidatePath`
+   * through, on the argument that it takes a route-file pattern rather than a
+   * URL; `YEO-131` then read the runtime and found that a path handed to it
+   * *is* canonicalised, by a rule of its own, and that a raw slug misses on a
+   * `#`, a `?` or a `/`. Those calls go through `entryCachePath` and
+   * `categoryCachePath` now, so `lib/wiki-paths.call-sites.test.ts` exempts no
+   * callee at all — see its docblock for why deleting the licence beat
+   * annotating it.
    */
   callee: string | null;
 };

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { categoryPath, entryPath } from "@/lib/wiki-paths";
+import {
+  categoryCachePath,
+  categoryPath,
+  entryCachePath,
+  entryPath,
+} from "@/lib/wiki-paths";
 import { routeFiles } from "@/test/route-inventory";
 
 /**
@@ -135,6 +140,59 @@ describe("entryPath", () => {
     // argument is the dangerous one. This is what that costs: nothing.
     expect(entryPath("x", "history", REVISION_ID)).toContain(REVISION_ID);
     expect(entryPath("x", "history")).toContain("/history");
+  });
+});
+
+/**
+ * The other address shape (`YEO-131`).
+ *
+ * `entryCachePath` and `categoryCachePath` build what `revalidatePath` matches
+ * — an implicit cache tag, canonicalised by decoding the pathname and
+ * re-escaping only the path delimiters — which is not the same string as the
+ * href for a slug holding a space, a `&`, a `+`, or any of the other
+ * characters `encodeURIComponent` escapes and Next's cache key does not.
+ *
+ * These are the plain string assertions. The round trip that *establishes* the
+ * rule lives in `lib/wiki-paths.cache-tags.test.ts` rather than here, because
+ * it drives Next's own `revalidatePath` and `getImplicitTags` and has to set
+ * `globalThis.AsyncLocalStorage` before either loads — which makes every
+ * import in that file dynamic, and is not a constraint worth spreading to the
+ * tests above.
+ */
+describe("entryCachePath and categoryCachePath", () => {
+  it("escape the path delimiters and nothing else", () => {
+    expect(entryCachePath("rose-hall")).toBe("/wiki/rose-hall");
+    expect(entryCachePath("rose#hall")).toBe("/wiki/rose%23hall");
+    expect(entryCachePath("rose?hall")).toBe("/wiki/rose%3Fhall");
+    expect(entryCachePath("rose/hall")).toBe("/wiki/rose%2Fhall");
+    expect(categoryCachePath("the fire?")).toBe("/wiki/category/the fire%3F");
+  });
+
+  it("leave a space, and everything else, decoded", () => {
+    // The half that makes this a separate function rather than an alias for
+    // `entryPath`. Next decodes the pathname to build the cache key, so an
+    // encoded space in the argument matches nothing.
+    expect(entryCachePath("rose hall")).toBe("/wiki/rose hall");
+    expect(entryCachePath("rose&hall=1")).toBe("/wiki/rose&hall=1");
+    expect(entryCachePath("北京")).toBe("/wiki/北京");
+
+    expect(entryPath("rose hall")).not.toBe(entryCachePath("rose hall"));
+  });
+
+  it("re-escape a percent-sequence that already spells a delimiter", () => {
+    // A slug holding the literal text `%23` would otherwise collide in the
+    // cache key with a slug holding a `#`. Next escapes the `%`; so does this.
+    expect(entryCachePath("a%23b")).toBe("/wiki/a%2523b");
+    expect(entryCachePath("100%")).toBe("/wiki/100%");
+  });
+
+  it("append the segments below the entry", () => {
+    expect(entryCachePath("rose hall", "history")).toBe(
+      "/wiki/rose hall/history",
+    );
+    expect(entryCachePath("rose#hall", "history", REVISION_ID)).toBe(
+      `/wiki/rose%23hall/history/${REVISION_ID}`,
+    );
   });
 });
 
