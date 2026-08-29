@@ -11,6 +11,7 @@ import {
   type PersonEntryActions,
   type PersonEntryFormAction,
 } from "@/lib/entry-link-state";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The seam between the tree and the wiki, on the panel (E2-T2, `YEO-25`).
@@ -85,7 +86,7 @@ export function PersonEntry({
         <>
           <p>
             <Link
-              href={`/wiki/${encodeURIComponent(entry.slug)}`}
+              href={entryPath(entry.slug)}
               className="text-link hover:underline"
             >
               {entry.title}

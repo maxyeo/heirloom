@@ -9,6 +9,7 @@ import {
   type RecentChange,
 } from "@/lib/recent-changes-feed";
 import { treeHref } from "@/lib/tree-selection";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The home page's "Recently changed" section as markup (E8-T4, `YEO-58`),
@@ -120,13 +121,7 @@ function RecentChangeRow({ change }: { change: RecentChange }) {
     case "entry-changed":
       return (
         <>
-          {/* `encodeURIComponent` rather than the raw slug, for the reason
-              `app/wiki/page.tsx` spells out: the column is `text`, so nothing
-              in the schema stops a slug holding a `?`, a `#` or a space, any
-              of which would truncate or re-point the href. */}
-          <Link href={`/wiki/${encodeURIComponent(change.slug)}`}>
-            {change.title}
-          </Link>
+          <Link href={entryPath(change.slug)}>{change.title}</Link>
           <ChangeByline
             what="edited by"
             who={formatChangeAuthor(change.editor)}

@@ -13,6 +13,7 @@ import {
   type SavePageResult,
 } from "@/lib/save-page";
 import { requireSession, UnauthorizedError } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Server actions for the wiki.
@@ -272,7 +273,7 @@ export async function createPageAction(
    * script produces a non-Latin slug (see `lib/entry-slug.ts`), and the
    * `Location` header of the no-JavaScript response has to be a valid URL.
    */
-  redirect(`/wiki/${encodeURIComponent(result.slug)}/edit`);
+  redirect(entryPath(result.slug, "edit"));
 }
 
 /**
@@ -440,7 +441,7 @@ export async function restoreRevisionAction(
    * non-Latin slug and the `Location` header of the no-JavaScript response has
    * to be a valid URL.
    */
-  redirect(`/wiki/${encodeURIComponent(slug)}`);
+  redirect(entryPath(slug));
 }
 
 /**
@@ -720,7 +721,7 @@ export async function retireEntryAction(
    * (`lib/entry-slug.ts`) and the `Location` header of the no-JavaScript
    * response has to be a valid URL.
    */
-  redirect(`/wiki/${encodeURIComponent(slug)}`);
+  redirect(entryPath(slug));
 }
 
 /**
@@ -808,5 +809,5 @@ export async function restoreEntryAction(
    * slug the reader was standing on is the slug they end up on, because the
    * tombstone never gave it up.
    */
-  redirect(`/wiki/${encodeURIComponent(result.slug)}`);
+  redirect(entryPath(result.slug));
 }

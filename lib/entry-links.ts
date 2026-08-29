@@ -1,4 +1,5 @@
 import { compareEntriesByTitle, type TitledEntry } from "@/lib/page-index";
+import { ENTRY_PATH_PREFIX, entryPath } from "@/lib/wiki-paths";
 
 /**
  * Linking one entry to another (E2-T5, `YEO-28`) — the address arithmetic and
@@ -30,13 +31,6 @@ import { compareEntriesByTitle, type TitledEntry } from "@/lib/page-index";
  */
 
 /**
- * The path every entry lives under. One constant rather than two string
- * literals, because `entryHref` and `entrySlugFromHref` have to agree about it
- * or a link this module writes is a link it cannot read back.
- */
-const ENTRY_PATH_PREFIX = "/wiki/";
-
-/**
  * The address of an entry, as an `href` to put in the document.
  *
  * **Site-relative, and that is the acceptance criterion.** No origin, no
@@ -46,19 +40,21 @@ const ENTRY_PATH_PREFIX = "/wiki/";
  * break *silently*, still resolving, still blue, pointing at somebody else's
  * server.
  *
- * `encodeURIComponent` rather than interpolating the slug raw, for the reason
- * `app/wiki/page.tsx` gives at its own `Link`: `pages.slug` is a `text`
- * column, so nothing in the schema stops a slug holding a `?`, a `#` or a
- * space, and any of those would truncate or re-point the href. It encodes `/`
- * too, which is correct — a slug is one path segment. Non-Latin slugs are the
- * normal case here rather than a corner (see `lib/entry-slug.ts`), and they
- * percent-encode and decode back losslessly.
+ * The encoding argument that used to be restated here now lives in
+ * `lib/wiki-paths.ts`, which is where it is actually applied (`YEO-128`).
+ *
+ * Kept as a name of its own rather than replaced at its call sites by
+ * `entryPath`, because it means something narrower: this is the address that
+ * goes *into stored HTML*, and `entrySlugFromHref` below is the half that
+ * reads it back out. The pair is the contract — a link the editor writes has
+ * to be one the link panel can still recognise years later — and that is a
+ * different promise from "the URL of a page", which is `entryPath`'s.
  *
  * @param slug the entry's `pages.slug`, as stored
  * @returns a site-relative href, e.g. `/wiki/rose-hall`
  */
 export function entryHref(slug: string): string {
-  return `${ENTRY_PATH_PREFIX}${encodeURIComponent(slug)}`;
+  return entryPath(slug);
 }
 
 /**

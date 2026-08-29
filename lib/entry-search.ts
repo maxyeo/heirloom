@@ -1,4 +1,5 @@
 import { collapseWhitespace, decodeHtmlEscapes } from "@/lib/html-text";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Turning Postgres's answer to a full-text search over entries (E8-T1,
@@ -237,11 +238,7 @@ export function toEntryMatches(rows: readonly EntrySearchRow[]): EntryMatch[] {
     id: row.id,
     slug: row.slug,
     title: row.title,
-    // The same form every other link to an entry takes — see
-    // `app/wiki/page.tsx`. A slug can hold any character a title can
-    // (`lib/entry-slug.ts` keeps non-Latin ones), so it is encoded rather
-    // than interpolated raw.
-    href: `/wiki/${encodeURIComponent(row.slug)}`,
+    href: entryPath(row.slug),
     snippet: parseSnippet(row.snippet),
   }));
 }

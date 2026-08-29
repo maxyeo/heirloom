@@ -1056,6 +1056,197 @@ export function schemaAccessOfSource(
 }
 
 /**
+ * The prefix that makes a string an address in the wiki.
+ *
+ * Deliberately `"/wiki/"` with the trailing slash rather than `"/wiki"`: the
+ * index itself takes no slug, so a template that begins `/wiki` and continues
+ * with a substitution is not a thing anybody writes, and matching the shorter
+ * prefix would make `/wikitext` a finding.
+ */
+const WIKI_PATH_PREFIX = "/wiki/";
+
+/** How a reported expression stands in for whatever was interpolated. */
+const SUBSTITUTION = "${…}";
+
+export type WikiPathExpression = {
+  /**
+   * The expression as written, with each substitution collapsed to `${…}`,
+   * so a finding reads as the shape of the href rather than as a line number.
+   * The shape is what somebody will search the file for; the line number is
+   * what `YEO-126` had already moved once by the time this was written.
+   */
+  text: string;
+  /**
+   * The name of the function whose argument list it sits directly in, or
+   * `null` where it is not an argument at all.
+   *
+   * Reported rather than filtered, on `schemaAccess`'s reasoning: not every
+   * `/wiki/…` string is an href, `revalidatePath` takes a route-file pattern
+   * rather than a URL, and which of those is exempt is a rule about this
+   * application that belongs beside the assertion applying it.
+   */
+  callee: string | null;
+};
+
+/**
+ * Every `/wiki/…` address a module assembles out of pieces, read off the
+ * syntax tree (`YEO-128`).
+ *
+ * The subject is `lib/wiki-paths.ts`: `entryPath` and `categoryPath` encode
+ * each segment, because `pages.slug` is a `text` column and a slug holding a
+ * `?`, a `#` or a space silently truncates or re-points an href built by
+ * interpolation. That guarantee holds only while every address goes through
+ * them, and `YEO-128` is what happens when it is left to seventeen authors to
+ * remember: eight hrefs on the history routes interpolated the slug raw, some
+ * within twenty lines of an encoded one, and nothing said they meant to.
+ *
+ * So this finds the *shape* rather than the mistake. A guard for the missing
+ * `encodeURIComponent` specifically would have passed the nine call sites
+ * that had it and left the helper optional — and "optional helper, applied by
+ * hand" is precisely the arrangement that drifted. What is forbidden here is
+ * assembling the address at all.
+ *
+ * ## Two spellings, and why not more
+ *
+ *   - **A template literal** whose first text chunk opens with `/wiki/` and
+ *     which has at least one substitution. A template with no substitution is
+ *     a constant address — `"/wiki/new"` — and there is nothing in it to
+ *     encode.
+ *   - **A `+` concatenation** whose leftmost operand is a string opening with
+ *     `/wiki/`. Nothing in the tree is written this way; it is here because it
+ *     is the first thing somebody reaches for on the day a template literal
+ *     starts failing, and a guard that can be stepped around by reformatting
+ *     is a guard that teaches people to reformat.
+ *
+ * Only the *outermost* concatenation is reported, so `"/wiki/" + a + b` is one
+ * finding rather than two.
+ *
+ * ## What this cannot see
+ *
+ * A tripwire, not a proof — the caveat every scanner in this file states.
+ *
+ * **It matches on the opening text.** An address built as
+ * `` `${base}/history` ``, where `base` came from somewhere else, does not
+ * begin with `/wiki/` and is invisible here. That is the deliberate half of
+ * the trade: the alternative is flagging every template that mentions the
+ * word, which would catch `app/tree/actions.ts`'s sentence telling a member to
+ * "Open /wiki/<slug> to restore it" — English prose, not an href — and an
+ * exemption for a sentence is an exemption nobody can later tell from a real
+ * one.
+ *
+ * **It reads syntax, not values.** `encodeURIComponent` inside the template
+ * makes no difference to what is reported, and should not: the rule is that
+ * the helper builds the address, and a hand-encoded interpolation is the
+ * arrangement this exists to end rather than an acceptable one.
+ *
+ * @param file repo-relative
+ */
+export function wikiPathExpressions(file: string): WikiPathExpression[] {
+  return wikiPathExpressionsOfSource(read(file), file);
+}
+
+/**
+ * `wikiPathExpressions`, against source text rather than a path.
+ *
+ * Exported for `test/route-inventory.wiki-paths.test.ts`, and for the reason
+ * `schemaAccessOfSource` gives: this repository is the thing the guard keeps
+ * clean, so every branch that *finds* something is unreachable from the tree
+ * once the guard is green. Without fixtures, a checker whose whole job is to
+ * catch a spelling nobody has written yet would be tested only by its own
+ * silence.
+ *
+ * @param source the module's text
+ * @param fileName only used to pick TS vs TSX parsing, and in diagnostics
+ */
+export function wikiPathExpressionsOfSource(
+  source: string,
+  fileName = "fixture.ts",
+): WikiPathExpression[] {
+  const parsed = parseSource(source, fileName);
+
+  const found: WikiPathExpression[] = [];
+
+  /**
+   * Argument node -> the name it is an argument to.
+   *
+   * The walk is pre-order, so a call is always seen before the arguments
+   * inside it and the entry is in place by the time one is reported. Built
+   * here rather than read off `node.parent`, which `parseSource` does not
+   * populate — `setParentNodes` is off, and turning it on to answer one
+   * question would change the tree every other checker in this file walks.
+   */
+  const argumentOf = new Map<ts.Node, string>();
+
+  /** Nested `+` nodes already covered by an outer concatenation. */
+  const consumed = new Set<ts.Node>();
+
+  const isPlus = (node: ts.Node): node is ts.BinaryExpression =>
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken;
+
+  /** The text of a string or substitution-free template, or `null`. */
+  const literalText = (node: ts.Node): string | null =>
+    ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
+      ? node.text
+      : null;
+
+  /** The left-hand end of a `+` chain, however deeply nested. */
+  const leftmost = (node: ts.BinaryExpression): ts.Node => {
+    let left: ts.Node = node.left;
+    while (isPlus(left)) left = left.left;
+    return left;
+  };
+
+  // Never satisfied: every address is wanted, not just the first.
+  some(parsed, (node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = ts.isPropertyAccessExpression(node.expression)
+        ? node.expression.name.text
+        : ts.isIdentifier(node.expression)
+          ? node.expression.text
+          : null;
+      if (callee) {
+        for (const argument of node.arguments) argumentOf.set(argument, callee);
+      }
+    }
+
+    if (ts.isTemplateExpression(node)) {
+      if (node.head.text.startsWith(WIKI_PATH_PREFIX)) {
+        const text = node.templateSpans.reduce(
+          (accumulated, span) => accumulated + SUBSTITUTION + span.literal.text,
+          node.head.text,
+        );
+        found.push({
+          text: "`" + text + "`",
+          callee: argumentOf.get(node) ?? null,
+        });
+      }
+      return false;
+    }
+
+    if (isPlus(node) && !consumed.has(node)) {
+      const opening = literalText(leftmost(node));
+      if (opening?.startsWith(WIKI_PATH_PREFIX)) {
+        // The whole chain is one address, so the `+` nodes inside it are not
+        // separate findings.
+        some(node, (inner) => {
+          if (isPlus(inner)) consumed.add(inner);
+          return false;
+        });
+        found.push({
+          text: JSON.stringify(opening) + " + " + SUBSTITUTION,
+          callee: argumentOf.get(node) ?? null,
+        });
+      }
+    }
+
+    return false;
+  });
+
+  return found;
+}
+
+/**
  * The `matcher` patterns as `proxy.ts` actually declares them.
  *
  * Read out of the source text rather than imported, for a reason that is not

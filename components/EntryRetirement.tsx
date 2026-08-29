@@ -13,6 +13,7 @@ import {
   describeWhatIsKept,
 } from "@/lib/retirement-copy";
 import type { RetirementPreview } from "@/lib/retirement-preview";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The confirmation for retiring an entry (E1-T10, `YEO-122`) — the form on
@@ -127,9 +128,7 @@ export function EntryRetirement({ preview }: EntryRetirementProps) {
               {preview.incomingLinks.map((linked, index) => (
                 <span key={linked.slug}>
                   {index > 0 ? ", " : null}
-                  <Link href={`/wiki/${encodeURIComponent(linked.slug)}`}>
-                    {linked.title}
-                  </Link>
+                  <Link href={entryPath(linked.slug)}>{linked.title}</Link>
                 </span>
               ))}
               .
@@ -165,10 +164,7 @@ export function EntryRetirement({ preview }: EntryRetirementProps) {
           there is no unsaved work here to decide about, so leaving is just
           navigation back to the entry.
         */}
-        <Link
-          href={`/wiki/${encodeURIComponent(preview.slug)}`}
-          className="text-note"
-        >
+        <Link href={entryPath(preview.slug)} className="text-note">
           Cancel
         </Link>
       </div>

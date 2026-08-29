@@ -7,6 +7,7 @@ import {
   restoreRevisionAction,
   type RestoreFormState,
 } from "@/app/wiki/actions";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The confirmation half of one-click restore (E1-T7, `YEO-21`): two hidden
@@ -94,7 +95,7 @@ export function RestoreRevisionForm({
           back to the version being looked at.
         */}
         <Link
-          href={`/wiki/${encodeURIComponent(slug)}/history/${revisionId}`}
+          href={entryPath(slug, "history", revisionId)}
           className="text-note"
         >
           Cancel

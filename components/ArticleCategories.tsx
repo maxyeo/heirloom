@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { NamedCategory } from "@/lib/category-name";
+import { categoryPath } from "@/lib/wiki-paths";
 
 /**
  * The bar at the foot of an article saying what it belongs to (E11-T8,
@@ -83,14 +84,7 @@ export function ArticleCategories({ categories }: ArticleCategoriesProps) {
                 {" | "}
               </span>
             )}
-            {/* `encodeURIComponent` rather than interpolating the slug raw,
-                as the entry index does: the column is `text`, so nothing in
-                the schema stops a slug holding a `?`, a `#` or a space, and
-                any of those would silently truncate or re-point the href. It
-                encodes `/` too, which is correct — a slug is one segment. */}
-            <Link href={`/wiki/category/${encodeURIComponent(category.slug)}`}>
-              {category.name}
-            </Link>
+            <Link href={categoryPath(category.slug)}>{category.name}</Link>
           </li>
         ))}
       </ul>

@@ -14,6 +14,7 @@ import {
   sectionParam,
 } from "@/lib/section-edit";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The editor, at `/wiki/[slug]/edit`.
@@ -100,7 +101,7 @@ export default async function EntryEditPage({
    * it cannot: this runs before the editor mounts.
    */
   if (entry.deletedAt !== null) {
-    redirect(`/wiki/${encodeURIComponent(slug)}`);
+    redirect(entryPath(slug));
   }
 
   /**

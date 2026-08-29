@@ -31,6 +31,7 @@ import {
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { insertSectionEditLinks } from "@/lib/section-edit";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Reads a session cookie and a database row, so there is nothing to prerender.
@@ -166,7 +167,7 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
           </p>
 
           <p className="mt-2 text-caption">
-            <Link href={`/wiki/${encodeURIComponent(entry.slug)}/history`}>
+            <Link href={entryPath(entry.slug, "history")}>
               View revision history
             </Link>{" "}
             {/* The promise the acceptance criteria make, stated where somebody
@@ -461,9 +462,7 @@ export default async function WikiEntryPage({ params }: WikiEntryPageProps) {
         here to make.
       */}
       <p className="mt-8 border-t border-rule-soft pt-4 text-note text-ink-muted">
-        <Link href={`/wiki/${encodeURIComponent(entry.slug)}/retire`}>
-          Retire this entry
-        </Link>
+        <Link href={entryPath(entry.slug, "retire")}>Retire this entry</Link>
       </p>
     </main>
   );

@@ -17,6 +17,7 @@ import {
 import { getRevisionById } from "@/lib/revisions";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Reads a session cookie and two database rows, so — as with the two routes
@@ -233,7 +234,7 @@ export default async function RevisionDetailPage({
           <p className="mt-2 text-caption text-ink-muted">
             This version was restored by{" "}
             {formatRevisionAuthor(revision.createdBy)} from{" "}
-            <Link href={`/wiki/${slug}/history/${restoredFrom.id}`}>
+            <Link href={entryPath(slug, "history", restoredFrom.id)}>
               the version saved{" "}
               <time dateTime={revisionTimestampIso(restoredFrom.createdAt)}>
                 {formatRevisionTimestamp(restoredFrom.createdAt)}
@@ -244,7 +245,7 @@ export default async function RevisionDetailPage({
         ) : null}
 
         <p className="mt-2 text-caption">
-          <Link href={`/wiki/${slug}`}>
+          <Link href={entryPath(slug)}>
             {/*
               Named for what is at that address rather than for what this page
               is not (`YEO-123`). "View the current version" beside "It may
@@ -258,7 +259,7 @@ export default async function RevisionDetailPage({
               : "View the retired entry"}
           </Link>
           {" · "}
-          <Link href={`/wiki/${slug}/history`}>View revision history</Link>
+          <Link href={entryPath(slug, "history")}>View revision history</Link>
           {" · "}
           {/*
             The restore entry point (E1-T7). Every revision has a page of its
@@ -273,7 +274,7 @@ export default async function RevisionDetailPage({
             not change anything. The route names the version, states what
             restoring does to the history, and holds the button that posts.
           */}
-          <Link href={`/wiki/${slug}/history/${revision.id}/restore`}>
+          <Link href={entryPath(slug, "history", revision.id, "restore")}>
             Restore this version
           </Link>
         </p>

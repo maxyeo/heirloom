@@ -19,6 +19,7 @@ import {
 } from "@/lib/revision-format";
 import { getRevisionById } from "@/lib/revisions";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The confirmation step of one-click restore (E1-T7, `YEO-21`).
@@ -145,11 +146,11 @@ export default async function RestoreRevisionPage({
       <h1>Restore an earlier version</h1>
 
       <p className="mb-6 text-caption">
-        <Link href={`/wiki/${slug}/history/${revision.id}`}>
+        <Link href={entryPath(slug, "history", revision.id)}>
           Return to this version
         </Link>
         {" · "}
-        <Link href={`/wiki/${slug}/history`}>View revision history</Link>
+        <Link href={entryPath(slug, "history")}>View revision history</Link>
       </p>
 
       {/*
@@ -204,10 +205,8 @@ export default async function RestoreRevisionPage({
          */
         <p className="text-caption text-ink-muted">
           This entry has been retired, so there is nothing to restore into.{" "}
-          <Link href={`/wiki/${encodeURIComponent(slug)}`}>
-            Restore the entry itself first
-          </Link>
-          , then restore this version.
+          <Link href={entryPath(slug)}>Restore the entry itself first</Link>,
+          then restore this version.
         </p>
       ) : alreadyCurrent ? (
         /**
@@ -218,10 +217,7 @@ export default async function RestoreRevisionPage({
          */
         <p className="text-caption text-ink-muted">
           This is already what the entry says, so there is nothing to restore.{" "}
-          <Link href={`/wiki/${encodeURIComponent(slug)}`}>
-            Return to the current version
-          </Link>
-          .
+          <Link href={entryPath(slug)}>Return to the current version</Link>.
         </p>
       ) : (
         <RestoreRevisionForm slug={page.slug} revisionId={revision.id} />

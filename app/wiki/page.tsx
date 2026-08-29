@@ -4,6 +4,7 @@ import Link from "next/link";
 import { formatUpdatedAt } from "@/lib/page-index";
 import { listPages } from "@/lib/pages";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Reads a session cookie and the `pages` table, so there is nothing to
@@ -87,14 +88,7 @@ export default async function WikiIndexPage() {
                 key={entry.slug}
                 className="flex flex-wrap items-baseline justify-between gap-x-4 border-b border-rule-soft py-1.5"
               >
-                {/* `encodeURIComponent` rather than interpolating the slug
-                    raw: the column is `text`, so nothing in the schema stops a
-                    slug holding a `?`, a `#` or a space, and any of those
-                    would silently truncate or re-point the href. It encodes
-                    `/` too, which is correct — a slug is one path segment. */}
-                <Link href={`/wiki/${encodeURIComponent(entry.slug)}`}>
-                  {entry.title}
-                </Link>
+                <Link href={entryPath(entry.slug)}>{entry.title}</Link>
 
                 <time
                   // The machine-readable half: the exact instant, where

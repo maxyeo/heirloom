@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { entryPath } from "@/lib/wiki-paths";
+
 /**
  * The panel that tells a reader the entry behind this page has been retired
  * (E1-T10, `YEO-122`; `YEO-123`).
@@ -85,10 +87,7 @@ export function RetiredEntryNotice({
     <div className="mb-6 rounded-panel border border-rule bg-wash px-4 py-3 text-caption">
       <p>This entry has been retired. {children}</p>
       <p className="mt-2">
-        <Link href={`/wiki/${encodeURIComponent(slug)}`}>
-          Go to the entry to restore it
-        </Link>
-        .
+        <Link href={entryPath(slug)}>Go to the entry to restore it</Link>.
       </p>
     </div>
   );

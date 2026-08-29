@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { listCategories } from "@/lib/categories";
 import { requireSession } from "@/lib/session";
+import { categoryPath } from "@/lib/wiki-paths";
 
 /**
  * Every category there is (E11-T8, `YEO-78`), at `/wiki/category`.
@@ -101,15 +102,7 @@ export default async function CategoryIndexPage() {
                 key={category.slug}
                 className="border-b border-rule-soft py-1.5"
               >
-                {/* `encodeURIComponent` rather than interpolating the slug
-                    raw, as every other list in this app does: the column is
-                    `text`, and nothing in the schema stops a slug holding a
-                    `?`, a `#` or a space. */}
-                <Link
-                  href={`/wiki/category/${encodeURIComponent(category.slug)}`}
-                >
-                  {category.name}
-                </Link>
+                <Link href={categoryPath(category.slug)}>{category.name}</Link>
               </li>
             ))}
           </ul>

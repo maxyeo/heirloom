@@ -24,6 +24,7 @@ import {
 } from "@/lib/revision-format";
 import { getRevisionById } from "@/lib/revisions";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Reads a session cookie, two search parameters and three database rows, so —
@@ -247,7 +248,7 @@ export default async function CompareRevisionsPage({
 
   const { page, older, newer } = loaded;
 
-  const historyHref = `/wiki/${encodeURIComponent(slug)}/history`;
+  const historyHref = entryPath(slug, "history");
   const rows = diffEntryContent(older, newer);
   const changed = hasContentChanges(rows);
   // The title is stored on the revision alongside the body, so renaming an
@@ -263,7 +264,7 @@ export default async function CompareRevisionsPage({
       <p className="mb-6 text-caption">
         <Link href={historyHref}>Return to revision history</Link>
         {" · "}
-        <Link href={`/wiki/${encodeURIComponent(slug)}`}>
+        <Link href={entryPath(slug)}>
           {/*
             Named for what is at that address (`YEO-123`). This page compares
             two things the entry used to say, so "the current version" is
@@ -315,9 +316,7 @@ export default async function CompareRevisionsPage({
           <div key={label}>
             <p className="text-note text-ink-muted">{label}</p>
             <p>
-              <Link
-                href={`/wiki/${encodeURIComponent(slug)}/history/${revision.id}`}
-              >
+              <Link href={entryPath(slug, "history", revision.id)}>
                 <time dateTime={revisionTimestampIso(revision.createdAt)}>
                   {formatRevisionTimestamp(revision.createdAt)}
                 </time>
