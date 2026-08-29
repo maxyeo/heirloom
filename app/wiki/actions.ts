@@ -13,7 +13,7 @@ import {
   type SavePageResult,
 } from "@/lib/save-page";
 import { requireSession, UnauthorizedError } from "@/lib/session";
-import { entryPath } from "@/lib/wiki-paths";
+import { categoryCachePath, entryCachePath, entryPath } from "@/lib/wiki-paths";
 
 /**
  * Server actions for the wiki.
@@ -97,9 +97,19 @@ export async function savePageAction(
    *
    * Only on a real write: revalidating after a no-op would throw away a good
    * cache entry for a request that changed nothing.
+   *
+   * `entryCachePath`, not `entryPath` and not an interpolated template
+   * (`YEO-131`). `revalidatePath` matches an implicit cache tag rather than a
+   * URL, and Next canonicalises that tag by decoding the pathname and
+   * re-escaping the path delimiters only — so a raw slug misses on a `#`, a
+   * `?` or a `/`, and an `encodeURIComponent`-ed one misses on a space.
+   * `lib/wiki-paths.ts` carries the reading of the runtime that establishes
+   * that, and `lib/wiki-paths.cache-tags.test.ts` holds Next to it. Every
+   * call below that takes a slug goes through the helper for the same reason;
+   * the ones spelled as literals are route *patterns*, which take none.
    */
   if (result.status === "saved") {
-    revalidatePath(`/wiki/${edit.slug}`);
+    revalidatePath(entryCachePath(edit.slug));
 
     /**
      * And the index (E1-T9), which shows this entry's title and the date it
@@ -407,11 +417,11 @@ export async function restoreRevisionAction(
    * the way in and shows them the restore they just performed as not having
    * happened.
    */
-  revalidatePath(`/wiki/${slug}`);
-  revalidatePath(`/wiki/${slug}/history`);
+  revalidatePath(entryCachePath(slug));
+  revalidatePath(entryCachePath(slug, "history"));
   // The history list has a new row, and the revision that was restored *from*
   // now has a descendant that links back to it.
-  revalidatePath(`/wiki/${slug}/history/${revisionId}`);
+  revalidatePath(entryCachePath(slug, "history", revisionId));
   // And the index (E1-T9), which shows this entry's title and the date it last
   // changed — a restore can move both.
   revalidatePath("/wiki");
@@ -535,7 +545,7 @@ export async function deleteCategoryAction(
    * them calls `requireSession()`.
    */
   revalidatePath("/wiki/[slug]", "page");
-  revalidatePath(`/wiki/category/${slug}`);
+  revalidatePath(categoryCachePath(slug));
   // And the index of every category, which has just lost a row — the page the
   // redirect below sends the reader to.
   revalidatePath("/wiki/category");
@@ -671,10 +681,10 @@ export async function retireEntryAction(
    * router cache, which would otherwise show the reader the entry they just
    * retired still sitting in the index they navigate to next.
    */
-  revalidatePath(`/wiki/${slug}`);
+  revalidatePath(entryCachePath(slug));
   // The entry's own route, which now renders a tombstone rather than an
   // article — and the history views around it, whose chrome names the entry.
-  revalidatePath(`/wiki/${slug}/history`);
+  revalidatePath(entryCachePath(slug, "history"));
   // The index (E1-T9), which has lost a row.
   revalidatePath("/wiki");
   // The front page, which renders the recently-changed feed (E8-T4) this entry
@@ -795,8 +805,8 @@ export async function restoreEntryAction(
    * is still gone, which is the one thing that would make this feature feel
    * unreliable.
    */
-  revalidatePath(`/wiki/${slug}`);
-  revalidatePath(`/wiki/${slug}/history`);
+  revalidatePath(entryCachePath(slug));
+  revalidatePath(entryCachePath(slug, "history"));
   revalidatePath("/wiki");
   revalidatePath("/");
   revalidatePath("/wiki/[slug]", "page");
