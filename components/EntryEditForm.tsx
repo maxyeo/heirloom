@@ -8,6 +8,7 @@ import { EntryEditor } from "@/components/EntryEditor";
 import type { NamedCategory } from "@/lib/category-name";
 import type { TitledEntry } from "@/lib/page-index";
 import { savePageAction } from "@/app/wiki/actions";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The editor page's form: a title field, the E1-T2 editor, and a save.
@@ -159,7 +160,7 @@ export function EntryEditForm({
           // `unchanged` is not a failure: the author pressed save on something
           // they had not altered, and the right response is the same as a
           // successful save — show them the entry.
-          router.push(`/wiki/${encodeURIComponent(slug)}`);
+          router.push(entryPath(slug));
           return;
         case "empty-title":
           setError("An entry needs a title. Add one and save again.");
@@ -311,7 +312,7 @@ export function EntryEditForm({
         <button
           type="button"
           disabled={saving}
-          onClick={() => router.replace(`/wiki/${encodeURIComponent(slug)}`)}
+          onClick={() => router.replace(entryPath(slug))}
           className="text-note text-link hover:underline disabled:text-ink-muted disabled:no-underline"
         >
           Cancel

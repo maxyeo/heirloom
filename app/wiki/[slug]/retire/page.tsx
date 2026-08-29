@@ -6,6 +6,7 @@ import { cache } from "react";
 import { EntryRetirement } from "@/components/EntryRetirement";
 import { readRetirementPreview } from "@/lib/retire-page";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The confirmation step of retiring an entry (E1-T10, `YEO-122`).
@@ -96,13 +97,9 @@ export default async function RetireEntryPage({ params }: RetirePageProps) {
       <h1>Retire an entry</h1>
 
       <p className="mb-6 text-caption">
-        <Link href={`/wiki/${encodeURIComponent(slug)}`}>
-          Return to the entry
-        </Link>
+        <Link href={entryPath(slug)}>Return to the entry</Link>
         {" · "}
-        <Link href={`/wiki/${encodeURIComponent(slug)}/history`}>
-          View revision history
-        </Link>
+        <Link href={entryPath(slug, "history")}>View revision history</Link>
       </p>
 
       <EntryRetirement preview={preview} />

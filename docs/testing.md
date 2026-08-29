@@ -586,6 +586,63 @@ entirely plausible and is wrong about every relationship in it. That is the
 failure the pairwise matrix exists to catch, and the one a spot check of a
 few named pairs would sail past.
 
+## Every `/wiki` address comes from one place
+
+`lib/wiki-paths.call-sites.test.ts` is the third test in here that is not about
+a feature. `docs/architecture.md` ("Addresses under `/wiki`") states the rule —
+every URL below `/wiki` is built by `entryPath` or `categoryPath` and by
+nothing else — and this is where it is enforced.
+
+**Why the guard is not "the slug is encoded".** That was the obvious shape and
+it is the wrong one. The bug `YEO-128` was filed about was eight raw hrefs on
+the history routes; the nine hrefs beside them, in the same directory, were
+encoded correctly by hand. A guard checking for `encodeURIComponent` would have
+passed all nine and left the helper optional — and a rule applied by hand at
+seventeen call sites is what produced the eight. `restore/page.tsx` encoded in
+two places and not in two others, twenty lines apart, and neither the author
+nor the reviewer saw it. So what is forbidden is assembling the address at all,
+which leaves nothing to remember and nothing to review.
+
+**What it scans.** `wikiPathExpressions` in `test/route-inventory.ts`, off the
+syntax tree, over `app`, `components` and `lib` — an href is not only rendered
+from a route, so a scan of `app/` alone would miss both
+`components/RecentChangesList.tsx` and `lib/entry-search.ts`. It reports two
+spellings: a template literal whose first text chunk opens with `/wiki/` and
+has something interpolated into it, and a `+` concatenation whose left end is
+such a string. Nothing is written the second way; it is there because it is
+what somebody reaches for the day the first one starts failing.
+
+Reading the tree rather than the text is what lets the several docblocks under
+`app/wiki/` that quote a `/wiki/…` address in prose stay prose — and what lets
+the guard's own test file, which is full of the shape, not be a call site.
+
+**Two exemptions, and they are different in kind.** `revalidatePath` is exempt
+by **callee**, not by file: it names a route file rather than a URL, and
+`app/wiki/actions.ts` — which is where all of them are — also holds four
+`redirect` calls that _are_ addresses, so a file-level exemption would have
+waved those through too. `lib/article-tabs.ts` is exempt by file, because it
+builds its tab hrefs from a segment taken out of `usePathname()`, which is
+already percent-encoded; running that through `entryPath` would encode it
+twice. Both are asserted to still match something, so a stale one fails rather
+than widening quietly.
+
+**The round trip is the acceptance test.** `lib/wiki-paths.test.ts` takes a
+slug holding a `#`, a `?`, a space, and one holding all three plus a `/`, and
+carries it slug → `entryPath` → a `URL` → the route pattern → the slug again,
+for every route below `/wiki/[slug]/history`. Each stage is done by something
+other than this repository: `URL` is the platform's own parser and is what
+actually decides whether the `?` ended the path, and the route patterns come
+from `routeFiles()`, so the test cannot pass against a route somebody typed
+into it that does not exist. Asserting `%20` appears in the output would only
+prove `encodeURIComponent` was called, which was never in doubt.
+
+**The checker has its own test.** `test/route-inventory.wiki-paths.test.ts`,
+for the reason the boundary and schema-access checkers have theirs: once this
+guard is green, every branch that _finds_ something is unreachable from the
+real tree. The must-not-fire fixtures matter as much — a guard that reports
+`app/tree/actions.ts`'s English sentence about opening `/wiki/<slug>` is a
+guard somebody deletes rather than fixes.
+
 ## Fixtures carry the awkward value
 
 **A fixture that only ever carries a column's default is not coverage of that

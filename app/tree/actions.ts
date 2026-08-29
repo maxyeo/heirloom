@@ -77,6 +77,7 @@ import {
   movedUnionOrderState,
   type UnionOrderState,
 } from "@/lib/union-order-state";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Server actions for editing the tree (E3-T1, `YEO-29`).
@@ -854,7 +855,7 @@ export async function createEntryForPersonAction(
      * showing the wrong half of this.
      */
     revalidateTree();
-    redirect(`/wiki/${encodeURIComponent(result.slug)}`);
+    redirect(entryPath(result.slug));
   }
 
   /**
@@ -873,7 +874,7 @@ export async function createEntryForPersonAction(
    * for the same reason — a non-Latin name produces a non-Latin slug, and the
    * `Location` header of the no-JavaScript response has to be a valid URL.
    */
-  redirect(`/wiki/${encodeURIComponent(result.slug)}/edit`);
+  redirect(entryPath(result.slug, "edit"));
 }
 
 /**

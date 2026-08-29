@@ -368,6 +368,39 @@ rather than showing them to the author and deleting them on save. The editor
 must not be able to emit anything the allowlist discards; that rule now covers
 values as well as tags.
 
+### Addresses under `/wiki`
+
+Every URL below `/wiki` is built by `lib/wiki-paths.ts` — `entryPath(slug,
+…segments)` for an entry and the pages under it, `categoryPath(slug)` for a
+category listing — and by nothing else.
+
+The argument is about the schema rather than about who writes the slug.
+`pages.slug` and `categories.slug` are `text` columns with a unique constraint
+and no format check, so nothing stops one holding a `?`, a `#` or a space, and
+each of those breaks an interpolated href in a way that raises no error: `#`
+truncates the path, `?` turns the rest of it into a query string, and a space
+is not a character a URL may carry unescaped. `/wiki/rose?hall/history` is a
+perfectly good request for `/wiki/rose`. So every segment goes through
+`encodeURIComponent`, which also escapes `/` — correct, because a slug is one
+path segment.
+
+That `lib/create-page.ts` slugifies, and so no live row is likely to hold a `?`
+today, is a property of one write path rather than of the column. It is the
+same distinction "[Retiring an entry](#retiring-an-entry-and-why-every-reader-has-to-filter)"
+draws for `deleted_at`: a GEDCOM import stub, a hand-run `INSERT` or a future
+slug-editing surface can each put one there, and none of them would come
+looking here first.
+
+**Why a module and not a convention.** The rule was written out seven times
+and hand-applied at seventeen call sites, and eight of them — every href on the
+history routes — interpolated the slug raw, several within twenty lines of an
+encoded one in the same file (`YEO-128`). Nine were correct, which is the part
+worth noticing: a guard checking "the slug is encoded" would have passed all
+nine and left the helper optional, and optional-helper-applied-by-hand is the
+arrangement that drifted in the first place. So the rule is that the address is
+not assembled at a call site at all, and `lib/wiki-paths.call-sites.test.ts` is
+the tripwire — the same move `LIVE_PAGES` is for `deleted_at`.
+
 ### Links between entries
 
 A link from one entry to another is stored as a plain, **site-relative**

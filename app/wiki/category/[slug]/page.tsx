@@ -6,6 +6,7 @@ import { cache } from "react";
 import { CategoryRemoval } from "@/components/CategoryRemoval";
 import { getCategoryBySlug, listEntriesInCategory } from "@/lib/categories";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Everything filed under one category (E11-T8, `YEO-78`), at
@@ -134,14 +135,7 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
           <ul role="list" className="mt-4">
             {entries.map((entry) => (
               <li key={entry.slug} className="border-b border-rule-soft py-1.5">
-                {/* `encodeURIComponent` rather than interpolating the slug
-                    raw, as the entry index does: the column is `text`, so
-                    nothing in the schema stops a slug holding a `?`, a `#` or
-                    a space, and any of those would silently truncate or
-                    re-point the href. */}
-                <Link href={`/wiki/${encodeURIComponent(entry.slug)}`}>
-                  {entry.title}
-                </Link>
+                <Link href={entryPath(entry.slug)}>{entry.title}</Link>
               </li>
             ))}
           </ul>

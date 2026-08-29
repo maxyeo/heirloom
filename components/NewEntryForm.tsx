@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState, useId } from "react";
 
 import { createPageAction, type NewEntryFormState } from "@/app/wiki/actions";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * The whole of starting an entry (E1-T8, `YEO-22`): one field.
@@ -126,10 +127,8 @@ export function NewEntryForm({ suggestedTitle = "" }: NewEntryFormProps) {
         */
         <p id={errorId} role="alert" className="mt-2 text-note text-ink">
           A retired entry, “{state.title}”, already has this address.{" "}
-          <Link href={`/wiki/${encodeURIComponent(state.slug)}`}>
-            Open it to restore it
-          </Link>
-          , or give this one a different title.
+          <Link href={entryPath(state.slug)}>Open it to restore it</Link>, or
+          give this one a different title.
         </p>
       ) : null}
 

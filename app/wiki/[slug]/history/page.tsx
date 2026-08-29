@@ -12,6 +12,7 @@ import {
 } from "@/lib/revision-format";
 import { listRevisionsForPage } from "@/lib/revisions";
 import { requireSession } from "@/lib/session";
+import { entryPath } from "@/lib/wiki-paths";
 
 /**
  * Reads a session cookie and two database queries, so — as with the read
@@ -135,7 +136,7 @@ export default async function RevisionHistoryPage({
               </span>
             ) : null}
 
-            <Link href={`/wiki/${slug}/history/${revision.id}`}>
+            <Link href={entryPath(slug, "history", revision.id)}>
               <time dateTime={revisionTimestampIso(revision.createdAt)}>
                 {formatRevisionTimestamp(revision.createdAt)}
               </time>
@@ -163,7 +164,7 @@ export default async function RevisionHistoryPage({
       <h1>Revision history: {page.title}</h1>
 
       <p className="mb-6 text-caption">
-        <Link href={`/wiki/${slug}`}>
+        <Link href={entryPath(slug)}>
           {/*
             Named for what is actually at that address (`YEO-123`). On a
             retired entry it is a tombstone, and "the current version" would
@@ -245,10 +246,7 @@ export default async function RevisionHistoryPage({
               `action` is written out rather than left to default to the
               current URL, because the target is a different route.
             */
-            <form
-              method="get"
-              action={`/wiki/${encodeURIComponent(slug)}/history/compare`}
-            >
+            <form method="get" action={entryPath(slug, "history", "compare")}>
               <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <button
                   type="submit"
