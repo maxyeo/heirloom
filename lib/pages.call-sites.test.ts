@@ -95,6 +95,20 @@ import {
  * registered expected count. That is a real design and it is not built here,
  * because a count nobody can explain is worse than a rule everybody can.
  *
+ * **Test files are out of scope by construction**, not by coincidence
+ * (`YEO-130`). `!isTest(file)` below removes them from the population both
+ * halves of this file read, and since `YEO-127` that filter is the only thing
+ * standing between the spelling rule and a real file in this tree:
+ * `lib/relationship-derivation.test.ts` opens with
+ * `import * as schema from "@/db/schema"`, which the rule now names as a door
+ * and would report. It would not have before `YEO-127`, when the
+ * discriminator read the local binding alone and that import lands on
+ * `schema` like the canonical one does. So an exclusion that used to keep out
+ * a shape the rule waved through anyway now keeps out a specific file the
+ * rule would fail on, and narrowing `isTest` has quietly become a breaking
+ * change rather than a tidy-up. `TESTS_THE_RULE_WOULD_REPORT` below records
+ * which file and why, and fails out loud if either stops being so.
+ *
  * Two smaller things it does not do, for the record. It guards `pages` and no
  * other table — `revisions` and `page_categories` have no soft delete of
  * their own to forget, so there is nothing yet for the same rule to protect
@@ -212,10 +226,46 @@ const EXEMPT: Record<string, string> = {
  * read that shows anybody anything. Requiring each to name the predicate would
  * turn every teardown into an exemption, and a register of fifteen exemptions
  * is a register nobody reads.
+ *
+ * That argument is about the scan. Since `YEO-127` this filter is load-bearing
+ * for the spelling rule as well, and for one file that exists rather than for
+ * a shape nobody has written — `TESTS_THE_RULE_WOULD_REPORT` below is the
+ * record of which, and the block at the end of this file is what keeps the
+ * record honest (`YEO-130`).
  */
 function isTest(file: string): boolean {
   return file.endsWith(".test.ts") || file.endsWith(".test.tsx");
 }
+
+/**
+ * Every test under `SOURCE_DIRS` that `isTest` excludes and the spelling rule
+ * would otherwise report, with the argument for each (`YEO-130`).
+ *
+ * `EXEMPT`'s shape, for `EXEMPT`'s reason: an exclusion worth keeping is one
+ * somebody can read the case for. The difference is that `EXEMPT` is consulted
+ * by a rule and this is not — `!isTest(file)` has already removed these files
+ * before anything here is read, and deleting this constant would change no
+ * verdict. What it buys is the failure. The block at the end of this file
+ * asserts the list is exact, so a contributor who narrows `isTest` for an
+ * unrelated reason, or writes a second test in this shape, meets an assertion
+ * with the argument attached instead of a red suite in a file they were not
+ * editing.
+ *
+ * It is worth having now and was not before. Until `YEO-127` the rule could
+ * not tell `import * as schema from "@/db/schema"` from
+ * `import { schema } from "@/db"` — it discriminated on the local binding and
+ * both land on `schema` — so the entry below names a shape the rule as it
+ * then stood would have waved through even in scope. Teaching the rule
+ * the difference is what turned this exclusion from a convenience into a
+ * guarantee, and a guarantee nobody wrote down is one somebody removes.
+ */
+const TESTS_THE_RULE_WOULD_REPORT: Record<string, string> = {
+  [join("lib", "relationship-derivation.test.ts")]:
+    "enumerates the schema's own exports with `Object.values` to prove no " +
+    "table stores a relationship, and reaches `@/db/schema` rather than " +
+    "`@/db` so that the client module stays out of the import graph of a " +
+    "file that must run with no DATABASE_URL — see its header",
+};
 
 /**
  * The local name the schema must be bound to.
@@ -434,6 +484,69 @@ describe("queries against schema.pages", () => {
     );
 
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * What the file set leaves out, asserted rather than described (`YEO-130`).
+   *
+   * Every other block here proves something about the files this one scans.
+   * This proves the one thing worth knowing about the file it does not: that
+   * `!isTest(file)` is load-bearing, for which file, and that nothing else has
+   * quietly joined it. Without this the assertion above passes for two
+   * different reasons that look identical from the outside — because the tree
+   * is clean, and because the one file that is not was filtered out first.
+   *
+   * The omission is deliberate and stays deliberate. A derivation test that
+   * reads table metadata is not a way the application shows anybody a retired
+   * entry, which is the only thing this file is about.
+   */
+  describe("the tests the file set leaves out", () => {
+    const scanned = sourceFiles(SOURCE_DIRS);
+    const tests = scanned.filter(isTest);
+    const recorded = Object.keys(TESTS_THE_RULE_WOULD_REPORT);
+
+    it("keeps no record of a file that is no longer there", () => {
+      // `EXEMPT`'s stale check, for `EXEMPT`'s reason: an argument nobody has
+      // to make again is an argument the next person widens. A rename leaves
+      // the key naming nothing, and the exclusion undocumented again.
+      const stale = recorded.filter((file) => !tests.includes(file));
+
+      expect(stale).toEqual([]);
+    });
+
+    it("excludes them by rule, not by their being outside the tree", () => {
+      // The premise, and the half a reader would otherwise have to take on
+      // trust. `sourceFiles` enumerates these exactly as it enumerates every
+      // module the scan reads; `!isTest` is the whole of the difference.
+      for (const file of recorded) {
+        expect(scanned).toContain(file);
+        expect(files).not.toContain(file);
+      }
+    });
+
+    it("names every test the rule would report, and no others", () => {
+      // The assertion that makes narrowing `isTest` a decision rather than an
+      // accident. A new test written in one of `otherDoors`' shapes fails
+      // here, where the argument for excluding it is, rather than in the
+      // block above once somebody tightens the file set for another reason.
+      const reported = tests.filter(
+        (file) => otherDoors(schemaAccess(file)).length > 0,
+      );
+
+      expect(reported.sort()).toEqual([...recorded].sort());
+    });
+
+    it("reports the shape `YEO-127` closed, spelled out", () => {
+      // Named rather than counted, because the count is what the entry costs
+      // and the spelling is what it is about: this is exactly the namespace
+      // import the fixture below pins, in a real file, reached through
+      // `schemaAccess` rather than a string.
+      expect(
+        otherDoors(
+          schemaAccess(join("lib", "relationship-derivation.test.ts")),
+        ),
+      ).toEqual(['import * as schema from "@/db/schema"']);
+    });
   });
 });
 
