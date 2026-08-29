@@ -168,9 +168,10 @@ export default async function RevisionDetailPage({
         /*
           The entry itself has been retired (E1-T10, `YEO-122`), and until
           `YEO-123` this page said nothing about it — it rendered a retired
-          entry's prose under a banner ending "It may differ significantly from
-          the current version", beside a link offering to show that current
-          version, which is a tombstone.
+          entry's prose under a banner that then ended "It may differ
+          significantly from the current version" (the sentence `YEO-126` has
+          since dropped in this case), beside a link offering to show that
+          current version, which is a tombstone.
 
           Above the historical banner rather than inside it, because the two
           statements are about different things and the retirement is the
@@ -248,11 +249,19 @@ export default async function RevisionDetailPage({
           <Link href={entryPath(slug)}>
             {/*
               Named for what is at that address rather than for what this page
-              is not (`YEO-123`). "View the current version" beside "It may
-              differ significantly from the current version" reads as an offer
-              to go and see the entry as it stands — and on a retired entry
-              what it reaches is a tombstone, which is not a version of
-              anything.
+              is not (`YEO-123`). On a retired entry `/wiki/<slug>` answers
+              with a tombstone, and a tombstone is not a version of the entry
+              — so "View the current version" would offer a reading of it as
+              it stands that nothing at the other end can supply.
+
+              Argued from the address alone, because the reason first given
+              here has stopped sitting beside the link: the label was justified
+              by the banner above ending "It may differ significantly from the
+              current version", and `YEO-126` stopped rendering that sentence
+              in precisely the case this branch is about
+              (`describeDivergenceFromCurrent` returns `null` for a retired
+              entry). The name would still be wrong if the banner said nothing
+              at all, which is why it is defended that way now.
             */}
             {page.deletedAt === null
               ? "View the current version"
