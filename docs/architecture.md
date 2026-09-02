@@ -391,6 +391,27 @@ draws for `deleted_at`: a GEDCOM import stub, a hand-run `INSERT` or a future
 slug-editing surface can each put one there, and none of them would come
 looking here first.
 
+**And the column is staying that way, which is a decision (`YEO-132`).** The
+obvious rejoinder to the paragraph above is to constrain the column instead.
+That was audited and refused, on evidence rather than on taste: PostgreSQL's
+regex engine has no `\p{L}` or `\p{N}`, and its nearest class, `[[:alnum:]]`,
+is strictly narrower than they are — it refuses `½-acre-farm` and `henry-ⅷ`,
+which `slugFromTitle` mints from the ordinary titles "½ Acre Farm" and
+"Henry Ⅷ", so a constraint would make entry creation fail on a legal title in
+a product built on the promise that it cannot. How much _else_ it refuses
+depends on the locale and ICU build of the server applying it, and the three
+PostgreSQL installations this repository runs on disagree with each other. A
+branded `Slug` type was refused separately, for the reason `lib/create-page.ts`
+already gave about uniqueness: TypeScript is not an authority over what a
+column holds.
+
+The full argument and the measurements live on `pages.slug` in `db/schema.ts`,
+beside the column they are about; `db/slug-format.db.test.ts` re-derives them
+against a real Postgres on every CI run, so the decision goes red rather than
+stale if its premise ever changes. The consequence for this section is that
+`lib/wiki-paths.ts` is not defence in depth — it is the only enforcement there
+is, and it is not to be relaxed on the grounds that a slug "cannot" hold a `#`.
+
 **Why a module and not a convention.** The rule was written out seven times
 and hand-applied at seventeen call sites, and eight of them — every href on the
 history routes — interpolated the slug raw, several within twenty lines of an

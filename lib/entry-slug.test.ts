@@ -9,6 +9,7 @@ import {
   MAX_SLUG_LENGTH,
   NUMBERED_CANDIDATES,
   RESERVED_SLUGS,
+  SLUG_FORMAT,
   slugCandidate,
   slugFromTitle,
 } from "@/lib/entry-slug";
@@ -213,5 +214,82 @@ describe("RESERVED_SLUGS", () => {
     expect(
       staticSegments.filter((segment) => !RESERVED_SLUGS.has(segment)),
     ).toEqual([]);
+  });
+});
+
+describe("SLUG_FORMAT", () => {
+  /**
+   * The invariant `db/schema.ts` documents the `slug` columns as holding
+   * (`YEO-132`), asserted against the only thing that enforces it.
+   *
+   * These are not edge cases hunted for; they are the cases the rest of this
+   * file already establishes matter — non-Latin scripts, accents, apostrophes,
+   * punctuation-only titles, the length cap — re-read as a single question:
+   * whatever came out, is it a slug? Nothing outside this module mints one,
+   * so if every path through `slugFromTitle` satisfies this, every stored
+   * slug does.
+   */
+  const TITLES = [
+    "Rose Hall",
+    "  ...Rose Hall!  ",
+    "Rose (née Hall), 1901–1984",
+    "O'Brien",
+    "Émile Zola",
+    "Пётр Ильич",
+    "Ελληνικά",
+    "Gerard Yeo 楊",
+    "北京",
+    "日本語",
+    // Numbers Unicode calls letters and digits that POSIX does not — the
+    // pair that decides the schema's argument. See `db/slug-format.db.test.ts`.
+    "Henry Ⅷ",
+    "½ Acre Farm",
+    // Nothing survives the separator pass, so `FALLBACK_SLUG` answers.
+    "🙂",
+    "…",
+    "!!!",
+    "",
+    "   ",
+    // Past `MAX_SLUG_LENGTH`, with and without a boundary to cut at.
+    "Rose ".repeat(40),
+    "R".repeat(200),
+    "北".repeat(200),
+  ];
+
+  it("describes everything slugFromTitle mints", () => {
+    for (const title of TITLES) {
+      const slug = slugFromTitle(title);
+      expect(slug, `slugFromTitle(${JSON.stringify(title)})`).toMatch(
+        SLUG_FORMAT,
+      );
+    }
+  });
+
+  it("survives the disambiguating suffixes", () => {
+    // `slugCandidate` is the other half of the mint path: a base that
+    // satisfies the invariant must still satisfy it once numbered, and once
+    // the numbering runs out and the tail goes random.
+    for (const title of TITLES) {
+      const base = slugFromTitle(title);
+      for (const attempt of [0, 1, 2, NUMBERED_CANDIDATES - 1]) {
+        expect(slugCandidate(base, attempt)).toMatch(SLUG_FORMAT);
+      }
+      expect(slugCandidate(base, NUMBERED_CANDIDATES)).toMatch(SLUG_FORMAT);
+    }
+  });
+
+  it("rejects the characters the path builders exist to escape", () => {
+    // The complement, so the assertion above cannot pass by being vacuous.
+    // Each of these is a character `lib/wiki-paths.ts` names as breaking an
+    // href or a cache tag, and none of them is a slug this module can mint.
+    for (const bad of [
+      "rose hall",
+      "rose#hall",
+      "rose?hall",
+      "rose/hall",
+      "",
+    ]) {
+      expect(bad).not.toMatch(SLUG_FORMAT);
+    }
   });
 });

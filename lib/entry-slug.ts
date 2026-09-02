@@ -105,6 +105,34 @@ const APOSTROPHES = /['‘’ʼʹ՚＇]/gu;
 const SEPARATORS = /[^\p{L}\p{N}]+/gu;
 
 /**
+ * What a slug is, as a value rather than as a sentence (`YEO-132`).
+ *
+ * The exact complement of `SEPARATORS` above, plus the `-` that replaces a run
+ * of them. `slugFromTitle` maps every non-letter, non-digit run to a hyphen
+ * and `FALLBACK_SLUG` covers the case where nothing survives, so every slug
+ * this module mints matches this and none of them is empty; `slugCandidate`
+ * appends `-2` or `-<base36>` and stays inside it.
+ *
+ * Exported because until `YEO-132` the invariant existed only as the shape of
+ * one regex halfway down one file, and everything else that reasoned about it
+ * did so from memory. Naming it lets `lib/entry-slug.test.ts` assert it over
+ * this module's output rather than restate it, and lets `db/schema.ts` point
+ * at it when saying what the `slug` columns hold. A rule with one
+ * implementation cannot drift; `lib/wiki-paths.ts` makes the same move for
+ * addresses.
+ *
+ * **It is not a validator on a write path, and adding one is not the missing
+ * step.** Nothing accepts a slug from outside — there is no slug parameter
+ * anywhere in the product (`lib/create-page.ts`) — so the only strings this
+ * could be run against are strings this module has just produced. Its readers
+ * are a test and a docblock. `db/schema.ts` records at the columns themselves
+ * why the database does not enforce it either, and
+ * `db/slug-format.db.test.ts` re-derives that finding against a real Postgres
+ * on every CI run.
+ */
+export const SLUG_FORMAT = /^[\p{L}\p{N}-]+$/u;
+
+/**
  * Strip the accent from an accented Latin letter, and only from those.
  *
  * NFD splits `é` into `e` + a combining acute, which is what makes accent

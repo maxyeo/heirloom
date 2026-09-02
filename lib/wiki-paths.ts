@@ -5,7 +5,9 @@
  * ## The rule this file exists to hold
  *
  * `pages.slug` and `categories.slug` are `text` columns with a unique
- * constraint and no format check. Nothing in the schema stops a slug holding
+ * constraint and no format check — deliberately, and `YEO-132` is where that
+ * was decided rather than merely observed; the argument is on `pages.slug` in
+ * `db/schema.ts`. Nothing in the schema stops a slug holding
  * a `?`, a `#` or a space, and each of those breaks an interpolated href in
  * its own quiet way: `#` truncates the path and turns the rest into a
  * fragment, `?` turns it into a query string, and a space is not a character
@@ -62,6 +64,26 @@
  * `deleted_at`: a GEDCOM import stub, a hand-run `INSERT` or a future
  * slug-editing surface can each put one there, and none of them would think
  * to come looking here. Encoding costs nothing on a slug that needed none.
+ *
+ * ## `YEO-132` settled that this stays true, and made it load-bearing
+ *
+ * The section above used to be an argument with an obvious rejoinder: *then
+ * constrain the column*. `YEO-132` took that seriously, audited the deployed
+ * database — 5 entry rows, 0 category rows, every one already conforming, and
+ * an import ledger that has never run — and then found the constraint cannot
+ * be written. PostgreSQL has no `\p{L}`; its nearest class, `[[:alnum:]]`,
+ * refuses `½-acre-farm` and `henry-ⅷ`, which `slugFromTitle` mints from
+ * ordinary titles, and how much else it refuses depends on the locale and ICU
+ * build of the server evaluating it. The measurement is on `pages.slug`, and
+ * `db/slug-format.db.test.ts` re-derives it against a real Postgres on every
+ * CI run.
+ *
+ * So the columns stay permissive, and the consequence lands here. **These
+ * four builders are not defence in depth. They are the defence.** There is no
+ * second line behind them and there is not going to be one, so nothing in
+ * this file is to be relaxed on the grounds that a slug "cannot" hold a `#`:
+ * that guarantee lives in exactly one function, and this file is what holds
+ * when a future writer does not route through it.
  *
  * ## Nothing is imported
  *
