@@ -209,6 +209,136 @@ export const pages = pgTable(
   "pages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * The entry's address, and the whole of what decides it (`YEO-132`).
+     *
+     * ## The invariant
+     *
+     * Every slug here is a string of Unicode letters, Unicode digits and
+     * hyphens, and is never empty — `SLUG_FORMAT` in `lib/entry-slug.ts`, the
+     * exact complement of the separator run that `slugFromTitle` collapses.
+     *
+     * ## What enforces it, and what does not
+     *
+     * **`slugFromTitle` enforces it, and nothing else does.** Every write goes
+     * through it: `lib/create-page.ts` derives the base from it, extends it
+     * with `slugCandidate`, or reuses a retired row's existing slug, and
+     * `db/seed.ts` calls it too. There is deliberately no slug parameter
+     * anywhere in the product, so no caller can supply one.
+     *
+     * **The unique index does not.** It arbitrates *which* address is free —
+     * `lib/create-page.ts` argues at length why that question belongs to the
+     * database and not to a check in TypeScript — and says nothing about what
+     * an address may contain.
+     *
+     * **There is no `CHECK` constraint here, on purpose.** That is the
+     * decision `YEO-132` was opened to make, and the argument is below rather
+     * than in a commit message, because the next person to notice the gap
+     * will be looking at this line.
+     *
+     * ## The audit
+     *
+     * Against the deployed database (Supabase, PostgreSQL 17.6) on
+     * 2026-09-01: `pages` held 5 rows and `categories` 0, and every one of
+     * them satisfied `SLUG_FORMAT`. The `public` schema held no `CHECK`
+     * constraint of any kind, and `gedcom_imports` was empty — so the import
+     * path `drizzle/0006_import_ledger.sql` added has never run, and "every
+     * row came from `slugFromTitle`" is a fact about this database rather
+     * than an assumption about its history. Nothing needed cleaning up, and
+     * a constraint would have been a one-line migration.
+     *
+     * ## Why there is no constraint anyway
+     *
+     * **Because PostgreSQL cannot express this invariant, and every
+     * approximation of it available is wrong in a way that is worse than not
+     * having one.**
+     *
+     * Its regex engine has no `\p{L}` and no `\p{N}`. Handed the invariant's
+     * own source it refuses to compile it — `invalid escape \ sequence`,
+     * SQLSTATE 2201B — so a migration carrying `SLUG_FORMAT` verbatim simply
+     * never applies. That is the *safe* failure, and it is not the one to
+     * watch for.
+     *
+     * The one to watch for is that Drizzle's `check()` takes a `sql` tagged
+     * template, and a tagged template is not a raw string. `\p` is not a
+     * JavaScript escape, so it collapses to a bare `p` before Postgres sees
+     * anything: writing the pattern here, in this file, in the obvious way
+     * yields the character class `p { L } N -`. It compiles, it migrates, it
+     * deploys, it rejects every real slug and accepts `pLN`, and nothing
+     * anywhere reports a problem.
+     *
+     * The nearest thing the engine does have is `[[:alnum:]]`, and it is
+     * **strictly narrower** than "letter or digit". POSIX `alnum` is
+     * `alpha` plus `digit`, which is `\p{L}` plus `\p{Nd}` — it excludes
+     * `\p{Nl}` and `\p{No}` entirely. Those are not exotic: `slugFromTitle`
+     * turns "½ Acre Farm" into `½-acre-farm` and "Henry Ⅷ" into `henry-ⅷ`,
+     * both perfectly good slugs under the invariant, and a constraint spelled
+     * with `alnum` refuses to store either. Entry creation would then fail in
+     * front of an author holding a legal title, in a product whose write path
+     * is built on the promise that it cannot (`lib/entry-slug.ts`: "there is
+     * no error to show them and no field for them to fix, because the field
+     * does not exist"). That alone settles it.
+     *
+     * It is worse than a fixed narrowing, though, because `[[:alnum:]]`
+     * consults the database's `LC_CTYPE`, and `x COLLATE "und-x-icu"`
+     * consults the server's ICU. Both vary across the three PostgreSQL
+     * installations this repository already runs on. Measured, not recalled
+     * — cells are `db-ctype`/`und-x-icu`, `Y` accepted and `n` refused:
+     *
+     * | slug            | dev 15.18, ctype `C` | CI 17.11, `en_US.utf8` | prod 17.6, `en_US.UTF-8` |
+     * | --------------- | -------------------- | ---------------------- | ------------------------ |
+     * | `rose-hall`     | Y / Y                | Y / Y                  | Y / Y                    |
+     * | `gerard-yeo-楊` | **n** / Y            | Y / Y                  | Y / Y                    |
+     * | `пётр-ильич`    | **n** / Y            | Y / Y                  | Y / Y                    |
+     * | `henry-ⅷ`       | n / n                | **Y** / n              | n / n                    |
+     * | `½-acre-farm`   | n / n                | n / n                  | n / n                    |
+     *
+     * Three things to read out of that table. `gerard-yeo-楊` is a row that
+     * exists in production today, and the developer's own database would
+     * refuse to store it. `henry-ⅷ` is accepted by CI and refused by
+     * production **under the same declared locale**, because the two ship
+     * different glibc — so a constraint could go green on a pull request and
+     * reject writes after deploy. And pinning the collation does not rescue
+     * it. Of the 142,939 codepoints `slugFromTitle` can leave in a slug, all
+     * three servers refuse the same 1,151 outright even under `und-x-icu` —
+     * every `\p{Nl}` and `\p{No}`, which is what `½` and `Ⅷ` are — and they
+     * disagree with each other about a further 4,382, because they carry ICU
+     * collation versions 153.136, 153.128 and 153.121 respectively.
+     *
+     * A constraint whose meaning depends on which machine applied it is not
+     * an invariant. It is three invariants wearing one name, and the failure
+     * it produces — writes accepted here and refused there — is exactly the
+     * class of bug `YEO-116` and `YEO-120` were spent on.
+     *
+     * ## Why not a branded `Slug` type either
+     *
+     * It was the third option on the table, and it is refused for the reason
+     * `lib/create-page.ts` already gave about uniqueness: TypeScript is not
+     * an authority over what a column holds. A brand constrains values in
+     * flight, and the only writer of slugs is already the only minter of
+     * them, so it would add ceremony exactly where the risk is zero. Where
+     * the risk is not zero — a hand-run `INSERT`, a future importer, a
+     * restore from a foreign dump — a type is not present at all. Worse,
+     * spelling this column `.$type<Slug>()` would have every read hand back a
+     * `Slug` with nothing having checked it: the type system asserting an
+     * invariant that neither it nor the database verifies, which is a lie
+     * told in a place readers trust.
+     *
+     * ## So what does hold the line
+     *
+     * `lib/wiki-paths.ts`, and it is not defence in depth — it is the
+     * defence. Because this column is permissive and will stay that way,
+     * `entryPath`, `categoryPath`, `entryCachePath` and `categoryCachePath`
+     * are the only reason a slug outside `SLUG_FORMAT` cannot silently
+     * corrupt a link or a cache tag. That file states the same position from
+     * the other end, under "Why the schema is the argument, not the write
+     * path", and the two agree by construction rather than by coincidence.
+     *
+     * `db/slug-format.db.test.ts` keeps this docblock honest: it re-derives
+     * the finding against whatever Postgres CI supplies, and goes red if the
+     * engine ever grows the ability to say what `SLUG_FORMAT` says — at which
+     * point this decision is worth reopening, and the test says so.
+     */
     slug: text("slug").notNull().unique(),
     title: text("title").notNull(),
     bodyHtml: text("body_html").notNull().default(""),
@@ -587,7 +717,21 @@ export const revisions = pgTable(
  */
 export const categories = pgTable("categories", {
   id: uuid("id").primaryKey().defaultRandom(),
-  /** The address at `/wiki/category/[slug]`, and the de-duplication key. */
+  /**
+   * The address at `/wiki/category/[slug]`, and the de-duplication key.
+   *
+   * Same column, same invariant, same decision as `pages.slug` (`YEO-132`):
+   * Unicode letters, digits and hyphens (`SLUG_FORMAT` in
+   * `lib/entry-slug.ts`), enforced by `slugFromTitle` alone, with no `CHECK`
+   * constraint and a recorded argument for why one cannot be written. That
+   * argument is on `pages.slug` rather than repeated here, because it is one
+   * decision about one invariant and two copies of it would be two things to
+   * keep true.
+   *
+   * The audit behind it covered this table too: 0 rows on 2026-09-01, so
+   * there is nothing here that a constraint would have had to accommodate,
+   * and nothing that makes this column's answer differ from the other's.
+   */
   slug: text("slug").notNull().unique(),
   /** The name as the author who created it typed it, whitespace normalised. */
   name: text("name").notNull(),
