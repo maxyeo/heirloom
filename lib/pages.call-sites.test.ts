@@ -463,6 +463,21 @@ describe("queries against schema.pages", () => {
     expect(stale).toEqual([]);
   });
 
+  it("carries a reason for each exemption", () => {
+    // `lib/wiki-paths.call-sites.test.ts`'s check, brought over so the two
+    // registers of this genre agree about what an entry has to carry
+    // (`YEO-133`). The stale check above is only half of it: it proves the
+    // key still names a file and says nothing at all about the value. An
+    // entry added with `""` beside it is an exemption granted for a reason
+    // nobody wrote down, and until now it passed every assertion in this
+    // file — which is not the register the argument above describes, where
+    // what makes a file-level exemption tolerable is that it "grants exactly
+    // the module named, with the argument beside it".
+    for (const reason of Object.values(EXEMPT)) {
+      expect(reason.length).toBeGreaterThan(0);
+    }
+  });
+
   it("leaves the table one spelling, so the scan is not merely lucky", () => {
     // Every other assertion in this file starts from `mentions`, and
     // `mentions` starts from a string. This one runs over *every* source
@@ -512,6 +527,18 @@ describe("queries against schema.pages", () => {
       const stale = recorded.filter((file) => !tests.includes(file));
 
       expect(stale).toEqual([]);
+    });
+
+    it("carries a reason for each", () => {
+      // `EXEMPT`'s reason check, for `EXEMPT`'s reason (`YEO-133`). It counts
+      // for more here, if anything: this register is consulted by no rule and
+      // changes no verdict, so the argument beside each key is the entire
+      // thing it buys. An entry with `""` beside it records that a test was
+      // excluded and not why, which is the state the block above exists to
+      // get out of.
+      for (const reason of Object.values(TESTS_THE_RULE_WOULD_REPORT)) {
+        expect(reason.length).toBeGreaterThan(0);
+      }
     });
 
     it("excludes them by rule, not by their being outside the tree", () => {
