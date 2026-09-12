@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Heirloom">
+  <title>Heirloom</title>
+  <!--
+    The mark is the tree's own primitive: two people, the tie between them, the
+    drop to their child. Three nodes and two rules is the smallest drawing that
+    means descent rather than "tree", and it is the same fact the records hold,
+    so the icon cannot drift from the product.
+
+    The theme switch is INSIDE this file on purpose. A favicon is fetched
+    without a document, so it gets none of globals.css, and a currentColor
+    mark would resolve to black and vanish into a dark tab strip. The two ink
+    values are the color-ink and color-paper tokens from that stylesheet; if
+    either moves there, move it here too. There is no token indirection to be
+    had, because this file cannot see the cascade.
+
+    Geometry sits on a 32-unit grid with even-numbered strokes, so every edge
+    lands on a whole pixel when a browser rasterises it at 16. Note that
+    favicon.ico is NOT this drawing scaled down: at 16 square it is a bitmap
+    with its own proportions, because antialiasing at that size reads as
+    fringe rather than as a thinner line.
+  -->
+  <style>
+    .node { fill: #202122; }
+    .tie { stroke: #202122; }
+    @media (prefers-color-scheme: dark) {
+      .node { fill: #f8f9fa; }
+      .tie { stroke: #f8f9fa; }
+    }
+  </style>
+  <path class="tie" d="M8 10.4V15h16v-4.6M16 15v6.6" fill="none" stroke-width="2.4" stroke-linecap="round" />
+  <circle class="node" cx="8" cy="7" r="3.4" />
+  <circle class="node" cx="24" cy="7" r="3.4" />
+  <circle class="node" cx="16" cy="25" r="3.4" />
+</svg>
