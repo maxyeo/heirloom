@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Heirloom">
+  <title>Heirloom</title>
+  <!--
+    The mark is the tree's own primitive: two people, the tie between them, the
+    drop to their child. Three nodes and two rules is the smallest drawing that
+    means descent rather than "tree", and it is the same fact the records hold,
+    so the icon cannot drift from the product.
+
+    The dark rule below is not a second palette, and it is not a crack in the
+    single-theme decision at the top of globals.css. That decision is about the
+    page, and `color-scheme: light` is what enforces it on everything the
+    browser paints there. A favicon is not painted on the page: it sits in
+    chrome whose colour this app does not choose and cannot suppress, and that
+    strip is dark for a large share of readers. So what follows is not a dark
+    theme guessed for the product — it is the same two surfaces the page
+    already owns, ink on paper, used the only way an icon in someone else's
+    chrome can be: paper when the strip is dark.
+
+    The values are written out because a favicon is fetched without a document,
+    so this file never sees globals.css and `currentColor` would resolve to
+    black and vanish into that dark strip. There is no indirection to be had.
+    They are the color-ink and color-paper tokens, and app/globals.test.ts
+    holds them to it: "spells the favicon mark in the ink and paper tokens"
+    reads this file and asserts these two literals are exactly those two
+    values. So moving a token there fails the suite here, which is the only
+    reason it is safe to write a colour out in a file the cascade cannot
+    reach.
+
+    Geometry sits on a 32-unit grid with even-numbered strokes, so every edge
+    lands on a whole pixel when a browser rasterises it at 16. Note that
+    favicon.ico is NOT this drawing scaled down: at 16 square it is a bitmap
+    with its own proportions, because antialiasing at that size reads as
+    fringe rather than as a thinner line. It also carries a paper ground,
+    because a raster cannot invert with the strip the way these rules do.
+  -->
+  <style>
+    .node { fill: #202122; }
+    .tie { stroke: #202122; }
+    @media (prefers-color-scheme: dark) {
+      .node { fill: #ffffff; }
+      .tie { stroke: #ffffff; }
+    }
+  </style>
+  <path class="tie" d="M8 10.4V15h16v-4.6M16 15v6.6" fill="none" stroke-width="2.4" stroke-linecap="round" />
+  <circle class="node" cx="8" cy="7" r="3.4" />
+  <circle class="node" cx="24" cy="7" r="3.4" />
+  <circle class="node" cx="16" cy="25" r="3.4" />
+</svg>
