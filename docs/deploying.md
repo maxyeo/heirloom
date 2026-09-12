@@ -482,11 +482,46 @@ wiki visited monthly will be found asleep. The `Keep database awake` workflow
 It needs one thing: add the same transaction pooler string as a repository
 secret named `DATABASE_URL`, under **Settings → Secrets and variables →
 Actions**. Until that exists, every run fails. Set it, then run the workflow
-manually from the Actions tab to confirm it passes rather than waiting a day
+manually from the Actions tab to confirm it passes rather than waiting an hour
 to find out.
 
+### Why it writes, and why hourly
+
+It used to run `select 1`, once a day. On 2026-09-12 a pause warning arrived
+anyway, after fourteen consecutive green runs (`YEO-145`). That sequence rules
+out the two easy explanations — the schedule was firing, and the credentials
+worked — and leaves only the uncomfortable one: the ping was not being
+counted as activity.
+
+So the ping now **inserts a row** into `keep_alive` and prunes the table back
+to the last 72, and it runs **hourly**. The write is the substantive change:
+it produces WAL and touches storage, where a read can be served from cache and
+leaves nothing behind. The hourly cadence is margin rather than a second fix
+— GitHub reserves the right to drop scheduled runs under load, and at one a
+day a few drops start to approach Supabase's week.
+
+The rows are also the diagnostic. Each records its `source`, the Actions
+`run_url` and the round trip, so `select * from keep_alive order by pinged_at
+desc` answers the question a warning email actually raises — _when did this
+database last see traffic, and from what_ — which no amount of green in the
+Actions tab can. Every run logs the host and Supabase project ref it connected
+to for the same reason: a green cron pinging the wrong database looks exactly
+like a working one.
+
+**If a warning arrives again despite rows landing hourly**, the metric is not
+database activity, and the remaining lever is HTTP traffic to the project's
+API hostname. Note that PostgREST on this project currently cannot build a
+schema cache — its logs show `schema "pg_pgrst_no_exposed_schemas" does not
+exist`, meaning **Settings → API → Exposed schemas** is empty. Nothing here
+uses PostgREST, so that is harmless today, but it would have to be fixed
+before REST pings were worth trying.
+
+### Reporting
+
 The workflow opens an issue labelled `keep-alive` when it breaks and closes it
-on the next success. Note that GitHub disables scheduled workflows in
+on the next success. Because hourly failures would otherwise post 24 comments
+a day and bury the first one, repeat failures comment at most once every six
+hours. Note that GitHub disables scheduled workflows in
 repositories with no activity for 60 days. The scheduled run is skipped in
 forks, which do not inherit the secret; if you forked this and are on
 Supabase, edit the repository name in its `if:` condition. If you are on any
