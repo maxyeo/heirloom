@@ -19,9 +19,12 @@
     The values are written out because a favicon is fetched without a document,
     so this file never sees globals.css and `currentColor` would resolve to
     black and vanish into that dark strip. There is no indirection to be had.
-    They are the color-ink and color-paper tokens; if either moves there, move
-    it here too, and note that app/globals.test.ts will not catch you — its
-    colour guard scans .ts, .tsx and .css, and this is none of those.
+    They are the color-ink and color-paper tokens, and app/globals.test.ts
+    holds them to it: "spells the favicon mark in the ink and paper tokens"
+    reads this file and asserts these two literals are exactly those two
+    values. So moving a token there fails the suite here, which is the only
+    reason it is safe to write a colour out in a file the cascade cannot
+    reach.
 
     Geometry sits on a 32-unit grid with even-numbered strokes, so every edge
     lands on a whole pixel when a browser rasterises it at 16. Note that
