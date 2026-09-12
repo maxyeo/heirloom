@@ -765,8 +765,15 @@ describe("call sites", () => {
    * one file this test is *about*, so leaving it out of the scan would be a
    * guard that cannot see its own subject. See `SOURCE_DIRS` for why the two
    * dimensions are shared separately.
+   *
+   * `.svg` joined them when the favicon mark arrived. An SVG paints with
+   * `fill` and `stroke` exactly as a stylesheet does, and it is the one file
+   * class that can do so with no cascade behind it — so it is where a colour
+   * goes to hide from a scanner that reads only code. The single SVG in the
+   * footprint today is exempt below, so this finds nothing at the moment; it
+   * is here for the second one.
    */
-  const sourceExtensions = [".ts", ".tsx", ".css"];
+  const sourceExtensions = [".ts", ".tsx", ".css", ".svg"];
 
   /**
    * globals.css is where the colours live, and a test that checks them has to
@@ -787,6 +794,19 @@ describe("call sites", () => {
      * rather than `--color-paper` for exactly that reason.
      */
     join("lib", "image-insert.ts"),
+    /**
+     * The favicon mark (`app/icon.svg`). A favicon is fetched without a
+     * document, so the file never sees this stylesheet: there is no token for
+     * it to name, no cascade to inherit, and `currentColor` resolves to black
+     * rather than to ink. Its colours are therefore written out.
+     *
+     * An exemption normally means the guard stops asking, and here that would
+     * not be good enough — a written-out colour is the only kind a token can
+     * move out from underneath. So the exemption is paired with the assertion
+     * below, which reads the file and names the two tokens it is allowed to
+     * spell.
+     */
+    join("app", "icon.svg"),
   ]);
 
   function sourceFiles(): string[] {
@@ -810,6 +830,34 @@ describe("call sites", () => {
       .filter((file) => hex.test(readFileSync(join(repoRoot, file), "utf8")));
 
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * Ink on paper, and nothing else, in the one file allowed to spell them
+   * (`app/icon.svg`).
+   *
+   * The mark uses two surfaces the page already owns. Paper is the dark rule:
+   * an icon sits in browser chrome rather than on the page, so the strip
+   * behind it is not a surface `color-scheme: light` can speak for, and a
+   * mark in ink alone would disappear into it.
+   *
+   * Comments stripped for the same reason the stylesheet's are: that file
+   * explains its own values in prose, and prose that names a token is not a
+   * call site.
+   */
+  it("spells the favicon mark in the ink and paper tokens", () => {
+    const mark = readFileSync(
+      join(repoRoot, "app", "icon.svg"),
+      "utf8",
+    ).replace(/<!--[\s\S]*?-->/g, "");
+
+    const spelled = new Set(
+      [...mark.matchAll(/#[0-9a-fA-F]{3,8}/g)].map((found) => found[0]),
+    );
+
+    expect(spelled).toEqual(
+      new Set([token("--color-ink"), token("--color-paper")]),
+    );
   });
 
   /**
