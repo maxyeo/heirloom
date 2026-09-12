@@ -169,9 +169,12 @@ baseline check, and the steps that verify a deploy actually works.
 
 **Keep the database awake.** Supabase pauses free projects after about a week
 of inactivity, which will find a family wiki that gets visited monthly. The
-`Keep database awake` workflow (`.github/workflows/keep-alive.yml`) runs a
-trivial query once a day to avoid it. It needs a repository secret named
-`DATABASE_URL` before it will pass — see [Keep the database
+`Keep database awake` workflow (`.github/workflows/keep-alive.yml`) writes a
+row to a small `keep_alive` table once an hour to avoid it. It writes rather
+than reads, and hourly rather than daily, because a daily `select 1` was
+demonstrably not enough — a pause warning arrived anyway, after a fortnight of
+green runs. It needs a repository secret named `DATABASE_URL` before it will
+pass — see [Keep the database
 awake](docs/deploying.md#8-keep-the-database-awake).
 
 **Back it up.** The Supabase free tier has no backups at all, so until this is

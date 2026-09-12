@@ -53,11 +53,14 @@ every day, and can be run by hand from the Actions tab. Each run:
 7. Opens a GitHub issue labelled `backup` if any of that failed, and closes it
    on the next success.
 
-The dump also touches the database, so it doubles as a keep-alive. That is not
-a reason to delete the [keep-alive
-workflow](deploying.md#8-keep-the-database-awake): it is trivial and
-independent, and this one is allowed to fail — noisily — without the site
-going to sleep as a consequence.
+**The dump does not double as a keep-alive**, and it is worth being explicit
+because the opposite is the natural assumption. `pg_dump` is a pure read, and
+a read is exactly what the [keep-alive
+workflow](deploying.md#8-keep-the-database-awake) stopped doing once a daily
+`select 1` failed to prevent a pause warning. Nothing in this file stands
+between the project and being paused; the keep-alive is the only thing that
+does, which is also why this workflow is allowed to fail noisily without the
+site going to sleep as a consequence.
 
 ## Retention policy
 

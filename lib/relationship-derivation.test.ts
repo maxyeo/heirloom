@@ -710,6 +710,16 @@ describe("the schema stores no relationship", () => {
       "categories",
       "gedcom_imports",
       "individuals",
+      /**
+       * `keep_alive` (`YEO-145`) is infrastructure rather than model: rows
+       * recording that the database answered at a given moment, so Supabase
+       * does not pause the project. It is admitted here on the strongest
+       * possible version of the test's own criterion — it has no foreign keys
+       * at all, to `individuals` or to anything else, and none of its five
+       * columns names a person. There is no reading of it that could give the
+       * schema a second answer to a kinship question.
+       */
+      "keep_alive",
       "page_categories",
       "pages",
       "revisions",

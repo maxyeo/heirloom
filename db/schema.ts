@@ -1298,3 +1298,82 @@ export const unionChildrenRelations = relations(unionChildren, ({ one }) => ({
     references: [gedcomImports.id],
   }),
 }));
+
+/**
+ * Proof that the database was awake at a given moment (`YEO-145`).
+ *
+ * Supabase pauses free projects after roughly a week of inactivity. The
+ * keep-alive (`db/keep-alive.ts`, run hourly by
+ * `.github/workflows/keep-alive.yml`) exists to stop that, and until this
+ * table it did so with `select 1` — a read, which leaves no trace anywhere.
+ * That turned out to matter twice over.
+ *
+ * The first reason is the one that prompted this table: a pause warning
+ * arrived while the keep-alive had been green every day for a fortnight. A
+ * read that succeeds tells you the query ran; it does not tell you the
+ * platform noticed, and it leaves nothing behind to check afterwards. A write
+ * produces WAL, which is activity in the sense a storage layer can see, and
+ * it lands a row you can go and look at.
+ *
+ * The second is that a green cron and a paused project are indistinguishable
+ * from outside if the cron might be pinging the wrong database. These rows
+ * are the record that settles it: they are written *by* the keep-alive, *into*
+ * the database it actually connected to. If they are here, this is the
+ * database being kept awake.
+ *
+ * ## Why a history rather than one mutated row
+ *
+ * A single row with a `last_pinged_at` that gets overwritten would be cheaper
+ * and would answer "is it alive right now". It would not answer "when did it
+ * stop", which is the question you have when a warning email arrives — and
+ * that question is only answerable from a series. Each row keeps `source` and
+ * `run_url` for the same reason: "something pinged at 06:23" is a fact you
+ * cannot act on, and "the scheduled run at 06:23, which is this Actions run"
+ * is one you can.
+ *
+ * The series is bounded rather than infinite — see `KEEP_ALIVE_HISTORY` in
+ * `db/keep-alive.ts`, which prunes on every run. Hourly writes are 8,760 rows
+ * a year, and the free tier's 500MB is not the kind of budget to spend on a
+ * heartbeat.
+ */
+export const keepAlive = pgTable(
+  "keep_alive",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * Set by the database, not the client. The point of the row is what the
+     * *server* believed the time to be when it accepted the write; a runner's
+     * clock is not evidence about this database.
+     */
+    pingedAt: timestamp("pinged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /**
+     * Who pinged: `schedule`, `workflow_dispatch`, or `local`. Distinguishes
+     * the cron actually running from someone having just tested it by hand,
+     * which is exactly the difference you need when working out whether the
+     * schedule has quietly stopped firing.
+     */
+    source: text("source").notNull(),
+    /**
+     * The Actions run, when there was one. Nullable because a local run has
+     * no URL to give, and a fabricated one would be worse than none.
+     */
+    runUrl: text("run_url"),
+    /**
+     * Round-trip time of the write. A database that is answering but slowly
+     * is a different problem from one that is not answering, and only a
+     * series of these shows the difference.
+     */
+    durationMs: integer("duration_ms").notNull(),
+  },
+  (table) => [
+    /**
+     * Every query against this table is "most recent first" — the prune, and
+     * any human asking when the last ping was. Without this both are a scan,
+     * which is cheap today and stops being cheap at the point the table is
+     * large enough for the answer to matter.
+     */
+    index("keep_alive_pinged_at_idx").on(table.pingedAt.desc()),
+  ],
+);
