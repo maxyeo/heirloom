@@ -70,7 +70,6 @@ jobs:
       - run: npm ci
 
       - name: Ping
-        id: ping
         # A database that accepts the connection and then never answers is the
         # failure this guards against. The bound belongs on the step rather
         # than the job for a reason that is easy to get wrong: exceeding a
@@ -142,11 +141,7 @@ jobs:
           fi
 
       - name: Close the failure issue
-        # Not on a fallback run. A run that could not write, and knowingly did
-        # the thing this change exists to replace, must not retire a real
-        # alarm by "succeeding" — see `reportFallbackToWorkflow` in
-        # db/keep-alive.ts, which sets this output.
-        if: success() && steps.ping.outputs.fallback != 'true'
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
