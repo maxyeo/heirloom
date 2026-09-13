@@ -82,28 +82,30 @@ const ALLOWED: Record<string, readonly string[]> = {
   [join("lib", "storage.test.ts")]: ["@vercel/blob"],
 
   /**
-   * This file names both packages in order to search for them, and to
-   * explain the exemption below.
+   * This file names packages in order to search for them, and to
+   * explain the exemptions below.
    */
   [join("lib", "storage.call-sites.test.ts")]: [
     "@vercel/blob",
     "@vercel/analytics",
+    "@vercel/speed-insights",
   ],
 
   /**
-   * `@vercel/analytics`, and deliberately not covered by the storage seam.
+   * `@vercel/analytics` and `@vercel/speed-insights`, and deliberately not
+   * covered by the storage seam.
    *
    * The portability claim is about the application's *data* — the images it
-   * would lose on a move. Analytics is a script tag that measures page views
-   * for whoever is hosting; on another host it is deleted, not
-   * reimplemented, and there is no interface worth putting in front of one
-   * import to say so. Storage is the opposite: something else has to be able
-   * to hold the bytes.
+   * would lose on a move. Analytics and Speed Insights are script tags that
+   * measure page views and performance for whoever is hosting; on another
+   * host they are deleted, not reimplemented, and there is no interface
+   * worth putting in front of one import to say so. Storage is the opposite:
+   * something else has to be able to hold the bytes.
    *
-   * The exemption is narrow on purpose. It buys `@vercel/analytics` in this
-   * one file, and nothing else anywhere.
+   * The exemption is narrow on purpose. It buys `@vercel/analytics` and
+   * `@vercel/speed-insights` in this one file, and nothing else anywhere.
    */
-  [join("app", "layout.tsx")]: ["@vercel/analytics"],
+  [join("app", "layout.tsx")]: ["@vercel/analytics", "@vercel/speed-insights"],
 };
 
 function sourceFiles(): string[] {
